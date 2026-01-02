@@ -1,0 +1,214 @@
+import 'package:audio_service/audio_service.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:flutter/material.dart';
+import '../models/media_file.dart';
+import '../navigation_service.dart';
+
+class AudioPlayerHandler extends BaseAudioHandler
+    with QueueHandler, SeekHandler {
+  final _player = AudioPlayer();
+  final _playlist = ConcatenatingAudioSource(children: []);
+  bool _initialized = false;
+
+  AudioPlayerHandler() {
+    _init();
+  }
+
+  Future<void> _init() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+
+    _player.sequenceStateStream.listen((sequenceState) {
+      final currentItem = sequenceState.currentSource?.tag as MediaItem?;
+      if (currentItem != null) {
+        mediaItem.add(currentItem);
+      }
+
+      final queueList = sequenceState.effectiveSequence
+          .map((source) => source.tag as MediaItem)
+          .toList();
+      queue.add(queueList);
+    });
+
+    _player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        final repeatMode = playbackState.value.repeatMode;
+        if (repeatMode == AudioServiceRepeatMode.none) {
+          stop();
+        }
+      }
+    });
+
+    AudioService.notificationClicked.listen((clicked) {
+      if (clicked) {
+        _handleNotificationClick();
+      }
+    });
+  }
+
+  void _handleNotificationClick() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = rootNavigatorKey.currentState;
+      if (navigator == null) return;
+
+      final currentRoute = navigator.overlay?.context;
+      if (currentRoute != null) {
+        final modalRoute = ModalRoute.of(currentRoute);
+        if (modalRoute?.settings.name == '/audio-player') return;
+      }
+
+      navigator.pushNamed('/audio-player');
+    });
+  }
+
+  PlaybackState _transformEvent(PlaybackEvent event) {
+    return PlaybackState(
+      controls: [
+        MediaControl.skipToPrevious,
+        if (_player.playing) MediaControl.pause else MediaControl.play,
+        MediaControl.skipToNext,
+        MediaControl.stop,
+      ],
+      systemActions: const {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
+      },
+      androidCompactActionIndices: const [0, 1, 2],
+      processingState: const {
+        ProcessingState.idle: AudioProcessingState.idle,
+        ProcessingState.loading: AudioProcessingState.loading,
+        ProcessingState.buffering: AudioProcessingState.buffering,
+        ProcessingState.ready: AudioProcessingState.ready,
+        ProcessingState.completed: AudioProcessingState.completed,
+      }[_player.processingState]!,
+      playing: _player.playing,
+      updatePosition: _player.position,
+      bufferedPosition: _player.bufferedPosition,
+      speed: _player.speed,
+      queueIndex: event.currentIndex,
+    );
+  }
+
+  Future<void> loadPlaylist(
+    List<MediaFile> files, {
+    int initialIndex = 0,
+  }) async {
+    try {
+      final items = files.map((file) => _createMediaItem(file)).toList();
+      final sources = files.map((file) => _createAudioSource(file)).toList();
+
+      _playlist.clear();
+      await _playlist.addAll(sources);
+
+      queue.add(items);
+      await _player.setAudioSource(_playlist, initialIndex: initialIndex);
+    } catch (e) {
+      debugPrint('Error loading playlist: $e');
+    }
+  }
+
+  MediaItem _createMediaItem(MediaFile file) {
+    return MediaItem(
+      id: file.id,
+      title: file.name,
+      artist: file.artist ?? 'Unknown Artist',
+      album: file.album ?? 'Unknown Album',
+      genre: file.genre,
+      duration: file.duration != null
+          ? Duration(milliseconds: file.duration!)
+          : null,
+      artUri: file.thumbnailPath != null ? Uri.file(file.thumbnailPath!) : null,
+      extras: {
+        'path': file.path,
+        'displayPath': file.displayPath,
+        'size': file.size,
+        'dateModified': file.dateModified.millisecondsSinceEpoch,
+        'dateAdded': file.dateAdded?.millisecondsSinceEpoch,
+        'mimeType': file.mimeType,
+        'isLocked': file.isLocked,
+        'parentFolder': file.parentFolder,
+      },
+    );
+  }
+
+  AudioSource _createAudioSource(MediaFile file) {
+    return file.path.startsWith('http') || file.path.startsWith('https')
+        ? AudioSource.uri(Uri.parse(file.path), tag: _createMediaItem(file))
+        : AudioSource.file(file.path, tag: _createMediaItem(file));
+  }
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> skipToNext() => _player.seekToNext();
+
+  @override
+  Future<void> skipToPrevious() => _player.seekToPrevious();
+
+  @override
+  Future<void> skipToQueueItem(int index) async {
+    if (index < 0 || index >= queue.value.length) return;
+    _player.seek(Duration.zero, index: index);
+  }
+
+  @override
+  Future<void> stop() async {
+    try {
+      await _player.stop();
+      await super.stop();
+      queue.add([]);
+      mediaItem.add(null);
+    } catch (e) {
+      debugPrint('Error stopping player: $e');
+    }
+  }
+
+  @override
+  Future<void> setSpeed(double speed) => _player.setSpeed(speed);
+
+  @override
+  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) async {
+    switch (repeatMode) {
+      case AudioServiceRepeatMode.none:
+        _player.setLoopMode(LoopMode.off);
+        break;
+      case AudioServiceRepeatMode.one:
+        _player.setLoopMode(LoopMode.one);
+        break;
+      case AudioServiceRepeatMode.all:
+        _player.setLoopMode(LoopMode.all);
+        break;
+      case AudioServiceRepeatMode.group:
+        break;
+    }
+  }
+
+  @override
+  Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
+    if (shuffleMode == AudioServiceShuffleMode.all) {
+      await _player.shuffle();
+      await _player.setShuffleModeEnabled(true);
+    } else {
+      await _player.setShuffleModeEnabled(false);
+    }
+  }
+
+  Future<void> dispose() async {
+    await _player.dispose();
+  }
+
+  AudioPlayer get player => _player;
+  Stream<Duration> get positionStream => _player.positionStream;
+  Stream<Duration?> get durationStream => _player.durationStream;
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+}

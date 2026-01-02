@@ -1,0 +1,132 @@
+import '../../../../core/constants/archive_constants.dart';
+import '../../../../core/errors/app_exceptions.dart';
+import '../datasources/pdf_local_datasource.dart';
+import '../datasources/pdf_remote_datasource.dart';
+import '../models/archive_item.dart';
+import '../models/search_filter.dart';
+import '../models/search_response.dart';
+import '../models/pdf_metadata.dart';
+
+abstract class PdfRepository {
+  Future<SearchResponse> searchPdfs({
+    required String query,
+    int page = 1,
+    SearchFilter? filter,
+  });
+  Future<void> toggleLike(ArchiveItem item);
+  Future<bool> isLiked(String identifier);
+  Future<List<ArchiveItem>> getLikedPdfs();
+  Future<Set<String>> getLikedIdentifiers();
+  Future<PdfMetadata> getPdfMetadata(String identifier);
+}
+
+class PdfRepositoryImpl implements PdfRepository {
+  final PdfRemoteDataSource _remoteDataSource;
+  final PdfLocalDataSource _localDataSource;
+
+  PdfRepositoryImpl({
+    required PdfRemoteDataSource remoteDataSource,
+    required PdfLocalDataSource localDataSource,
+  }) : _remoteDataSource = remoteDataSource,
+       _localDataSource = localDataSource;
+
+  @override
+  Future<SearchResponse> searchPdfs({
+    required String query,
+    int page = 1,
+    SearchFilter? filter,
+  }) async {
+    try {
+      final response = await _remoteDataSource.searchPdfs(
+        query: query,
+        page: page,
+        filter: filter,
+      );
+
+      // Get liked identifiers to mark items as liked
+      final likedIds = await _localDataSource.getLikedIdentifiers();
+
+      // Update items with liked status
+      final updatedItems = response.items.map((item) {
+        return item.copyWith(isLiked: likedIds.contains(item.identifier));
+      }).toList();
+
+      return SearchResponse(
+        numFound: response.numFound,
+        start: response.start,
+        items: updatedItems,
+      );
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw NetworkException(
+        message: 'Failed to search PDFs',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<void> toggleLike(ArchiveItem item) async {
+    try {
+      final isCurrentlyLiked = await _localDataSource.isLiked(item.identifier);
+
+      if (isCurrentlyLiked) {
+        await _localDataSource.unlikeItem(item.identifier);
+      } else {
+        await _localDataSource.likeItem(item);
+      }
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw DatabaseException(
+        message: 'Failed to update like status',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<bool> isLiked(String identifier) async {
+    try {
+      return await _localDataSource.isLiked(identifier);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  @override
+  Future<List<ArchiveItem>> getLikedPdfs() async {
+    try {
+      return await _localDataSource.getLikedItems(
+        mediaType: ArchiveConstants.mediaTypePdf,
+      );
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw DatabaseException(
+        message: 'Failed to get liked PDFs',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<Set<String>> getLikedIdentifiers() async {
+    try {
+      return await _localDataSource.getLikedIdentifiers();
+    } catch (e) {
+      return {};
+    }
+  }
+
+  @override
+  Future<PdfMetadata> getPdfMetadata(String identifier) async {
+    try {
+      return await _remoteDataSource.getPdfMetadata(identifier);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw NetworkException(
+        message: 'Failed to get PDF metadata',
+        originalError: e,
+      );
+    }
+  }
+}

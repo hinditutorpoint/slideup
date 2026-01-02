@@ -1,0 +1,348 @@
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <!-- PERMISSIONS -->
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    
+    <!-- Internet -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    
+    <!-- Storage - Legacy (Android 9 and below) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" 
+                 tools:ignore="ScopedStorage" />
+    
+    <!-- Storage - Android 11+ -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    
+    <!-- Storage - Android 13+ (Granular media permissions) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    
+    <!-- Media Playback -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <!-- Biometric -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <!-- FEATURES -->
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    
+    <uses-feature 
+        android:name="android.software.picture_in_picture" 
+        android:required="false"/>
+    
+    <uses-feature 
+        android:name="android.hardware.fingerprint" 
+        android:required="false"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <!-- APPLICATION -->
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    
+    <application
+        android:label="SlideUp"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true"
+        android:supportsRtl="true">
+        
+        <!-- ════════════════════════════════════════════════════════════ -->
+        <!-- MAIN ACTIVITY -->
+        <!-- ════════════════════════════════════════════════════════════ -->
+        
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true">
+            
+            <!-- Normal Theme -->
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
+            
+            <!-- ════════════════════════════════════════════════════════ -->
+            <!-- LAUNCHER -->
+            <!-- ════════════════════════════════════════════════════════ -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+
+            <!-- ════════════════════════════════════════════════════════ -->
+            <!-- VIEW INTENT - Open files directly -->
+            <!-- ════════════════════════════════════════════════════════ -->
+            
+            <!-- Images -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+
+            <!-- Videos -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
+
+            <!-- Audio -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:mimeType="audio/*"/>
+            </intent-filter>
+
+            <!-- PDF -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:mimeType="application/pdf"/>
+            </intent-filter>
+
+            <!-- ════════════════════════════════════════════════════════ -->
+            <!-- SEND INTENT - Share files to app -->
+            <!-- ════════════════════════════════════════════════════════ -->
+            
+            <!-- Single file sharing -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+            
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
+            
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="audio/*"/>
+            </intent-filter>
+            
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="application/pdf"/>
+            </intent-filter>
+
+            <!-- Multiple file sharing -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+            
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
+            
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="audio/*"/>
+            </intent-filter>
+
+            <!-- ════════════════════════════════════════════════════════ -->
+            <!-- FILE EXTENSIONS - For file managers -->
+            <!-- ════════════════════════════════════════════════════════ -->
+            
+            <!-- Video extensions -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.mp4"/>
+                <data android:pathPattern=".*\\.MP4"/>
+                <data android:pathPattern=".*\\.mkv"/>
+                <data android:pathPattern=".*\\.MKV"/>
+                <data android:pathPattern=".*\\.avi"/>
+                <data android:pathPattern=".*\\.AVI"/>
+                <data android:pathPattern=".*\\.mov"/>
+                <data android:pathPattern=".*\\.MOV"/>
+                <data android:pathPattern=".*\\.wmv"/>
+                <data android:pathPattern=".*\\.WMV"/>
+                <data android:pathPattern=".*\\.flv"/>
+                <data android:pathPattern=".*\\.FLV"/>
+                <data android:pathPattern=".*\\.webm"/>
+                <data android:pathPattern=".*\\.WEBM"/>
+                <data android:pathPattern=".*\\.3gp"/>
+                <data android:pathPattern=".*\\.3GP"/>
+                <data android:pathPattern=".*\\.m4v"/>
+                <data android:pathPattern=".*\\.M4V"/>
+                <data android:pathPattern=".*\\.ts"/>
+                <data android:pathPattern=".*\\.TS"/>
+            </intent-filter>
+
+            <!-- Image extensions -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.jpg"/>
+                <data android:pathPattern=".*\\.JPG"/>
+                <data android:pathPattern=".*\\.jpeg"/>
+                <data android:pathPattern=".*\\.JPEG"/>
+                <data android:pathPattern=".*\\.png"/>
+                <data android:pathPattern=".*\\.PNG"/>
+                <data android:pathPattern=".*\\.gif"/>
+                <data android:pathPattern=".*\\.GIF"/>
+                <data android:pathPattern=".*\\.webp"/>
+                <data android:pathPattern=".*\\.WEBP"/>
+                <data android:pathPattern=".*\\.bmp"/>
+                <data android:pathPattern=".*\\.BMP"/>
+                <data android:pathPattern=".*\\.heic"/>
+                <data android:pathPattern=".*\\.HEIC"/>
+            </intent-filter>
+
+            <!-- Audio extensions -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.mp3"/>
+                <data android:pathPattern=".*\\.MP3"/>
+                <data android:pathPattern=".*\\.m4a"/>
+                <data android:pathPattern=".*\\.M4A"/>
+                <data android:pathPattern=".*\\.wav"/>
+                <data android:pathPattern=".*\\.WAV"/>
+                <data android:pathPattern=".*\\.flac"/>
+                <data android:pathPattern=".*\\.FLAC"/>
+                <data android:pathPattern=".*\\.ogg"/>
+                <data android:pathPattern=".*\\.OGG"/>
+                <data android:pathPattern=".*\\.aac"/>
+                <data android:pathPattern=".*\\.AAC"/>
+            </intent-filter>
+
+        </activity>
+        
+        <!-- Boot receiver for pending tasks -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        
+        <receiver 
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+
+        <!-- ════════════════════════════════════════════════════════════ -->
+        <!-- AUDIO SERVICE (for background playback) -->
+        <!-- ════════════════════════════════════════════════════════════ -->
+        
+        <service 
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService"/>
+            </intent-filter>
+        </service>
+
+        <receiver 
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- ════════════════════════════════════════════════════════════ -->
+        <!-- FILE PROVIDER -->
+        <!-- ════════════════════════════════════════════════════════════ -->
+        
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
+
+        <!-- ════════════════════════════════════════════════════════════ -->
+        <!-- FLUTTER METADATA -->
+        <!-- ════════════════════════════════════════════════════════════ -->
+        
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2"/>
+
+    </application>
+
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <!-- QUERIES (for Android 11+) -->
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="file"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="content"/>
+        </intent>
+    </queries>
+    
+</manifest>
