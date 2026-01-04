@@ -19,7 +19,7 @@ jobs:
         uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: "3.8.1"  # Dart 3.8.1 comes bundled in this Flutter version
+          version: latest
 
       # 3️⃣ Verify Flutter
       - name: Flutter doctor

@@ -19,7 +19,7 @@ jobs:
         uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: "3.8.1"   # <-- same as your local system
+          version: latest
 
       # 3️⃣ Check Flutter installation
       - name: Flutter doctor
