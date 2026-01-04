@@ -94,6 +94,7 @@ dependencies:
   timezone: ^0.10.1
 
   sherpa_onnx: ^1.12.20
+  audio_session: ^0.2.2
 
 dev_dependencies:
   flutter_test:
