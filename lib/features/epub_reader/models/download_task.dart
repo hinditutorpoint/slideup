@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../../core/constants/app_constants.dart';
@@ -589,7 +590,7 @@ class DownloadQueue {
 
   /// Add task to queue
   void add(DownloadTask task) {
-    print('Starting download for URL task: que added');
+    debugPrint('Starting download for URL task: que added');
     _tasks.add(task);
     _sortByPriority();
   }
@@ -633,16 +634,16 @@ class DownloadQueue {
   /// Get next task to start
   DownloadTask? getNextTask() {
     if (!hasCapacity) {
-      print('📋 getNextTask: No capacity');
+      debugPrint('📋 getNextTask: No capacity');
       return null;
     }
 
     try {
       final task = _tasks.firstWhere((t) => t.status == DownloadStatus.queued);
-      print('📋 getNextTask: Found ${task.id}');
+      debugPrint('📋 getNextTask: Found ${task.id}');
       return task;
     } catch (_) {
-      print(
+      debugPrint(
         '📋 getNextTask: No queued tasks. Tasks: ${_tasks.map((t) => '${t.id}:${t.status}').join(', ')}',
       );
       return null;

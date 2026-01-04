@@ -140,7 +140,7 @@ class EpubChapter extends Equatable {
     final hours = estimatedReadingMinutes ~/ 60;
     final mins = estimatedReadingMinutes % 60;
     if (mins == 0) return '$hours hour${hours > 1 ? 's' : ''}';
-    return '$hours hr ${mins} min';
+    return '$hours hr $mins min';
   }
 
   /// Get formatted word count

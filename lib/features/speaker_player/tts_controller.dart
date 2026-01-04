@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 import 'models/tts_request.dart';
 import 'models/download_model.dart';
 import 'services/tts_service.dart';
@@ -357,6 +359,27 @@ class TtsController {
     debugPrint('[TtsController] Queue manager initialized');
   }
 
+  /// Helper: Generate structured path for audio file
+  Future<String> _getStructuredAudioPath(
+    String bookId,
+    int chapterIndex,
+  ) async {
+    // Prefer external storage, fallback to app documents
+    final baseDir = await getExternalStorageDirectory();
+    final appDir = baseDir ?? await getApplicationDocumentsDirectory();
+    final sanitizedBookId = bookId.replaceAll(RegExp(r'[^\w\d_-]'), '_');
+    final bookDir = Directory(
+      path.join(appDir.path, 'audiobooks', sanitizedBookId),
+    );
+
+    if (!await bookDir.exists()) {
+      await bookDir.create(recursive: true);
+    }
+
+    // Naming: ch_{index}.wav (e.g., ch_1.wav)
+    return path.join(bookDir.path, 'ch_$chapterIndex.wav');
+  }
+
   /// Simple generate audio with cache - Returns path to audio file
   Future<String?> generateAudioSimple({
     required String text,
@@ -395,12 +418,23 @@ class TtsController {
 
       // 3. NOT cached - Generate new
       debugPrint('[TtsController] Generating NEW audio...');
+      debugPrint('[TtsController] Text length: ${text.length} chars');
+      debugPrint(
+        '[TtsController] Text preview: ${text.substring(0, text.length > 200 ? 200 : text.length)}...',
+      );
+
+      // ✅ Use structured path
+      final outputPath = await _getStructuredAudioPath(bookId, pageNumber);
+      debugPrint('[TtsController] Target path: $outputPath');
+      debugPrint('[TtsController] Model path: $_currentModelPath');
+      debugPrint('[TtsController] Speed: $speed, Speaker: 0');
 
       final result = await _ttsService.generateAudio(
         text: text,
         modelPath: _currentModelPath!,
         speed: speed,
         speakerId: 0,
+        outputPath: outputPath,
         onProgress: onProgress,
       );
 
@@ -493,11 +527,21 @@ class TtsController {
       // ✅ Generate new audio with PROPER chunking
       debugPrint('[TtsController] Generating audio for task: ${task.id}');
 
+      // ✅ Use structured path (if bookId and pageNumber available)
+      String? outputPath;
+      if (task.bookId != null && task.pageNumber != null) {
+        outputPath = await _getStructuredAudioPath(
+          task.bookId!,
+          task.pageNumber!,
+        );
+      }
+
       final result = await _ttsService.generateAudioWithChunks(
         text: task.text,
         modelPath: _currentModelPath!,
         speed: task.speed,
         speakerId: task.speakerId,
+        outputPath: outputPath,
         onProgress: (progress) {
           task.progress = progress;
           task.onProgress?.call(progress);

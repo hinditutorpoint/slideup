@@ -396,9 +396,9 @@ class EpubAudiobookController {
     AudiobookSettings? settings,
   }) : _settings = settings ?? const AudiobookSettings();
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // STATUS MANAGEMENT
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
   void _updateStatus(AudiobookStatus newStatus, {bool immediate = false}) {
     if (_isDisposed) return;
@@ -456,13 +456,14 @@ class EpubAudiobookController {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // INITIALIZATION
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> initializeTts() async {
     if (_isDisposed) return;
 
+    // ... (rest of initializeTts logic remains same, it was correct)
     debugPrint('[EpubAudiobook] initializeTts() called');
 
     _updateStatus(
@@ -579,9 +580,9 @@ class EpubAudiobookController {
     return _status.isTtsInitialized;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // START/STOP
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> start({
     int fromChapter = 0,
@@ -649,7 +650,7 @@ class EpubAudiobookController {
       _cancelSleepTimer();
 
       if (context.mounted) {
-        await TtsController.instance.stopAll(context);
+        await TtsController.instance.stop(context); // ✅ FIX: Use stop(context)
       } else {
         TtsController.instance.forceStop();
       }
@@ -690,9 +691,9 @@ class EpubAudiobookController {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // BACKGROUND GENERATION
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> _startBackgroundGeneration() async {
     try {
@@ -731,9 +732,11 @@ class EpubAudiobookController {
 
         final text = await _getChapterTextSafe(nextChapter);
         if (text != null && text.isNotEmpty) {
-          chaptersToGenerate[nextChapter] = text;
-          chapterTitles[nextChapter] =
+          final title =
               _getChapterTitle(nextChapter) ?? 'Chapter ${nextChapter + 1}';
+          // ✅ Prepend Title
+          chaptersToGenerate[nextChapter] = "$title.\n\n$text";
+          chapterTitles[nextChapter] = title;
         }
       }
 
@@ -742,6 +745,7 @@ class EpubAudiobookController {
           bookId: bookId,
           chapters: chaptersToGenerate,
           chapterTitles: chapterTitles,
+          isSilent: true, // ✅ Silent background generation
         );
 
         debugPrint(
@@ -769,9 +773,9 @@ class EpubAudiobookController {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // MAIN READING LOOP
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   Future<void> _readLoop(BuildContext context) async {
     debugPrint('[EpubAudiobook] Read loop started');
 
@@ -798,227 +802,140 @@ class EpubAudiobookController {
         // Handle pause
         while (_pauseRequested && !_stopRequested && !_isDisposed) {
           await Future.delayed(const Duration(milliseconds: 100));
+          _updateStatus(_status.copyWith(state: AudiobookState.paused));
+          if (_stopRequested || _isDisposed) break;
         }
 
         if (_stopRequested || _isDisposed) break;
 
-        // Check sleep timer
-        if (_shouldStopForSleepTimer()) {
-          _updateStatus(
-            _status.copyWith(state: AudiobookState.paused),
-            immediate: true,
-          );
-          _safeMessage('Sleep timer ended');
-          break;
-        }
-
-        _skipToNextRequested = false;
-
-        // Get chapter text
-        final text = await _getChapterTextSafe(chapterToPlay);
-
-        if (text == null || text.isEmpty) {
-          debugPrint('[EpubAudiobook] Empty chapter $chapterToPlay, skipping');
-          _currentChapterIndex++;
-          continue;
-        }
-
-        final detectedLang = _langDetector.detectCode(text);
-
-        _updateChapterStatus(
-          chapterToPlay,
-          ChapterStatus(
-            index: chapterToPlay,
-            state: ChapterGenerationState.generating,
-          ),
-        );
+        // Queue next chapters in background
+        // (Re-trigger background generation to ensure queue is healthy)
+        _startBackgroundGeneration();
 
         _updateStatus(
           _status.copyWith(
-            state: AudiobookState.generating,
+            state: AudiobookState.preparing,
             currentChapter: chapterToPlay,
             currentChapterTitle: _getChapterTitle(chapterToPlay),
-            currentText: _truncateText(text, 100),
-            detectedLanguage: detectedLang,
-            playbackProgress: 0.0,
-            generationProgress: 0.0,
-            generationMessage: 'Preparing chapter ${chapterToPlay + 1}...',
           ),
           immediate: true,
         );
 
-        _safeChapterChanged(chapterToPlay);
+        // Get text
+        String? text;
+        String? lang;
 
-        // Generate and play
-        debugPrint(
-          '[EpubAudiobook] Starting generation and playback for chapter $chapterToPlay',
-        );
+        if (isTranslationMode?.call() == true &&
+            getTranslatedChapterText != null) {
+          text = await getTranslatedChapterText!(chapterToPlay);
+          lang = 'en'; // Assuming translation target is En
+        } else {
+          text = await getChapterText(chapterToPlay);
+          lang = _langDetector.detectCode(text ?? '');
+        }
 
+        if (text == null || text.isEmpty) {
+          debugPrint('[EpubAudiobook] Chapter $chapterToPlay text is empty');
+          _currentChapterIndex++;
+          // continue;
+        } else {
+          // ✅ Prepend Title
+          final title = _getChapterTitle(chapterToPlay);
+          if (title != null && title.trim().isNotEmpty) {
+            text = "$title.\n\n$text";
+          }
+        }
+
+        // Generate and Play
         final success = await _generateAndPlayChapter(
-          text: text,
-          language: detectedLang,
+          text: text ?? '',
+          language: lang,
           context: context,
           chapterIndex: chapterToPlay,
         );
-
-        debugPrint(
-          '[EpubAudiobook] Chapter $chapterToPlay completed with success: $success',
-        );
-
         if (_stopRequested || _isDisposed) break;
 
-        if (_skipToNextRequested) {
-          debugPrint(
-            '[EpubAudiobook] Skip requested during chapter $chapterToPlay',
-          );
-          _skipToNextRequested = false;
-          consecutiveFailures = 0; // ✅ RESET: User action, reset failures
-          continue;
-        }
+        if (success) {
+          consecutiveFailures = 0; // Reset failures
+          _skipToNextRequested = false; // Reset flag
+          if (_settings.autoAdvance) {
+            _currentChapterIndex++;
+            _safeChapterChanged(_currentChapterIndex); // ✅ Update UI reader
+            if (_settings.delayBetweenChapters > Duration.zero) {
+              await Future.delayed(_settings.delayBetweenChapters);
+            }
+          } else {
+            _updateStatus(
+              _status.copyWith(state: AudiobookState.paused),
+              immediate: true,
+            );
+            _pauseRequested = true;
+          }
+        } else {
+          // If manual skip was requested, this is NOT a failure
+          if (_skipToNextRequested) {
+            debugPrint(
+              '[EpubAudiobook] Manual skip detected, ignoring failure.',
+            );
+            _skipToNextRequested = false;
+            consecutiveFailures = 0;
+            // Also need to ensure UI is synced if we skipped?
+            // Usually skipToNext updates index and calls safeChapterChanged in nextChapter()
+            // But if skip was triggered during playback failure handling:
+            if (_currentChapterIndex.clamp(0, book.chapterCount) !=
+                _currentChapterIndex) {
+              // sanity check
+            }
+            continue; // Go to next loop iteration
+          }
 
-        // ✅ FIX: Handle failure properly
-        if (!success) {
+          // Real Failure handling
           consecutiveFailures++;
-
-          _updateChapterStatus(
-            chapterToPlay,
-            ChapterStatus(
-              index: chapterToPlay,
-              state: ChapterGenerationState.error,
-              error: 'Generation or playback failed',
-            ),
-          );
-
           debugPrint(
-            '[EpubAudiobook] ✗ Chapter $chapterToPlay failed (consecutive: $consecutiveFailures)',
+            '[EpubAudiobook] Playback failed for Ch.$chapterToPlay (Failures: $consecutiveFailures)',
           );
 
-          // ✅ FIX: Stop after too many failures
           if (consecutiveFailures >= maxConsecutiveFailures) {
             _updateStatus(
               _status.copyWith(
                 state: AudiobookState.error,
-                error:
-                    'Multiple chapters failed to generate. Please check TTS model or try a different model.',
+                error: 'Playback failed multiple times. Stopping.',
               ),
               immediate: true,
             );
-
-            _safeMessage(
-              '❌ Audiobook stopped: $consecutiveFailures consecutive failures',
-            );
-            break; // ✅ STOP instead of continuing
+            _safeMessage('Playback stopped due to errors.');
+            break;
           }
 
-          // ✅ FIX: Show error and pause, let user decide
+          // Try to move to next chapter? Or just stop?
+          // Let's pause.
           _updateStatus(
             _status.copyWith(
-              state: AudiobookState.error,
-              error:
-                  'Chapter ${chapterToPlay + 1} failed. Tap Next to skip or Stop to end.',
+              state: AudiobookState.paused,
+              error: 'Chapter playback failed',
             ),
             immediate: true,
           );
-
-          _safeMessage('⚠️ Chapter ${chapterToPlay + 1} failed to generate');
-
-          // ✅ DON'T auto-advance on failure - wait for user action
-          debugPrint('[EpubAudiobook] Waiting for user action (next/stop)...');
-
-          // Wait for user to press next/stop
-          while (!_stopRequested && !_isDisposed && !_skipToNextRequested) {
-            await Future.delayed(const Duration(milliseconds: 100));
-          }
-
-          if (_stopRequested || _isDisposed) break;
-          if (_skipToNextRequested) {
-            debugPrint('[EpubAudiobook] User chose to skip failed chapter');
-            _skipToNextRequested = false;
-            // Continue to next chapter
-          }
-        } else {
-          // ✅ SUCCESS: Reset failure counter
-          consecutiveFailures = 0;
-
-          _updateChapterStatus(
-            chapterToPlay,
-            ChapterStatus(
-              index: chapterToPlay,
-              state: ChapterGenerationState.completed,
-            ),
-          );
-        }
-
-        // Advance to next chapter
-        debugPrint(
-          '[EpubAudiobook] Advancing from chapter $chapterToPlay to ${chapterToPlay + 1}',
-        );
-        _currentChapterIndex++;
-
-        // Delay between chapters (only on success)
-        if (!_stopRequested &&
-            !_isDisposed &&
-            _settings.autoAdvance &&
-            success) {
-          debugPrint(
-            '[EpubAudiobook] Waiting ${_settings.delayBetweenChapters.inMilliseconds}ms before next chapter',
-          );
-          await Future.delayed(_settings.delayBetweenChapters);
+          _pauseRequested = true;
         }
       } catch (e, stack) {
         debugPrint('[EpubAudiobook] Read loop error: $e\n$stack');
-
-        consecutiveFailures++;
-
-        if (consecutiveFailures >= maxConsecutiveFailures) {
-          _updateStatus(
-            _status.copyWith(
-              state: AudiobookState.error,
-              error: 'Critical error: $e',
-            ),
-            immediate: true,
-          );
-          break;
-        }
-
-        _currentChapterIndex++;
-
-        if (_currentChapterIndex >= book.chapterCount) {
-          _updateStatus(
-            _status.copyWith(state: AudiobookState.completed),
-            immediate: true,
-          );
-          break;
-        }
-
-        await Future.delayed(const Duration(milliseconds: 500));
+        _updateStatus(
+          _status.copyWith(state: AudiobookState.error, error: e.toString()),
+          immediate: true,
+        );
+        break; // Stop loop on critical error
       }
     }
 
-    debugPrint(
-      '[EpubAudiobook] Read loop ended at chapter $_currentChapterIndex',
-    );
-
-    if (!_isDisposed &&
-        !_stopRequested &&
-        _status.state != AudiobookState.error) {
-      _updateStatus(
-        _status.copyWith(
-          state: AudiobookState.completed,
-          playbackProgress: 1.0,
-        ),
-        immediate: true,
-      );
-    }
+    debugPrint('[EpubAudiobook] Read loop ended');
+    _stopRequested = false;
+    _isPlaybackActive = false;
   }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // GENERATE AND PLAY CHAPTER
-  // ═══════════════════════════════════════════════════════════════════════
 
   Future<bool> _generateAndPlayChapter({
     required String text,
-    required String language,
+    required String? language, // ✅ Nullable
     required BuildContext context,
     required int chapterIndex,
   }) async {
@@ -1028,9 +945,10 @@ class EpubAudiobookController {
     _isPlaybackActive = true;
 
     try {
+      debugPrint('Chapter _generateAndPlayChapter Text: $text');
       debugPrint('[EpubAudiobook] ===== CHAPTER $chapterIndex: START =====');
 
-      // Check if cached
+      // 1. Check if cached
       final isCached = await TtsController.instance.isPageCached(
         bookId: bookId,
         pageNumber: chapterIndex,
@@ -1038,7 +956,6 @@ class EpubAudiobookController {
 
       if (isCached) {
         debugPrint('[EpubAudiobook] Chapter $chapterIndex: Using cache');
-
         _updateStatus(
           _status.copyWith(
             state: AudiobookState.loading,
@@ -1049,54 +966,122 @@ class EpubAudiobookController {
           immediate: true,
         );
       } else {
-        // NOT CACHED - Generate
-        debugPrint('[EpubAudiobook] Chapter $chapterIndex: Generating...');
+        // 2. CHECK BACKGROUND GENERATOR
+        // If this chapter is already being generated in background, wait for it!
+        final bgJob = _bgGenerator.allJobs
+            .where((j) => j.bookId == bookId && j.chapterIndex == chapterIndex)
+            .firstOrNull;
 
-        _updateStatus(
-          _status.copyWith(
-            state: AudiobookState.generating,
-            currentChapter: chapterIndex,
-            generationProgress: 0.0,
-            generationMessage: 'Generating audio...',
-          ),
-          immediate: true,
-        );
-
-        final audioPath = await TtsController.instance.generateAudioSimple(
-          text: text,
-          bookId: bookId,
-          pageNumber: chapterIndex,
-          speed: _settings.playbackSpeed,
-          onProgress: (progress) {
-            if (!_isDisposed && !_stopRequested) {
-              _updateStatus(
-                _status.copyWith(
-                  state: AudiobookState.generating,
-                  currentChapter: chapterIndex,
-                  generationProgress: progress,
-                  generationMessage: 'Generating: ${(progress * 100).toInt()}%',
-                ),
-              );
-            }
-          },
-        );
-
-        if (audioPath == null) {
+        if (bgJob != null &&
+            (bgJob.status == JobStatus.queued ||
+                bgJob.status == JobStatus.generating)) {
           debugPrint(
-            '[EpubAudiobook] Chapter $chapterIndex: Generation FAILED',
+            '[EpubAudiobook] Chapter $chapterIndex is already in background queue. Waiting...',
           );
+
           _updateStatus(
             _status.copyWith(
-              state: AudiobookState.error,
-              error: 'Generation failed',
+              state: AudiobookState.generating,
+              currentChapter: chapterIndex,
+              generationProgress: bgJob.progress,
+              generationMessage: 'Waiting for background generation...',
             ),
             immediate: true,
           );
-          _completePlaybackSafe(false);
-          return false;
-        }
 
-        debugPrint('[EpubAudiobook] Chapter $chapterIndex: Generation SUCCESS');
+          // Wait for job completion
+          final completer = Completer<bool>();
+          final sub = _bgGenerator.jobStatusStream.listen((job) {
+            if (job.id == bgJob.id) {
+              if (job.status == JobStatus.completed ||
+                  job.status == JobStatus.skipped) {
+                if (!completer.isCompleted) completer.complete(true);
+              } else if (job.status == JobStatus.failed ||
+                  job.status == JobStatus.cancelled) {
+                if (!completer.isCompleted) completer.complete(false);
+              } else {
+                // Update progress
+                if (!_isDisposed && !_stopRequested) {
+                  _updateStatus(
+                    _status.copyWith(
+                      generationProgress: job.progress,
+                      generationMessage:
+                          'Generating: ${(job.progress * 100).toInt()}%',
+                    ),
+                  );
+                }
+              }
+            }
+          });
+
+          final result = await completer.future;
+          await sub.cancel();
+
+          if (!result) {
+            debugPrint(
+              '[EpubAudiobook] Background generation failed for Ch $chapterIndex',
+            );
+            _completePlaybackSafe(false);
+            return false;
+          }
+          debugPrint(
+            '[EpubAudiobook] Background generation completed for Ch $chapterIndex',
+          );
+        } else {
+          // 3. Generate Foreground (if not in bg queue)
+          debugPrint(
+            '[EpubAudiobook] Chapter $chapterIndex: Generating (Foreground)...',
+          );
+
+          _updateStatus(
+            _status.copyWith(
+              state: AudiobookState.generating,
+              currentChapter: chapterIndex,
+              generationProgress: 0.0,
+              generationMessage: 'Generating audio...',
+            ),
+            immediate: true,
+          );
+
+          final audioPath = await TtsController.instance.generateAudioSimple(
+            text: text,
+            bookId: bookId,
+            pageNumber: chapterIndex,
+            speed: _settings.playbackSpeed,
+            onProgress: (progress) {
+              if (!_isDisposed && !_stopRequested) {
+                _updateStatus(
+                  _status.copyWith(
+                    state: AudiobookState.generating,
+                    currentChapter: chapterIndex,
+                    generationProgress: progress,
+                    generationMessage:
+                        'Generating: ${(progress * 100).toInt()}%',
+                  ),
+                );
+              }
+            },
+          );
+
+          if (audioPath == null) {
+            debugPrint(
+              '[EpubAudiobook] Chapter $chapterIndex: Generation FAILED',
+            );
+            _updateStatus(
+              _status.copyWith(
+                state: AudiobookState.error,
+                error: 'Generation failed',
+              ),
+              immediate: true,
+            );
+            _completePlaybackSafe(false);
+            return false;
+          }
+
+          debugPrint(
+            '[EpubAudiobook] Chapter $chapterIndex: Generation SUCCESS',
+          );
+        }
       }
 
       if (_stopRequested || _isDisposed) {
@@ -1166,67 +1151,67 @@ class EpubAudiobookController {
   }
 
   Future<void> _playAudioEntry(dynamic entry, BuildContext context) async {
-    if (_isDisposed || _stopRequested) {
-      _completePlaybackSafe(false);
-      return;
-    }
-
     try {
-      await TtsController.instance.playCachedEntry(
-        entry: entry,
-        context: context,
-        showUi: false,
-        onStateChanged: (state) {
-          if (_isDisposed || _stopRequested) return;
-
-          try {
-            switch (state) {
-              case TtsPlaybackState.playing:
-                _updateStatus(_status.copyWith(state: AudiobookState.playing));
-                break;
-              case TtsPlaybackState.generating:
-              case TtsPlaybackState.loading:
-                _updateStatus(
-                  _status.copyWith(state: AudiobookState.generating),
-                );
-                break;
-              case TtsPlaybackState.paused:
-                if (_pauseRequested) {
-                  _updateStatus(_status.copyWith(state: AudiobookState.paused));
-                }
-                break;
-              case TtsPlaybackState.completed:
-                // Handled by onCompleted
-                break;
-              case TtsPlaybackState.error:
-              case TtsPlaybackState.idle:
-              case TtsPlaybackState.stopped:
-              case TtsPlaybackState.initial:
-                // Ignored - let onCompleted handle
-                break;
+      if (entry.filePath != null) {
+        await TtsController.instance.playCachedEntry(
+          entry: entry,
+          context: context,
+          showUi: false,
+          onProgress: (progress) {
+            if (!_isDisposed && !_stopRequested) {
+              // Update playback progress
+              // Use a lower debounce or immediate=false (debounce 50ms)
+              _updateStatus(_status.copyWith(playbackProgress: progress));
             }
-          } catch (e) {
-            debugPrint('[EpubAudiobook] State change error: $e');
-          }
-        },
-        onProgress: (progress) {
-          if (_isDisposed) return;
-          _updateStatus(
-            _status.copyWith(playbackProgress: progress.clamp(0.0, 1.0)),
-          );
-        },
-        onError: (error) {
-          debugPrint('[EpubAudiobook] Playback error: $error');
-          _completePlaybackSafe(false);
-        },
-        onCompleted: () {
-          // CRITICAL: Only place we complete successfully
-          debugPrint('[EpubAudiobook] onCompleted callback');
-          if (!_stopRequested && !_skipToNextRequested) {
+          },
+          onStateChanged: (state) {
+            if (_isDisposed || _stopRequested) return;
+
+            try {
+              switch (state) {
+                case TtsPlaybackState.playing:
+                  _updateStatus(
+                    _status.copyWith(state: AudiobookState.playing),
+                  );
+                  break;
+                case TtsPlaybackState.generating:
+                case TtsPlaybackState.loading:
+                  _updateStatus(
+                    _status.copyWith(state: AudiobookState.generating),
+                  );
+                  break;
+                case TtsPlaybackState.paused:
+                  if (_pauseRequested) {
+                    _updateStatus(
+                      _status.copyWith(state: AudiobookState.paused),
+                    );
+                  }
+                  break;
+                case TtsPlaybackState.completed:
+                  // Handled by onCompleted callback
+                  break;
+                case TtsPlaybackState.error:
+                case TtsPlaybackState.idle:
+                case TtsPlaybackState.stopped:
+                case TtsPlaybackState.initial:
+                  // Ignored
+                  break;
+              }
+            } catch (e) {
+              debugPrint('[EpubAudiobook] State change error: $e');
+            }
+          },
+          onCompleted: () {
             _completePlaybackSafe(true);
-          }
-        },
-      );
+          },
+          onError: (err) {
+            debugPrint('[EpubAudiobook] Playback error: $err');
+            _completePlaybackSafe(false);
+          },
+        );
+      } else {
+        _completePlaybackSafe(false);
+      }
     } catch (e) {
       debugPrint('[EpubAudiobook] Play error: $e');
       _completePlaybackSafe(false);
@@ -1234,49 +1219,31 @@ class EpubAudiobookController {
   }
 
   void _completePlaybackSafe(bool success) {
-    try {
-      if (_playbackCompleter != null && !_playbackCompleter!.isCompleted) {
-        debugPrint('[EpubAudiobook] Completing playback: $success');
-        _playbackCompleter!.complete(success);
-      }
-    } catch (e) {
-      debugPrint('[EpubAudiobook] Complete error: $e');
+    if (_playbackCompleter != null && !_playbackCompleter!.isCompleted) {
+      _playbackCompleter!.complete(success);
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PLAYBACK CONTROLS
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC CONTROLS (Restored)
+  // ═══════════════════════════════════════════════════════════════════════════
 
   void pause() {
-    try {
-      if (_status.state == AudiobookState.playing ||
-          _status.state == AudiobookState.generating) {
-        _pauseRequested = true;
-        _updateStatus(
-          _status.copyWith(state: AudiobookState.paused),
-          immediate: true,
-        );
-        TtsController.instance.pause();
-      }
-    } catch (e) {
-      debugPrint('[EpubAudiobook] Pause error: $e');
-    }
+    _pauseRequested = true;
+    _updateStatus(
+      _status.copyWith(state: AudiobookState.paused),
+      immediate: true,
+    );
+    TtsController.instance.pause(); // ✅ FIX
   }
 
   void resume() {
-    try {
-      if (_status.state == AudiobookState.paused) {
-        _pauseRequested = false;
-        _updateStatus(
-          _status.copyWith(state: AudiobookState.playing),
-          immediate: true,
-        );
-        TtsController.instance.play();
-      }
-    } catch (e) {
-      debugPrint('[EpubAudiobook] Resume error: $e');
-    }
+    _pauseRequested = false;
+    _updateStatus(
+      _status.copyWith(state: AudiobookState.playing),
+      immediate: true,
+    );
+    TtsController.instance.play(); // ✅ FIX: TtsController uses play() to resume
   }
 
   void togglePlayPause() {
@@ -1284,6 +1251,10 @@ class EpubAudiobookController {
       pause();
     } else if (_status.state == AudiobookState.paused) {
       resume();
+    } else {
+      debugPrint(
+        '[EpubAudiobook] togglePlayPause ignored in state: ${_status.state}',
+      );
     }
   }
 
@@ -1291,10 +1262,11 @@ class EpubAudiobookController {
     try {
       if (_currentChapterIndex < book.chapterCount - 1) {
         _skipToNextRequested = true;
-        _completePlaybackSafe(false);
+        _pauseRequested = false; // ✅ Force resume if paused
+        _completePlaybackSafe(false); // Stop current waiting
 
         if (context.mounted) {
-          await TtsController.instance.stopAll(context);
+          await TtsController.instance.stop(context); // ✅ FIX
         }
 
         _currentChapterIndex++;
@@ -1305,9 +1277,12 @@ class EpubAudiobookController {
             currentChapter: _currentChapterIndex,
             currentChapterTitle: _getChapterTitle(_currentChapterIndex),
             playbackProgress: 0.0,
+            state: AudiobookState.preparing,
           ),
           immediate: true,
         );
+
+        // The read loop will pick up the index change and continue
       }
     } catch (e) {
       debugPrint('[EpubAudiobook] Next error: $e');
@@ -1318,10 +1293,11 @@ class EpubAudiobookController {
     try {
       if (_currentChapterIndex > 0) {
         _skipToNextRequested = true;
+        _pauseRequested = false; // ✅ Force resume if paused
         _completePlaybackSafe(false);
 
         if (context.mounted) {
-          await TtsController.instance.stopAll(context);
+          await TtsController.instance.stop(context); // ✅ FIX
         }
 
         _currentChapterIndex--;
@@ -1332,6 +1308,7 @@ class EpubAudiobookController {
             currentChapter: _currentChapterIndex,
             currentChapterTitle: _getChapterTitle(_currentChapterIndex),
             playbackProgress: 0.0,
+            state: AudiobookState.preparing,
           ),
           immediate: true,
         );
@@ -1345,10 +1322,11 @@ class EpubAudiobookController {
     try {
       if (chapterIndex >= 0 && chapterIndex < book.chapterCount) {
         _skipToNextRequested = true;
+        _pauseRequested = false; // ✅ Force resume if paused
         _completePlaybackSafe(false);
 
         if (context.mounted) {
-          await TtsController.instance.stopAll(context);
+          await TtsController.instance.stop(context); // ✅ FIX
         }
 
         _currentChapterIndex = chapterIndex;
@@ -1359,6 +1337,7 @@ class EpubAudiobookController {
             currentChapter: _currentChapterIndex,
             currentChapterTitle: _getChapterTitle(_currentChapterIndex),
             playbackProgress: 0.0,
+            state: AudiobookState.preparing,
           ),
           immediate: true,
         );
@@ -1368,10 +1347,6 @@ class EpubAudiobookController {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // SETTINGS
-  // ═══════════════════════════════════════════════════════════════════════
-
   void setPlaybackSpeed(double speed) {
     _settings = _settings.copyWith(playbackSpeed: speed.clamp(0.5, 3.0));
     _updateStatus(
@@ -1379,138 +1354,39 @@ class EpubAudiobookController {
       immediate: true,
     );
     try {
-      TtsController.instance.setSpeed(_settings.playbackSpeed);
+      TtsController.instance.setSpeed(_settings.playbackSpeed); // ✅ FIX
     } catch (e) {
       debugPrint('[EpubAudiobook] Set speed error: $e');
     }
   }
 
-  void setSkipSilence(bool skip) {
-    _settings = _settings.copyWith(skipSilence: skip);
-    _updateStatus(_status.copyWith(skipSilence: skip));
-  }
-
-  void updateSettings(AudiobookSettings newSettings) {
-    _settings = newSettings;
-    _updateStatus(
-      _status.copyWith(
-        playbackSpeed: newSettings.playbackSpeed,
-        skipSilence: newSettings.skipSilence,
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // SLEEP TIMER
-  // ═══════════════════════════════════════════════════════════════════════
-
-  void setSleepTimer(Duration duration) {
-    _cancelSleepTimer();
-    _sleepTimerEnd = DateTime.now().add(duration);
-
-    _sleepTimer = Timer(duration, () {
-      _updateStatus(
-        _status.copyWith(isSleepTimerActive: false, sleepTimerRemaining: null),
-        immediate: true,
-      );
-      pause();
-      _safeMessage('Sleep timer ended');
-    });
-
-    _sleepTimerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_sleepTimerEnd != null) {
-        final remaining = _sleepTimerEnd!.difference(DateTime.now());
-        if (remaining.isNegative) {
-          _cancelSleepTimer();
-        } else {
-          _updateStatus(
-            _status.copyWith(
-              isSleepTimerActive: true,
-              sleepTimerRemaining: remaining,
-            ),
-          );
-        }
-      }
-    });
-
-    _updateStatus(
-      _status.copyWith(isSleepTimerActive: true, sleepTimerRemaining: duration),
-      immediate: true,
-    );
-
-    _safeMessage('Sleep timer set for ${_formatDuration(duration)}');
-  }
-
-  void cancelSleepTimer() {
-    _cancelSleepTimer();
-    _safeMessage('Sleep timer cancelled');
-  }
-
-  void _cancelSleepTimer() {
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    _sleepTimerUpdateTimer?.cancel();
-    _sleepTimerUpdateTimer = null;
-    _sleepTimerEnd = null;
-
-    _updateStatus(
-      _status.copyWith(isSleepTimerActive: false, sleepTimerRemaining: null),
-    );
-  }
-
-  bool _shouldStopForSleepTimer() {
-    if (_sleepTimerEnd == null) return false;
-    return DateTime.now().isAfter(_sleepTimerEnd!);
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // HELPERS
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<String?> _getChapterTextSafe(int chapterIndex) async {
+  String? _getChapterTitle(int index) {
+    if (index >= 0 && index < book.chapters.length) {
+      return book.chapters[index].title;
+    }
+    return 'Chapter ${index + 1}';
+  }
+
+  Future<String?> _getChapterTextSafe(int index) async {
     try {
-      final useTranslation = isTranslationMode?.call() ?? false;
-
-      if (useTranslation && getTranslatedChapterText != null) {
-        final translated = await getTranslatedChapterText!(chapterIndex);
-        if (translated != null && translated.isNotEmpty) {
-          return translated;
-        }
+      if (isTranslationMode?.call() == true &&
+          getTranslatedChapterText != null) {
+        return await getTranslatedChapterText!(index);
       }
-
-      return await getChapterText(chapterIndex);
+      return await getChapterText(index);
     } catch (e) {
-      debugPrint('[EpubAudiobook] Get text error: $e');
+      debugPrint('Error getting chapter text: $e');
       return null;
     }
   }
 
-  String? _getChapterTitle(int index) {
-    if (index < 0 || index >= book.chapters.length) return null;
-    return book.chapters[index].title;
-  }
-
-  String _truncateText(String text, int maxLength) {
-    if (text.length <= maxLength) return text;
-    return '${text.substring(0, maxLength)}...';
-  }
-
-  String _formatDuration(Duration duration) {
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes % 60;
-
-    if (hours > 0) {
-      return '$hours hr $minutes min';
-    }
-    return '$minutes min';
-  }
-
   void _safeMessage(String message) {
-    try {
+    if (!_isDisposed) {
       onMessage?.call(message);
-      debugPrint('[EpubAudiobook] $message');
-    } catch (e) {
-      debugPrint('[EpubAudiobook] Message error: $e');
     }
   }
 
@@ -1522,37 +1398,161 @@ class EpubAudiobookController {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // DISPOSE
-  // ═══════════════════════════════════════════════════════════════════════
+  void _cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimerUpdateTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerUpdateTimer = null;
+    _sleepTimerEnd = null;
+    _updateStatus(
+      _status.copyWith(isSleepTimerActive: false, sleepTimerRemaining: null),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SETTINGS UPDATES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void updateSettings(AudiobookSettings newSettings) {
+    _settings = newSettings;
+    debugPrint('[EpubAudiobook] Settings updated: $_settings');
+
+    // Trigger background generation if settings changed
+    if (_status.isActive) {
+      _startBackgroundGeneration();
+    }
+  }
+
+  void setSleepTimer(Duration? duration) {
+    _cancelSleepTimer();
+
+    if (duration != null) {
+      _sleepTimerEnd = DateTime.now().add(duration);
+      _updateStatus(
+        _status.copyWith(
+          isSleepTimerActive: true,
+          sleepTimerRemaining: duration,
+        ),
+      );
+
+      _sleepTimer = Timer(duration, () {
+        final ctx = _contextRef?.target;
+        if (ctx != null && ctx.mounted) {
+          stop(ctx);
+        } else {
+          forceStop();
+        }
+        _safeMessage('Sleep timer ended');
+      });
+
+      _sleepTimerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (
+        timer,
+      ) {
+        if (_sleepTimerEnd != null) {
+          final remaining = _sleepTimerEnd!.difference(DateTime.now());
+          if (remaining.isNegative) {
+            timer.cancel();
+          } else {
+            _updateStatus(_status.copyWith(sleepTimerRemaining: remaining));
+          }
+        }
+      });
+    }
+  }
+
+  void skipToNext() {
+    if (_status.isActive && !_isDisposed) {
+      _skipToNextRequested = true;
+      _pauseRequested = false; // ✅ Force resume
+      try {
+        TtsController.instance.forceStop();
+      } catch (e) {
+        debugPrint('[EpubAudiobook] skipToNext stop error: $e');
+      }
+      _completePlaybackSafe(true); // Treat as success to ensure loop continues
+    }
+  }
+
+  void skipToPrevious() {
+    if (_status.isActive && !_isDisposed) {
+      _pauseRequested = false; // ✅ Force resume
+      if (_currentChapterIndex > 0) {
+        _currentChapterIndex = (_currentChapterIndex - 2).clamp(
+          0,
+          book.chapterCount,
+        ); // Will be incremented by loop
+        try {
+          TtsController.instance.forceStop();
+        } catch (e) {
+          debugPrint('[EpubAudiobook] skipToPrevious stop error: $e');
+        }
+        _completePlaybackSafe(true);
+      } else {
+        // Restart current
+        try {
+          TtsController.instance.forceStop();
+        } catch (e) {
+          debugPrint('[EpubAudiobook] skipToPrevious restart error: $e');
+        }
+        // But we need to make sure loop restarts THIS chapter
+        _currentChapterIndex--; // Will be incremented to current
+        _completePlaybackSafe(true);
+      }
+    }
+  }
+
+  void pausePlayback() {
+    _pauseRequested = true;
+    _updateStatus(
+      _status.copyWith(state: AudiobookState.paused),
+      immediate: true,
+    );
+    try {
+      TtsController.instance.pause();
+    } catch (e) {
+      debugPrint('[EpubAudiobook] pausePlayback error: $e');
+    }
+  }
+
+  void resumePlayback() {
+    _pauseRequested = false;
+    _updateStatus(
+      _status.copyWith(state: AudiobookState.playing),
+      immediate: true,
+    );
+    try {
+      TtsController.instance.play();
+    } catch (e) {
+      debugPrint('[EpubAudiobook] resumePlayback error: $e');
+    }
+  }
+
+  void cancelSleepTimer() {
+    // ✅ Restore public method
+    _cancelSleepTimer();
+    _safeMessage('Sleep timer cancelled');
+  }
 
   void dispose() {
-    debugPrint('[EpubAudiobook] Disposing');
+    debugPrint('[EpubAudiobook] Dispose');
+    _isDisposed = true;
+    _stopRequested = true;
+    _statusDebounceTimer?.cancel();
+    _bgJobSubscription?.cancel();
+    _statusController.close();
+    _cancelSleepTimer();
 
     try {
-      _isDisposed = true;
-      _stopRequested = true;
-      _completePlaybackSafe(false);
-      _cancelSleepTimer();
-
-      _statusDebounceTimer?.cancel();
-      _statusDebounceTimer = null;
-
-      _bgJobSubscription?.cancel();
-      _bgJobSubscription = null;
-
-      if (!_statusController.isClosed) {
-        _statusController.close();
-      }
-
-      _contextRef = null;
+      TtsController.instance.forceStop();
     } catch (e) {
-      debugPrint('[EpubAudiobook] Dispose error: $e');
+      debugPrint('[EpubAudiobook] Dispose stop error: $e');
     }
   }
 }
 
-// Helper to run futures without awaiting
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════════════
 void unawaited(Future<void> future) {
   future.catchError((e) {
     debugPrint('[EpubAudiobook] Unawaited error: $e');

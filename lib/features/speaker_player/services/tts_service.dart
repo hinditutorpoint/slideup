@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
+import 'dart:isolate';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import '../models/tts_request.dart';
+import 'tts_isolate.dart';
 
 class TtsService {
   static TtsService? _instance;
@@ -11,17 +15,20 @@ class TtsService {
 
   TtsService._();
 
-  // Cache of initialized TTS engines by model path
-  final Map<String, sherpa.OfflineTts> _ttsEngines = {};
+  // Isolate Management
+  Isolate? _isolate;
+  SendPort? _sendPort;
+  Completer<void>? _isolateInitCompleter;
+  StreamSubscription? _isolateSubscription;
+  bool _isDisposed = false;
+
+  // Track requests
+  final Map<String, Completer<bool>> _modelLoadCompleters = {};
+  final Map<String, _GenerationRequestState> _pendingRequests = {};
+
   String? _defaultModelPath;
   String? _defaultModelName;
-
   bool _sherpaInitialized = false;
-  Completer<void>? _sherpaInitCompleter;
-
-  // Track if generation is in progress
-  bool _isGenerating = false;
-  bool _cancelRequested = false;
 
   final _stateController = StreamController<TtsPlaybackState>.broadcast();
   Stream<TtsPlaybackState> get stateStream => _stateController.stream;
@@ -30,69 +37,148 @@ class TtsService {
   bool get isSherpaInitialized => _sherpaInitialized;
   String? get defaultModelPath => _defaultModelPath;
   String? get defaultModelName => _defaultModelName;
-  bool get isGenerating => _isGenerating;
 
-  /// Cancel ongoing generation
-  void cancelGeneration() {
-    _cancelRequested = true;
-  }
+  // Track if generation is in progress (any request)
+  bool get isGenerating => _pendingRequests.isNotEmpty;
 
-  Future<void> _ensureSherpaInitialized() async {
-    if (_sherpaInitialized) return;
-
-    if (_sherpaInitCompleter != null) {
-      return _sherpaInitCompleter!.future;
+  /// Ensure the isolate is initialized and bindings are ready
+  Future<void> _ensureIsolateReady() async {
+    if (_isolateInitCompleter != null) {
+      return _isolateInitCompleter!.future;
     }
 
-    _sherpaInitCompleter = Completer<void>();
+    _isolateInitCompleter = Completer<void>();
+    debugPrint('[TtsService] Spawning TTS Isolate...');
 
     try {
-      debugPrint('[TtsService] Initializing Sherpa bindings...');
-      _stateController.add(TtsPlaybackState.loading);
+      final receivePort = ReceivePort();
+      _isolate = await Isolate.spawn(ttsIsolateEntry, receivePort.sendPort);
 
-      await _initSherpaBindingsWithTimeout();
+      final completer = Completer<SendPort>();
 
-      _sherpaInitialized = true;
-      _sherpaInitCompleter!.complete();
+      _isolateSubscription = receivePort.listen((message) {
+        if (message is SendPort) {
+          completer.complete(message);
+        } else if (message is Map<String, dynamic>) {
+          _handleIsolateMessage(message);
+        }
+      });
 
-      debugPrint('[TtsService] Sherpa bindings initialized successfully');
-      _stateController.add(TtsPlaybackState.idle);
-    } catch (e, st) {
-      debugPrint('[TtsService] Failed to initialize Sherpa bindings: $e');
-      debugPrint('[TtsService] Stack: $st');
-      _sherpaInitCompleter!.completeError(e);
-      _sherpaInitCompleter = null;
-      _stateController.add(TtsPlaybackState.error);
-      throw Exception('Failed to initialize Sherpa bindings: $e');
-    }
-  }
+      _sendPort = await completer.future;
+      debugPrint('[TtsService] TTS Isolate spawned. Initializing bindings...');
 
-  Future<void> _initSherpaBindingsWithTimeout() async {
-    final completer = Completer<void>();
-    Timer? timeoutTimer;
+      // Initialize Sherpa bindings in isolate
+      _sendPort!.send({'command': TtsIsolateCommand.init});
 
-    timeoutTimer = Timer(const Duration(seconds: 30), () {
-      if (!completer.isCompleted) {
-        completer.completeError(
-          TimeoutException('Sherpa initialization timed out after 30 seconds'),
-        );
-      }
-    });
-
-    try {
-      sherpa.initBindings();
-      timeoutTimer.cancel();
-      if (!completer.isCompleted) {
-        completer.complete();
-      }
+      // Wait for success response (handled in _handleIsolateMessage)
+      // We rely on _isolateInitCompleter being completed there
     } catch (e) {
-      timeoutTimer.cancel();
-      if (!completer.isCompleted) {
-        completer.completeError(e);
-      }
+      debugPrint('[TtsService] Isolate spawn failed: $e');
+      _isolateInitCompleter?.completeError(e);
+      _isolateInitCompleter = null;
     }
 
-    return completer.future;
+    return _isolateInitCompleter!.future;
+  }
+
+  void _handleIsolateMessage(Map<String, dynamic> message) {
+    if (_isDisposed) return;
+
+    final type = message['type'] as TtsIsolateResponse;
+
+    switch (type) {
+      case TtsIsolateResponse.initSuccess:
+        debugPrint('[TtsService] Isolate bindings initialized');
+        _sherpaInitialized = true;
+        _isolateInitCompleter?.complete();
+        _stateController.add(TtsPlaybackState.idle);
+        break;
+
+      case TtsIsolateResponse.initFailure:
+        debugPrint('[TtsService] Isolate bindings failed: ${message['error']}');
+        _stateController.add(TtsPlaybackState.error);
+        _isolateInitCompleter?.completeError(message['error']);
+        break;
+
+      case TtsIsolateResponse.modelLoaded:
+        final path = message['modelPath'];
+        debugPrint('[TtsService] Model loaded in isolate: $path');
+        _modelLoadCompleters[path]?.complete(true);
+        _modelLoadCompleters.remove(path);
+        break;
+
+      case TtsIsolateResponse.modelLoadFailed:
+        final path = message['modelPath'];
+        debugPrint('[TtsService] Model load failed: ${message['error']}');
+        _modelLoadCompleters[path]?.complete(false);
+        _modelLoadCompleters.remove(path);
+        break;
+
+      case TtsIsolateResponse.generationProgress:
+        final id = message['requestId'];
+        final progress = message['progress'] as double;
+        _pendingRequests[id]?.onProgress?.call(progress);
+        break;
+
+      case TtsIsolateResponse.generationSuccess:
+        final id = message['requestId'];
+        final success = message['success'] as GenerationSuccess;
+        _handleGenerationSuccess(id, success);
+        break;
+
+      case TtsIsolateResponse.generationFailure:
+        final id = message['requestId'];
+        final error = message['error'];
+        _handleGenerationFailure(id, error);
+        break;
+    }
+  }
+
+  Future<void> _handleGenerationSuccess(
+    String id,
+    GenerationSuccess success,
+  ) async {
+    final state = _pendingRequests.remove(id);
+    if (state == null) return;
+
+    try {
+      // Save to file
+      String? filePath;
+      try {
+        filePath = state.outputPath ?? await _getDefaultOutputPath();
+        final file = File(filePath);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(success.audioData);
+        debugPrint('[TtsService] Audio saved to: $filePath');
+      } catch (e) {
+        debugPrint('[TtsService] File save error: $e');
+        filePath = null;
+      }
+
+      _stateController.add(TtsPlaybackState.idle);
+
+      state.completer.complete(
+        TtsGenerationResult(
+          audioData: success.audioData,
+          filePath: filePath,
+          sampleRate: success.sampleRate,
+          duration: Duration(
+            milliseconds: (success.durationSeconds * 1000).round(),
+          ),
+        ),
+      );
+    } catch (e) {
+      state.completer.complete(null);
+    }
+  }
+
+  void _handleGenerationFailure(String id, String error) {
+    debugPrint('[TtsService] Generation failed: $error');
+    final state = _pendingRequests.remove(id);
+    if (state != null) {
+      _stateController.add(TtsPlaybackState.error);
+      state.completer.complete(null);
+    }
   }
 
   /// Set default model
@@ -111,438 +197,119 @@ class TtsService {
 
   /// Initialize TTS engine for a model path
   Future<bool> _initializeEngine(String modelPath) async {
-    if (_ttsEngines.containsKey(modelPath)) {
-      debugPrint('[TtsService] Engine already initialized for: $modelPath');
-      return true;
-    }
-
     try {
-      await _ensureSherpaInitialized();
+      await _ensureIsolateReady();
 
-      debugPrint('[TtsService] Initializing engine for: $modelPath');
-      _stateController.add(TtsPlaybackState.loading);
-
-      final modelDir = Directory(modelPath);
-      String? onnxModel;
-      String? tokens;
-      String? dataDir;
-
-      if (await modelDir.exists()) {
-        await for (final entity in modelDir.list(recursive: true)) {
-          if (entity is File) {
-            final name = entity.path.split('/').last.toLowerCase();
-            final ext = name.split('.').last;
-
-            if ((ext == 'onnx' || name.startsWith('onnx_')) &&
-                onnxModel == null) {
-              onnxModel = entity.path;
-            } else if ((name.contains('tokens') ||
-                    name.contains('token') ||
-                    ext == 'txt') &&
-                tokens == null) {
-              tokens = entity.path;
-            }
-          } else if (entity is Directory) {
-            final name = entity.path.split('/').last.toLowerCase();
-            if (name.contains('espeak') ||
-                name.contains('data') ||
-                name.contains('lexicon')) {
-              dataDir = entity.path;
-            }
-          }
-        }
-      } else if (modelPath.endsWith('.onnx')) {
-        onnxModel = modelPath;
+      if (_modelLoadCompleters.containsKey(modelPath)) {
+        return _modelLoadCompleters[modelPath]!.future;
       }
 
-      if (onnxModel == null) {
-        debugPrint('[TtsService] No ONNX model found in: $modelPath');
-        if (await modelDir.exists()) {
-          debugPrint('[TtsService] Available files:');
-          await for (final entity in modelDir.list(recursive: true)) {
-            debugPrint('  ${entity.path}');
-          }
-        }
-        return false;
-      }
+      final completer = Completer<bool>();
+      _modelLoadCompleters[modelPath] = completer;
 
-      debugPrint('[TtsService] ONNX: $onnxModel');
-      debugPrint('[TtsService] Tokens: $tokens');
-      debugPrint('[TtsService] Data: $dataDir');
+      _sendPort!.send({
+        'command': TtsIsolateCommand.loadModel,
+        'modelPath': modelPath,
+      });
 
-      final config = sherpa.OfflineTtsConfig(
-        model: sherpa.OfflineTtsModelConfig(
-          vits: sherpa.OfflineTtsVitsModelConfig(
-            model: onnxModel,
-            tokens: tokens ?? '',
-            dataDir: dataDir ?? '',
-          ),
-          numThreads: 2,
-          debug: false,
-        ),
-      );
-
-      final tts = sherpa.OfflineTts(config);
-      _ttsEngines[modelPath] = tts;
-
-      debugPrint('[TtsService] Engine initialized successfully');
-      _stateController.add(TtsPlaybackState.idle);
-      return true;
-    } catch (e, st) {
-      debugPrint('[TtsService] Initialization error: $e');
-      debugPrint('[TtsService] Stack: $st');
-      _stateController.add(TtsPlaybackState.error);
+      return completer.future;
+    } catch (e) {
+      debugPrint('[TtsService] Init engine error: $e');
       return false;
     }
   }
 
-  /// Get TTS engine for model path (or default)
-  Future<sherpa.OfflineTts?> _getEngine(String? modelPath) async {
-    final path = modelPath ?? _defaultModelPath;
-
-    if (path == null) {
-      debugPrint('[TtsService] No model path provided and no default set');
-      return null;
-    }
-
-    await _ensureSherpaInitialized();
-
-    if (!_ttsEngines.containsKey(path)) {
-      final success = await _initializeEngine(path);
-      if (!success) return null;
-    }
-
-    return _ttsEngines[path];
-  }
-
-  /// Generate audio from text - WITH CHUNKING TO PREVENT UI FREEZE
+  /// Generate audio from text (delegates to isolate)
   Future<TtsGenerationResult?> generateAudio({
     required String text,
     String? modelPath,
     double speed = 1.0,
     int speakerId = 0,
+    String? outputPath,
     void Function(double progress)? onProgress,
   }) async {
-    final engine = await _getEngine(modelPath);
-    if (engine == null) {
-      debugPrint('[TtsService] No engine available');
-      return null;
-    }
-
-    try {
-      debugPrint(
-        '[TtsService] Generating: "${text.substring(0, text.length.clamp(0, 30))}..."',
-      );
-      _stateController.add(TtsPlaybackState.generating);
-
-      // Split into chunks for UI responsiveness
-      final chunks = _splitTextIntoChunks(text, maxChunkLength: 120);
-      debugPrint('[TtsService] Split into ${chunks.length} chunks');
-
-      final allSamples = <double>[];
-      int sampleRate = 22050;
-
-      for (int i = 0; i < chunks.length; i++) {
-        final chunk = chunks[i].trim();
-        if (chunk.isEmpty) continue;
-
-        // Yield to UI before generation
-        await Future.delayed(const Duration(milliseconds: 150));
-
-        try {
-          final audio = engine.generate(
-            text: chunk,
-            sid: speakerId,
-            speed: speed,
-          );
-          allSamples.addAll(audio.samples);
-          sampleRate = audio.sampleRate;
-
-          onProgress?.call((i + 1) / chunks.length);
-
-          // Yield to UI after generation
-          await Future.delayed(const Duration(milliseconds: 150));
-        } catch (e) {
-          debugPrint('[TtsService] Chunk $i error: $e');
-          continue;
-        }
-      }
-
-      if (allSamples.isEmpty) {
-        debugPrint('[TtsService] ✗ No samples generated');
-        _stateController.add(TtsPlaybackState.error);
-        return null;
-      }
-
-      debugPrint(
-        '[TtsService] Generated ${allSamples.length} samples at ${sampleRate}Hz',
-      );
-
-      // ✅ FIX: Yield before WAV creation
-      await Future.delayed(const Duration(milliseconds: 50));
-
-      // Create WAV file
-      final wavBytes = _createWavFile(
-        Float32List.fromList(allSamples),
-        sampleRate,
-      );
-
-      debugPrint('[TtsService] Created WAV: ${wavBytes.length} bytes');
-
-      // ✅ FIX: Save to temp file with better error handling
-      String? filePath;
-      try {
-        filePath = await _getDefaultOutputPath();
-        debugPrint('[TtsService] Saving to: $filePath');
-
-        final file = File(filePath);
-
-        // Ensure parent directory exists
-        await file.parent.create(recursive: true);
-
-        // Write file
-        await file.writeAsBytes(wavBytes);
-
-        // ✅ FIX: Verify file was written
-        if (!await file.exists()) {
-          debugPrint('[TtsService] ✗ File not found after write');
-          filePath = null;
-        } else {
-          final fileSize = await file.length();
-          debugPrint('[TtsService] ✓ File saved: $fileSize bytes');
-        }
-      } catch (e) {
-        debugPrint('[TtsService] ✗ File save error: $e');
-        filePath = null;
-      }
-
-      _stateController.add(TtsPlaybackState.idle);
-
-      return TtsGenerationResult(
-        audioData: wavBytes,
-        filePath: filePath,
-        sampleRate: sampleRate,
-        duration: Duration(
-          milliseconds: (allSamples.length / sampleRate * 1000).round(),
-        ),
-      );
-    } catch (e, st) {
-      debugPrint('[TtsService] ✗ Error: $e\n$st');
-      _stateController.add(TtsPlaybackState.error);
-      return null;
-    }
+    return generateAudioWithChunks(
+      text: text,
+      modelPath: modelPath ?? _defaultModelPath ?? '',
+      speed: speed,
+      speakerId: speakerId,
+      outputPath: outputPath,
+      onProgress: onProgress,
+    );
   }
 
-  /// Generate audio with proper chunking and UI yields (NEW METHOD)
+  /// Generate audio with chunks (now just delegates to isolate, but keeping signature)
   Future<TtsGenerationResult?> generateAudioWithChunks({
     required String text,
     required String modelPath,
     double speed = 1.0,
     int speakerId = 0,
+    String? outputPath,
     void Function(double progress)? onProgress,
   }) async {
-    final engine = await _getEngine(modelPath);
-    if (engine == null) {
-      debugPrint('[TtsService] No TTS engine available');
-      return null;
-    }
+    debugPrint('[TtsService] ===== generateAudioWithChunks START =====');
+    debugPrint('[TtsService] Text length: ${text.length} chars');
+    debugPrint(
+      '[TtsService] Text preview: ${text.length > 100 ? text.substring(0, 100) : text}...',
+    );
+    debugPrint('[TtsService] Model: $modelPath');
+    debugPrint('[TtsService] Output path: $outputPath');
 
     try {
-      debugPrint(
-        '[TtsService] Generating with chunking: "${text.substring(0, text.length.clamp(0, 50))}..."',
-      );
+      // Ensure engine is loaded
+      debugPrint('[TtsService] Checking engine initialization...');
+      final engineReady = await _initializeEngine(modelPath);
+      if (!engineReady) {
+        debugPrint('[TtsService] ❌ Engine failed to initialize');
+        return null;
+      }
+      debugPrint('[TtsService] ✓ Engine ready');
+
       _stateController.add(TtsPlaybackState.generating);
 
-      // ✅ Split into smaller chunks (120 chars per chunk for UI responsiveness)
-      final chunks = _splitTextIntoChunks(text, maxChunkLength: 120);
-      debugPrint('[TtsService] Split into ${chunks.length} chunks');
+      final requestId = '${DateTime.now().microsecondsSinceEpoch}';
+      final completer = Completer<TtsGenerationResult?>();
 
-      final allSamples = <double>[];
-      int sampleRate = 22050;
+      _pendingRequests[requestId] = _GenerationRequestState(
+        completer: completer,
+        onProgress: onProgress,
+        outputPath: outputPath,
+      );
 
-      for (int i = 0; i < chunks.length; i++) {
-        if (_cancelRequested) {
-          debugPrint('[TtsService] Generation cancelled');
-          _stateController.add(TtsPlaybackState.idle);
-          return null;
-        }
+      final request = GenerationRequest(
+        id: requestId,
+        text: text,
+        modelPath: modelPath,
+        speed: speed,
+        speakerId: speakerId,
+      );
 
-        final chunk = chunks[i];
-        if (chunk.trim().isEmpty) continue;
-
-        // ✅ CRITICAL: Yield to UI BEFORE heavy work
-        await Future.delayed(const Duration(milliseconds: 100));
-
-        debugPrint('[TtsService] Generating chunk ${i + 1}/${chunks.length}');
-
-        try {
-          // Generate this chunk
-          final audio = engine.generate(
-            text: chunk,
-            sid: speakerId,
-            speed: speed,
-          );
-
-          allSamples.addAll(audio.samples);
-          sampleRate = audio.sampleRate;
-
-          // Report progress
-          final progress = (i + 1) / chunks.length;
-          onProgress?.call(progress);
-
-          // ✅ CRITICAL: Yield to UI AFTER heavy work
-          await Future.delayed(const Duration(milliseconds: 100));
-        } catch (e) {
-          debugPrint('[TtsService] Chunk ${i + 1} generation error: $e');
-          // Continue with other chunks instead of failing completely
-          continue;
-        }
-      }
-
-      if (allSamples.isEmpty) {
-        debugPrint('[TtsService] No audio generated');
+      debugPrint('[TtsService] Sending request to isolate (ID: $requestId)...');
+      try {
+        _sendPort!.send({
+          'command': TtsIsolateCommand.generate,
+          'request': request.toMap(),
+        });
+        debugPrint('[TtsService] ✓ Request sent to isolate successfully');
+      } catch (sendError, sendStack) {
+        debugPrint('[TtsService] ❌ CRITICAL: Failed to send to isolate!');
+        debugPrint('[TtsService] Error: $sendError');
+        debugPrint('[TtsService] Stack: $sendStack');
+        _pendingRequests.remove(requestId);
         _stateController.add(TtsPlaybackState.error);
         return null;
       }
 
-      debugPrint('[TtsService] Total samples generated: ${allSamples.length}');
-
-      // ✅ Yield before WAV creation
-      await Future.delayed(const Duration(milliseconds: 50));
-
-      final wavBytes = _createWavFile(
-        Float32List.fromList(allSamples),
-        sampleRate,
+      debugPrint('[TtsService] Waiting for isolate response...');
+      final result = await completer.future;
+      debugPrint(
+        '[TtsService] ===== generateAudioWithChunks END (${result != null ? "SUCCESS" : "NULL"}) =====',
       );
-
-      // Save to file
-      final filePath = await _getDefaultOutputPath();
-      final file = File(filePath);
-      await file.writeAsBytes(wavBytes);
-
-      debugPrint('[TtsService] Audio saved to: $filePath');
-
-      _stateController.add(TtsPlaybackState.idle);
-
-      return TtsGenerationResult(
-        audioData: wavBytes,
-        filePath: filePath,
-        sampleRate: sampleRate,
-        duration: Duration(
-          milliseconds: (allSamples.length / sampleRate * 1000).round(),
-        ),
-      );
+      return result;
     } catch (e, st) {
-      debugPrint('[TtsService] Generation error: $e\n$st');
+      debugPrint('[TtsService] Generate request error: $e\n$st');
       _stateController.add(TtsPlaybackState.error);
       return null;
-    }
-  }
-
-  List<String> _splitTextIntoChunks(String text, {int maxChunkLength = 120}) {
-    // ✅ CHANGE: Smaller chunks for less UI blocking
-    final chunks = <String>[];
-    final sentences = text.split(RegExp(r'(?<=[.!?।॥])\s+'));
-
-    var currentChunk = StringBuffer();
-
-    for (final sentence in sentences) {
-      if (currentChunk.length + sentence.length > maxChunkLength) {
-        if (currentChunk.isNotEmpty) {
-          chunks.add(currentChunk.toString().trim());
-          currentChunk.clear();
-        }
-
-        if (sentence.length > maxChunkLength) {
-          // ✅ FIX: Split long sentences more aggressively
-          final words = sentence.split(' ');
-          for (final word in words) {
-            if (currentChunk.length + word.length + 1 > maxChunkLength) {
-              if (currentChunk.isNotEmpty) {
-                chunks.add(currentChunk.toString().trim());
-                currentChunk.clear();
-              }
-            }
-            currentChunk.write('$word ');
-          }
-        } else {
-          currentChunk.write('$sentence ');
-        }
-      } else {
-        currentChunk.write('$sentence ');
-      }
-    }
-
-    if (currentChunk.isNotEmpty) {
-      chunks.add(currentChunk.toString().trim());
-    }
-
-    return chunks.where((c) => c.trim().isNotEmpty).toList();
-  }
-
-  Uint8List _createWavFile(Float32List samples, int sampleRate) {
-    try {
-      final numChannels = 1;
-      final bitsPerSample = 16;
-      final byteRate = sampleRate * numChannels * bitsPerSample ~/ 8;
-      final blockAlign = numChannels * bitsPerSample ~/ 8;
-      final dataSize = samples.length * 2;
-      final fileSize = 36 + dataSize;
-
-      final buffer = ByteData(44 + dataSize);
-      var offset = 0;
-
-      // RIFF header
-      buffer.setUint8(offset++, 0x52); // R
-      buffer.setUint8(offset++, 0x49); // I
-      buffer.setUint8(offset++, 0x46); // F
-      buffer.setUint8(offset++, 0x46); // F
-      buffer.setUint32(offset, fileSize, Endian.little);
-      offset += 4;
-      buffer.setUint8(offset++, 0x57); // W
-      buffer.setUint8(offset++, 0x41); // A
-      buffer.setUint8(offset++, 0x56); // V
-      buffer.setUint8(offset++, 0x45); // E
-
-      // fmt chunk
-      buffer.setUint8(offset++, 0x66); // f
-      buffer.setUint8(offset++, 0x6D); // m
-      buffer.setUint8(offset++, 0x74); // t
-      buffer.setUint8(offset++, 0x20); // space
-      buffer.setUint32(offset, 16, Endian.little);
-      offset += 4;
-      buffer.setUint16(offset, 1, Endian.little); // PCM
-      offset += 2;
-      buffer.setUint16(offset, numChannels, Endian.little);
-      offset += 2;
-      buffer.setUint32(offset, sampleRate, Endian.little);
-      offset += 4;
-      buffer.setUint32(offset, byteRate, Endian.little);
-      offset += 4;
-      buffer.setUint16(offset, blockAlign, Endian.little);
-      offset += 2;
-      buffer.setUint16(offset, bitsPerSample, Endian.little);
-      offset += 2;
-
-      // data chunk
-      buffer.setUint8(offset++, 0x64); // d
-      buffer.setUint8(offset++, 0x61); // a
-      buffer.setUint8(offset++, 0x74); // t
-      buffer.setUint8(offset++, 0x61); // a
-      buffer.setUint32(offset, dataSize, Endian.little);
-      offset += 4;
-
-      // Audio data
-      for (var i = 0; i < samples.length; i++) {
-        final sample = (samples[i].clamp(-1.0, 1.0) * 32767).round();
-        buffer.setInt16(offset, sample, Endian.little);
-        offset += 2;
-      }
-
-      return buffer.buffer.asUint8List();
-    } catch (e) {
-      debugPrint('[TtsService] WAV creation error: $e');
-      return Uint8List(0);
     }
   }
 
@@ -550,26 +317,49 @@ class TtsService {
     final baseDir = await getExternalStorageDirectory();
     final dir = baseDir ?? await getTemporaryDirectory();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    return '${dir.path}/tts_$timestamp.wav';
+    final random = Random().nextInt(10000);
+    return '${dir.path}/tts_${timestamp}_$random.wav';
   }
 
-  /// Clear cached engine for a model
+  /// Cancels any ongoing generation (best effort)
+  void cancelGeneration() {
+    // Current isolate impl process chunks sequentially, we can't easily interrupt
+    // without disposing the engine. For now, we just clear pending listeners.
+    for (var req in _pendingRequests.values) {
+      req.completer.complete(null);
+    }
+    _pendingRequests.clear();
+    _stateController.add(TtsPlaybackState.idle);
+  }
+
   void clearEngine(String modelPath) {
-    _ttsEngines.remove(modelPath);
+    // No-op for now, or send dispose command if needed
   }
 
-  /// Clear all cached engines
   void clearAllEngines() {
-    _ttsEngines.clear();
-    _defaultModelPath = null;
-    _defaultModelName = null;
+    // No-op
   }
 
   void dispose() {
-    _cancelRequested = true;
-    clearAllEngines();
+    _isDisposed = true;
+    _isolateSubscription?.cancel();
+    _isolate?.kill();
+    _isolate = null;
+    _sendPort = null;
     _stateController.close();
   }
+}
+
+class _GenerationRequestState {
+  final Completer<TtsGenerationResult?> completer;
+  final void Function(double)? onProgress;
+  final String? outputPath;
+
+  _GenerationRequestState({
+    required this.completer,
+    this.onProgress,
+    this.outputPath,
+  });
 }
 
 class TtsGenerationResult {

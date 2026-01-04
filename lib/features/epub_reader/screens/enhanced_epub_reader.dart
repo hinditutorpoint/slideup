@@ -20,12 +20,17 @@ import '../widgets/reading_settings_widget.dart';
 
 import '../services/translation_api_service.dart';
 import '../controllers/epub_audiobook_controller.dart';
-import '../controllers/simple_audiobook_controller.dart';
 import '../widgets/draggable_audiobook_controls.dart';
-import '../widgets/audiobook_playlist_dialog.dart';
 import '../../speaker_player/tts_controller.dart';
 import '../../speaker_player/services/language_detection_service.dart';
 import '../../speaker_player/providers/model_download_provider.dart';
+
+enum PreloadStrategy {
+  disabled, // No preloading
+  nextOnly, // Only next chapter
+  adjacent, // Previous + next
+  aggressive, // Previous + next + 2 ahead
+}
 
 class EnhancedEpubReader extends ConsumerStatefulWidget {
   final String? bookId;
@@ -76,17 +81,30 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   // Selection overlay
   OverlayEntry? _selectionOverlay;
 
-  ReaderSettings get settings => ref.read(readerSettingsProvider);
+  ReaderSettings get settings => ref.watch(readerSettingsProvider);
 
   // Add to state variables in _EnhancedEpubReaderState
   bool _isAudiobookMode = false;
   EpubAudiobookController? _audiobookController;
   AudiobookStatus _audiobookStatus = const AudiobookStatus();
-
-  SimpleAudiobookController? _simpleAudiobook;
+  bool _showSettings = false;
 
   // Add StreamSubscription
   StreamSubscription<AudiobookStatus>? _audiobookStatusSubscription;
+
+  // Translation state
+  final PreloadStrategy _preloadStrategy = PreloadStrategy.adjacent;
+  TranslationCancelToken? _cancelToken;
+  bool _isTranslating = false;
+  bool _isPreloading = false;
+  String? _translatedText;
+  // ignore: unused_field
+  String? _translatedTitle;
+  double _translationProgress = 0;
+  int? _translatingChapterIndex;
+  final Map<String, TranslationResult> _translationCache = {};
+  final Set<int> _preloadingChapters = {};
+  final Set<int> _preloadedChapters = {};
 
   @override
   void initState() {
@@ -114,6 +132,7 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _cancelTranslation();
     _setImmersiveMode(false);
     _uiAnimationController.dispose();
     _pageController?.dispose();
@@ -156,34 +175,9 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
       _stopAudiobook();
     } else {
       _startAudiobook();
-      //_startAudiobook();
     }
   }
 
-  Future<void> _startAudiobook() async {
-    final state = ref.read(readerServiceProvider).currentState;
-    if (!state.hasBook) return;
-
-    _simpleAudiobook = SimpleAudiobookController(
-      book: state.book!,
-      bookId: state.book!.id,
-      getChapterText: (chapterIndex) async {
-        final chapter = await ref
-            .read(readerNotifierProvider.notifier)
-            .goToChapter(chapterIndex);
-        return chapter.data?.textContent;
-      },
-    );
-
-    await _simpleAudiobook!.start(context, fromChapter: _currentPageIndex);
-  }
-
-  void _stopAudiobook() {
-    _simpleAudiobook?.stop(context);
-    _simpleAudiobook = null;
-  }
-
-  /* 
   Future<void> _startAudiobook() async {
     try {
       final state = ref.read(readerServiceProvider).currentState;
@@ -208,10 +202,17 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
         modelService: ref.read(modelDownloadServiceProvider),
         getChapterText: (chapterIndex) async {
           try {
-            final chapter = await ref
-                .read(readerNotifierProvider.notifier)
-                .goToChapter(chapterIndex);
-            return chapter.data!.textContent;
+            // Use getChapter instead of goToChapter to avoid changing reader state
+            final result = await ref
+                .read(readerServiceProvider)
+                .getChapter(chapterIndex);
+
+            if (result.isSuccess) {
+              // Use textContent (plain text) instead of htmlContent to avoid TTS crash
+              // Sherpa TTS library cannot handle HTML tags and will crash with SIGSEGV
+              return result.requireData.textContent;
+            }
+            return null;
           } catch (e) {
             debugPrint('[Audiobook] Failed to get chapter text: $e');
             return null;
@@ -219,13 +220,14 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
         },
         // Add translation support if needed
         getTranslatedChapterText: (chapterIndex) async {
-          // Implement if you have chapter translation
-          return null;
+          final cacheKey = "$chapterIndex-${settings.targetLanguage}";
+          if (_translationCache.containsKey(cacheKey)) {
+            return _translationCache[cacheKey]!.translatedText;
+          }
+          // Silent translation for background generation/audio
+          return await _translateChapterSilently(chapterIndex);
         },
-        isTranslationMode: () {
-          // Return true if translation view is active
-          return false;
-        },
+        isTranslationMode: () => settings.translationEnabled,
         onChapterChanged: (chapterIndex) {
           if (mounted &&
               _pageController != null &&
@@ -326,7 +328,7 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
       }
     }
   }
- */
+
   void _audiobookPlayPause() {
     try {
       _audiobookController?.togglePlayPause();
@@ -424,6 +426,11 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
 
         _startUIHideTimer();
         _setImmersiveMode(true);
+
+        // Trigger translation if enabled
+        if (settings.translationEnabled) {
+          _translateCurrentChapter();
+        }
       }
     } catch (e, st) {
       debugPrint('Initialize reader error: $e\n$st');
@@ -438,6 +445,7 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   }
 
   Future<void> _saveProgressSafely() async {
+    if (!mounted) return;
     try {
       await ref.read(readerNotifierProvider.notifier).saveProgress();
     } catch (e) {
@@ -466,12 +474,16 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   }
 
   void _startUIHideTimer() {
-    _uiHideTimer?.cancel();
-    _uiHideTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && _showUI && !_isSelectingText) {
-        _toggleUI();
-      }
-    });
+    try {
+      _uiHideTimer?.cancel();
+      _uiHideTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted && _showUI && !_isSelectingText) {
+          _toggleUI();
+        }
+      });
+    } catch (e) {
+      debugPrint('❌ Start UI hide timer error: $e');
+    }
   }
 
   void _setImmersiveMode(bool immersive) {
@@ -492,15 +504,110 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     }
   }
 
+  Widget _buildPreloadIndicator() {
+    if (!settings.translationEnabled) return const SizedBox.shrink();
+    if (_preloadingChapters.isEmpty) return const SizedBox.shrink();
+
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 100,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Preloading ${_preloadingChapters.length}',
+              style: const TextStyle(color: Colors.white70, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: _onWillPop,
-      child: Scaffold(
-        key: _scaffoldKey,
-        body: _buildBody(),
-        drawer: _buildDrawer(),
-        endDrawer: _buildEndDrawer(),
+      child: Stack(
+        children: [
+          Scaffold(
+            key: _scaffoldKey,
+            body: _buildBody(),
+            drawer: _buildDrawer(),
+            // endDrawer: _buildEndDrawer(), // Using custom Stack drawer for "close only on button"
+          ),
+          if (_showSettings) _buildCustomEndDrawer(settings),
+          if (_isPreloading) _buildPreloadIndicator(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomEndDrawer(ReaderSettings settings) {
+    return Positioned.fill(
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.5),
+        child: Row(
+          children: [
+            // Barrier (non-dismissible)
+            const Expanded(child: SizedBox()),
+            // Drawer Content
+            Container(
+              width: MediaQuery.of(context).size.width * 0.85,
+              color: Colors.white,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          const Text(
+                            'Settings',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () =>
+                                setState(() => _showSettings = false),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ReadingSettingsSheet(
+                        initialSettings: settings,
+                        onSettingsChanged: (newSettings) {
+                          // Settings are handled by the sheet's internal update
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -611,6 +718,52 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   }
 
   Widget _buildReaderContent() {
+    ref.listen(readerSettingsProvider, (previous, next) {
+      // Translation toggled ON
+      if (next.translationEnabled && previous?.translationEnabled != true) {
+        _translateCurrentChapter();
+
+        // Preload after translation
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted && settings.translationEnabled) {
+            _preloadAdjacentTranslations(_currentPageIndex);
+          }
+        });
+      }
+      // Translation toggled OFF
+      else if (!next.translationEnabled &&
+          previous?.translationEnabled == true) {
+        _cancelToken?.cancel();
+        _clearPreloadCache();
+        setState(() {
+          _translatedText = null;
+          _translatedTitle = null;
+          _isTranslating = false;
+          _translationProgress = 0;
+        });
+      }
+      // Language changed
+      else if (next.translationEnabled &&
+          previous?.targetLanguage != next.targetLanguage) {
+        _cancelToken?.cancel();
+        _clearPreloadCache();
+        _translationCache.clear(); // Clear all cached translations
+
+        setState(() {
+          _translatedText = null;
+          _translatedTitle = null;
+        });
+
+        _translateCurrentChapter();
+
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted && settings.translationEnabled) {
+            _preloadAdjacentTranslations(_currentPageIndex);
+          }
+        });
+      }
+    });
+
     return ref
         .watch(readerStateProvider)
         .when(
@@ -618,28 +771,6 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
           loading: () => _buildLoadingState(),
           error: (e, st) => _buildErrorState(),
         );
-  }
-
-  void _showAudiobookPlaylist() {
-    final state = ref.read(readerServiceProvider).currentState;
-    if (!state.hasBook) return;
-
-    final chapterTitles = state.book!.chapters.map((ch) => ch.title).toList();
-
-    showDialog(
-      context: context,
-      builder: (context) => AudiobookPlaylistDialog(
-        bookId: state.book!.id,
-        currentChapterIndex: state.currentChapterIndex,
-        totalChapters: state.totalChapters,
-        chapterTitles: chapterTitles,
-        onChapterTap: (chapterIndex) async {
-          if (_audiobookController != null && context.mounted) {
-            await _audiobookController!.jumpToChapter(chapterIndex, context);
-          }
-        },
-      ),
-    );
   }
 
   Widget _buildReaderWithState(ReadingState state) {
@@ -650,6 +781,9 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     final settings = state.settings;
     final chapter = state.currentChapter!;
     final book = state.book!;
+    final chapterTitles = state.hasBook
+        ? state.book!.chapters.map((ch) => ch.title).toList()
+        : <String>[];
 
     if (!_isSyncingPage &&
         _isPageControllerReady &&
@@ -694,17 +828,28 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
           if (_isSelectingText && _selectedText != null)
             _buildDraggableSelectionToolbar(),
 
+          // Translation spinner indicator (top-right)
+          if (_isTranslating) _buildTranslationProgressIndicator(),
+
           // Draggable Audiobook Controls
           if (_isAudiobookMode)
             DraggableAudiobookControls(
               bookId: book.id,
               status: _audiobookStatus,
+              chapterTitles: chapterTitles,
               onPlayPause: _audiobookPlayPause,
               onStop: _stopAudiobook,
               onPrevious: _audiobookPrevious,
               onNext: _audiobookNext,
               onClose: _stopAudiobook,
-              onPlaylistTap: () => _showAudiobookPlaylist(),
+              onChapterTap: (chapterIndex) async {
+                if (_audiobookController != null && context.mounted) {
+                  await _audiobookController!.jumpToChapter(
+                    chapterIndex,
+                    context,
+                  );
+                }
+              },
               onSpeedChange: (speed) {
                 _audiobookController?.setPlaybackSpeed(speed);
               },
@@ -720,6 +865,68 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
               textColor: _getAudiobookTextColor(settings.theme),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTranslationProgressIndicator() {
+    // Determine status text
+    String statusText;
+    if (_translationProgress > 0) {
+      statusText = 'Translating ${(_translationProgress * 100).toInt()}%';
+    } else {
+      statusText = 'Loading translation...';
+    }
+
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 60,
+      right: 16,
+      child: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.blue.withValues(alpha: 0.95),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  value: _translationProgress > 0 ? _translationProgress : null,
+                  strokeWidth: 2,
+                  backgroundColor: Colors.white.withValues(alpha: 0.3),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                statusText,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _cancelTranslation,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -837,7 +1044,11 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
                 chapter: chapter,
                 settings: settings,
                 highlights: ref.read(currentChapterHighlightsProvider),
-                initialScrollPosition: state.chapterScrollPosition,
+                translatedText: settings.translationEnabled
+                    ? _translatedText
+                    : null,
+                isTranslating: _isTranslating,
+                initialScrollPosition: state.progress?.chapterProgress ?? 0.0,
                 onScrollProgress: _onScrollProgress,
                 onTextSelected: _onTextSelected,
                 onLinkTapped: _onLinkTapped,
@@ -895,7 +1106,11 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
           onBack: _handleBack,
           onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
           onBookmarkTap: _handleAddBookmark,
-          onSettingsTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+          onSettingsTap: () {
+            setState(() {
+              _showSettings = true;
+            });
+          },
           onSearchTap: _handleSearch,
         ),
       ),
@@ -939,8 +1154,15 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Audiobook toggle button
-                  _buildAudiobookToggle(),
+                  // Audiobook and Translation toggles
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildAudiobookToggle(),
+                      const SizedBox(width: 12),
+                      _buildTranslationToggle(),
+                    ],
+                  ),
 
                   const SizedBox(height: 12),
 
@@ -1145,6 +1367,757 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     }
   }
 
+  bool _isSameLanguage(String source, String target) {
+    if (source == target) return true;
+
+    // Normalize (remove region codes)
+    final normalizedSource = source.toLowerCase().split(RegExp(r'[-_]')).first;
+    final normalizedTarget = target.toLowerCase().split(RegExp(r'[-_]')).first;
+
+    return normalizedSource == normalizedTarget;
+  }
+
+  Widget _buildTranslationToggle() {
+    final isEnabled = settings.translationEnabled;
+
+    // Detect source language of current chapter
+    String? detectedLang;
+    final state = ref.read(readerServiceProvider).currentState;
+    if (state.hasChapter) {
+      final text = state.currentChapter?.textContent ?? '';
+      final detection = LanguageDetectionService.instance.detect(text);
+      detectedLang = detection?.code;
+    }
+
+    // Check if same language
+    final isSameLang =
+        detectedLang != null &&
+        _isSameLanguage(detectedLang, settings.targetLanguage);
+
+    return GestureDetector(
+      onTap: _toggleTranslation,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isEnabled
+              ? (isSameLang
+                    ? Colors.orange.withValues(alpha: 0.3) // Warning color
+                    : Colors.blue.withValues(alpha: 0.3))
+              : Colors.white.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(25),
+          border: Border.all(
+            color: isEnabled
+                ? (isSameLang ? Colors.orange : Colors.blue)
+                : Colors.white.withValues(alpha: 0.3),
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isEnabled ? Icons.translate : Icons.translate_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+
+            if (_isTranslating)
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            else if (isSameLang && isEnabled)
+              // Show warning for same language
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.warning_amber,
+                    color: Colors.orange,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Same',
+                    style: TextStyle(
+                      color: Colors.orange.shade200,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              )
+            else
+              Text(
+                isEnabled ? 'ON' : 'OFF',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+
+            // Show detected language
+            if (detectedLang != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  detectedLang.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleTranslation() async {
+    try {
+      final newValue = !settings.translationEnabled;
+
+      // If enabling translation, check if needed
+      if (newValue) {
+        final state = ref.read(readerServiceProvider).currentState;
+        if (state.hasChapter) {
+          final originalText = state.currentChapter?.textContent ?? '';
+          final detection = LanguageDetectionService.instance.detect(
+            originalText,
+          );
+          final sourceLang = detection?.code ?? 'en';
+          final targetLang = settings.targetLanguage;
+
+          // ✅ Warn user if same language
+          if (_isSameLanguage(sourceLang, targetLang)) {
+            final confirmed = await _showSameLanguageDialog(
+              sourceLang,
+              targetLang,
+            );
+            if (!confirmed) return;
+          }
+        }
+      }
+
+      await ref
+          .read(readerNotifierProvider.notifier)
+          .updateSettings(settings.copyWith(translationEnabled: newValue));
+
+      if (newValue) {
+        await _translateCurrentChapter();
+      } else {
+        _cancelToken?.cancel();
+        _cancelToken = null;
+        _clearPreloadCache();
+        setState(() {
+          _translatedText = null;
+          _translatedTitle = null;
+          _isTranslating = false;
+          _translationProgress = 0;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Toggle translation error: $e');
+    }
+  }
+
+  String _getLanguageName(String code) {
+    return LanguageDetectionService.instance.getLanguageName(code);
+  }
+
+  /// Show dialog when source and target language are same
+  Future<bool> _showSameLanguageDialog(String source, String target) async {
+    final sourceName = _getLanguageName(source);
+    final targetName = _getLanguageName(target);
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Same Language Detected'),
+        content: Text(
+          'The content appears to be in $sourceName, '
+          'which is the same as your target language ($targetName).\n\n'
+          'Translation is not needed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('OK'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Translate Anyway'),
+          ),
+        ],
+      ),
+    );
+
+    return result ?? false;
+  }
+
+  Future<void> _translateCurrentChapter() async {
+    if (!settings.translationEnabled) return;
+
+    final state = ref.read(readerServiceProvider).currentState;
+    if (!state.hasChapter) return;
+
+    final chapterIndex = state.currentChapterIndex;
+    final targetLang = settings.targetLanguage;
+    final cacheKey = "$chapterIndex-$targetLang";
+    final chapter = state.currentChapter!;
+
+    debugPrint(
+      '🔄 translateCurrentChapter: chapter=$chapterIndex, lang=$targetLang',
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 1: Check memory cache
+    // ═══════════════════════════════════════════════════════════════════════
+    if (_translationCache.containsKey(cacheKey)) {
+      debugPrint('✅ Found in memory cache');
+      final cached = _translationCache[cacheKey]!;
+      if (mounted) {
+        setState(() {
+          _translatedText = cached.translatedText;
+          _translatedTitle = cached.translatedTitle;
+          _isTranslating = false;
+          _translationProgress = 0;
+        });
+      }
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 2: Check database for saved translation
+    // ═══════════════════════════════════════════════════════════════════════
+    try {
+      final savedTranslation = ref
+          .read(readerNotifierProvider.notifier)
+          .getSavedChapterTranslation(
+            chapterIndex: chapterIndex,
+            targetLanguage: targetLang,
+          );
+
+      if (savedTranslation != null) {
+        debugPrint('✅ Found in database');
+
+        // Create result and cache it
+        final result = TranslationResult.success(
+          translatedText: savedTranslation.translatedContent,
+          translatedTitle: savedTranslation.chapterId,
+          originalText: chapter.textContent ?? '',
+          originalTitle: chapter.title,
+          sourceLanguage: savedTranslation.sourceLanguage,
+          sourceLanguageName: '',
+          sourceLanguageConfidence: 1.0,
+          targetLanguage: targetLang,
+          targetLanguageName: '',
+        );
+        _translationCache[cacheKey] = result;
+
+        if (mounted && _currentPageIndex == chapterIndex) {
+          setState(() {
+            _translatedText = result.translatedText;
+            _translatedTitle = result.translatedTitle;
+            _isTranslating = false;
+            _translationProgress = 0;
+          });
+        }
+        return;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Database check error: $e');
+      // Continue to translate if DB check fails
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: Translate from API
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Cancel any existing translation
+    _cancelToken?.cancel();
+    _cancelToken = TranslationCancelToken();
+    _translatingChapterIndex = chapterIndex;
+
+    if (mounted) {
+      setState(() {
+        _isTranslating = true;
+        _translationProgress = 0;
+        _translatedText = null;
+        _translatedTitle = null;
+      });
+    }
+
+    debugPrint('🚀 Starting API translation for chapter $chapterIndex');
+
+    try {
+      final originalText = chapter.textContent ?? '';
+      if (originalText.isEmpty) {
+        debugPrint('⚠️ Chapter has no text content');
+        if (mounted) {
+          setState(() {
+            _isTranslating = false;
+            _translationProgress = 0;
+          });
+        }
+        return;
+      }
+
+      final result = await TranslationApiService.instance.translate(
+        originalText,
+        targetLang,
+        title: chapter.title,
+        cancelToken: _cancelToken,
+        onProgress: (progress) {
+          // ✅ Check if still on same chapter
+          if (mounted && _currentPageIndex == chapterIndex) {
+            setState(() {
+              _translationProgress = progress;
+            });
+          }
+        },
+      );
+
+      // ✅ Verify we're still on the same chapter
+      if (!mounted || _currentPageIndex != chapterIndex) {
+        debugPrint('⚠️ Page changed during translation, discarding result');
+        return;
+      }
+
+      if (result.isSuccess) {
+        debugPrint('✅ Translation successful');
+
+        // Cache the result
+        _translationCache[cacheKey] = result;
+
+        setState(() {
+          _translatedText = result.translatedText;
+          _translatedTitle = result.translatedTitle;
+          _isTranslating = false;
+          _translationProgress = 0;
+        });
+
+        // Save to database
+        await _saveTranslationToDatabase(
+          chapterIndex: chapterIndex,
+          result: result,
+        );
+
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          if (mounted && settings.translationEnabled) {
+            _preloadAdjacentTranslations(chapterIndex);
+          }
+        });
+      } else if (result.isCancelled) {
+        debugPrint('🛑 Translation was cancelled');
+        if (mounted && _currentPageIndex == chapterIndex) {
+          setState(() {
+            _isTranslating = false;
+            _translationProgress = 0;
+          });
+        }
+      } else {
+        debugPrint('❌ Translation failed: ${result.error}');
+        if (mounted && _currentPageIndex == chapterIndex) {
+          setState(() {
+            _isTranslating = false;
+            _translationProgress = 0;
+          });
+          _showError('Translation failed');
+        }
+      }
+    } catch (e, stack) {
+      debugPrint('❌ Translation exception: $e\n$stack');
+      if (mounted && _currentPageIndex == chapterIndex) {
+        setState(() {
+          _isTranslating = false;
+          _translationProgress = 0;
+        });
+      }
+    } finally {
+      if (_translatingChapterIndex == chapterIndex) {
+        _translatingChapterIndex = null;
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SAVE TRANSLATION TO DATABASE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _saveTranslationToDatabase({
+    required int chapterIndex,
+    required TranslationResult result,
+  }) async {
+    try {
+      await ref
+          .read(readerNotifierProvider.notifier)
+          .saveChapterTranslation(
+            translatedTitle: result.translatedTitle ?? '',
+            translatedContent: result.translatedText!,
+            sourceLanguage: result.sourceLanguage!,
+            targetLanguage: result.targetLanguage!,
+            provider: TranslationProvider.manual,
+          );
+      debugPrint('💾 Translation saved to database');
+    } catch (e) {
+      debugPrint('⚠️ Failed to save translation: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRELOAD ADJACENT CHAPTERS (optional optimization)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _preloadAdjacentTranslations(int currentIndex) async {
+    if (!settings.translationEnabled) return;
+    if (_preloadStrategy == PreloadStrategy.disabled) return;
+
+    final state = ref.read(readerServiceProvider).currentState;
+    if (!state.hasBook) return;
+
+    final totalChapters = state.book!.chapterCount;
+    final chaptersToPreload = <int>[];
+
+    switch (_preloadStrategy) {
+      case PreloadStrategy.disabled:
+        return;
+
+      case PreloadStrategy.nextOnly:
+        if (currentIndex + 1 < totalChapters) {
+          chaptersToPreload.add(currentIndex + 1);
+        }
+        break;
+
+      case PreloadStrategy.adjacent:
+        if (currentIndex + 1 < totalChapters) {
+          chaptersToPreload.add(currentIndex + 1);
+        }
+        if (currentIndex - 1 >= 0) {
+          chaptersToPreload.add(currentIndex - 1);
+        }
+        break;
+
+      case PreloadStrategy.aggressive:
+        // Previous
+        if (currentIndex - 1 >= 0) {
+          chaptersToPreload.add(currentIndex - 1);
+        }
+        // Next
+        if (currentIndex + 1 < totalChapters) {
+          chaptersToPreload.add(currentIndex + 1);
+        }
+        // 2 ahead
+        if (currentIndex + 2 < totalChapters) {
+          chaptersToPreload.add(currentIndex + 2);
+        }
+        // 2 behind
+        if (currentIndex - 2 >= 0) {
+          chaptersToPreload.add(currentIndex - 2);
+        }
+        break;
+    }
+
+    debugPrint(
+      '📚 Preload strategy: $_preloadStrategy - chapters: $chaptersToPreload',
+    );
+
+    for (final chapterIndex in chaptersToPreload) {
+      if (!_preloadedChapters.contains(chapterIndex) &&
+          !_preloadingChapters.contains(chapterIndex)) {
+        _preloadChapterTranslation(chapterIndex, settings.targetLanguage);
+      }
+    }
+  }
+
+  /// Preload a single chapter translation (background operation)
+  Future<void> _preloadChapterTranslation(
+    int chapterIndex,
+    String targetLang,
+  ) async {
+    final cacheKey = "$chapterIndex-$targetLang";
+
+    // Already in memory cache
+    if (_translationCache.containsKey(cacheKey)) {
+      _preloadedChapters.add(chapterIndex);
+      return;
+    }
+
+    // Mark as preloading
+    _preloadingChapters.add(chapterIndex);
+
+    try {
+      debugPrint('🔄 Preloading chapter $chapterIndex translation...');
+
+      // Check database first
+      final savedTranslation = ref
+          .read(readerNotifierProvider.notifier)
+          .getSavedChapterTranslation(
+            chapterIndex: chapterIndex,
+            targetLanguage: targetLang,
+          );
+
+      if (savedTranslation != null &&
+          savedTranslation.translatedContent.isNotEmpty == true) {
+        debugPrint('✅ Preload: Found chapter $chapterIndex in database');
+
+        // Get chapter for metadata
+        final chapterResult = await ref
+            .read(readerServiceProvider)
+            .getChapter(chapterIndex);
+
+        if (chapterResult.isSuccess) {
+          final chapter = chapterResult.requireData;
+
+          // Cache it
+          final result = TranslationResult.success(
+            translatedText: savedTranslation.translatedContent,
+            translatedTitle: savedTranslation.translatedTitle,
+            originalText: chapter.textContent ?? '',
+            originalTitle: chapter.title,
+            sourceLanguage: savedTranslation.sourceLanguage,
+            sourceLanguageName: '',
+            sourceLanguageConfidence: 1.0,
+            targetLanguage: targetLang,
+            targetLanguageName: '',
+          );
+
+          _translationCache[cacheKey] = result;
+          _preloadedChapters.add(chapterIndex);
+          debugPrint('💾 Chapter $chapterIndex cached from database');
+        }
+        return;
+      }
+
+      // Not in database - translate from API
+      final chapterResult = await ref
+          .read(readerServiceProvider)
+          .getChapter(chapterIndex);
+
+      if (chapterResult.isFailure) {
+        debugPrint('⚠️ Failed to get chapter $chapterIndex for preload');
+        return;
+      }
+
+      final chapter = chapterResult.requireData;
+      final text = chapter.textContent ?? '';
+
+      if (text.isEmpty) {
+        debugPrint('⚠️ Chapter $chapterIndex has no content');
+        return;
+      }
+
+      // Check if same language
+      final detection = LanguageDetectionService.instance.detect(text);
+      final sourceLang = detection?.code ?? 'en';
+
+      if (_isSameLanguage(sourceLang, targetLang)) {
+        debugPrint(
+          '⏭️ Skipping preload: chapter $chapterIndex already in $targetLang',
+        );
+        return;
+      }
+
+      debugPrint('🚀 Translating chapter $chapterIndex in background...');
+      setState(() {
+        _isPreloading = true;
+      });
+
+      // Translate silently (no progress callback, no UI updates)
+      final translation = await TranslationApiService.instance.translate(
+        text,
+        targetLang,
+        title: chapter.title,
+        // No onProgress callback for background translation
+      );
+
+      if (translation.isSuccess) {
+        // Cache it
+        _translationCache[cacheKey] = translation;
+        _preloadedChapters.add(chapterIndex);
+
+        // Save to database
+        await ref
+            .read(readerNotifierProvider.notifier)
+            .saveChapterTranslation(
+              translatedTitle: translation.translatedTitle ?? chapter.title,
+              translatedContent: translation.translatedText!,
+              sourceLanguage: translation.sourceLanguage!,
+              targetLanguage: translation.targetLanguage!,
+              provider: TranslationProvider.manual,
+            );
+        setState(() {
+          _isPreloading = false;
+        });
+
+        debugPrint('✅ Preload complete: chapter $chapterIndex');
+      } else {
+        debugPrint(
+          '❌ Preload failed: chapter $chapterIndex - ${translation.error}',
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Preload error chapter $chapterIndex: $e');
+    } finally {
+      _preloadingChapters.remove(chapterIndex);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CANCEL TRANSLATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void _cancelTranslation() {
+    try {
+      debugPrint('🛑 User cancelled translation');
+      _cancelToken?.cancel();
+      _cancelToken = null;
+      _translatingChapterIndex = null;
+      _clearPreloadCache();
+      if (mounted) {
+        setState(() {
+          _isTranslating = false;
+          _translationProgress = 0;
+          _isPreloading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Cancel translation error: $e');
+    }
+  }
+
+  void _clearPreloadCache() {
+    try {
+      _preloadedChapters.clear();
+      _preloadingChapters.clear();
+    } catch (e) {
+      debugPrint('❌ Clear preload cache error: $e');
+    }
+  }
+
+  Future<String?> _translateChapterSilently(int chapterIndex) async {
+    final targetLang = settings.targetLanguage;
+    final cacheKey = "$chapterIndex-$targetLang";
+
+    // Check memory cache
+    if (_translationCache.containsKey(cacheKey)) {
+      return _translationCache[cacheKey]!.translatedText;
+    }
+
+    // Check database
+    try {
+      final saved = ref
+          .read(readerNotifierProvider.notifier)
+          .getSavedChapterTranslation(
+            chapterIndex: chapterIndex,
+            targetLanguage: targetLang,
+          );
+
+      if (saved != null && saved.translatedContent.isNotEmpty == true) {
+        return saved.translatedContent;
+      }
+    } catch (e) {
+      debugPrint('[SilentTranslation] DB error: $e');
+    }
+
+    // Translate from API
+    try {
+      final result = await ref
+          .read(readerServiceProvider)
+          .getChapter(chapterIndex);
+      if (result.isFailure) return null;
+
+      final chapter = result.requireData;
+      final text = chapter.textContent ?? '';
+      if (text.isEmpty) return null;
+      setState(() {
+        _isPreloading = true;
+      });
+
+      final translation = await TranslationApiService.instance.translate(
+        text,
+        targetLang,
+        title: chapter.title,
+      );
+
+      if (translation.isSuccess) {
+        setState(() {
+          _isPreloading = false;
+        });
+        // Cache it
+        _translationCache[cacheKey] = translation;
+
+        // Save to database
+        await _saveTranslationToDatabase(
+          chapterIndex: chapterIndex,
+          result: translation,
+        );
+
+        return translation.translatedText;
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('[SilentTranslation] Error: $e');
+      return null;
+    }
+  }
+
+  void _onPageChanged(int index) {
+    if (_isSyncingPage || !mounted) return;
+
+    if (_isTranslating && _translatingChapterIndex != index) {
+      debugPrint(
+        '🛑 Cancelling translation for chapter $_translatingChapterIndex',
+      );
+      _cancelToken?.cancel();
+      _cancelToken = null;
+    }
+
+    setState(() {
+      _currentPageIndex = index;
+      _translatedText = null;
+      _translatedTitle = null;
+      _isTranslating = false;
+      _translationProgress = 0;
+    });
+
+    // Update state in service
+    ref.read(readerServiceProvider).goToChapter(index);
+
+    // Start translation for new chapter if enabled
+    if (settings.translationEnabled) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && _currentPageIndex == index) {
+          _translateCurrentChapter();
+
+          // ✅ PRELOAD ADJACENT CHAPTERS (after small delay)
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted && settings.translationEnabled) {
+              _preloadAdjacentTranslations(index);
+            }
+          });
+        }
+      });
+    }
+
+    _startUIHideTimer();
+  }
+
   Widget _buildDraggableSelectionToolbar() {
     return Positioned(
       left: _selectionPosition.dx,
@@ -1285,44 +2258,6 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     );
   }
 
-  Widget _buildEndDrawer() {
-    final settings = ref.read(readerSettingsProvider);
-
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Text(
-                    'Settings',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: SingleChildScrollView(
-                child: ReadingSettingsSheet(
-                  initialSettings: settings,
-                  onSettingsChanged: (newSettings) {},
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<bool> _onWillPop() async {
     try {
       await _saveProgressSafely();
@@ -1339,29 +2274,8 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     Navigator.of(context).maybePop();
   }
 
-  void _onPageChanged(int index) async {
-    if (_isSyncingPage) {
-      debugPrint('Skipping onPageChanged during sync');
-      return;
-    }
-
-    try {
-      debugPrint('Page changed to: $index');
-
-      // Update local state immediately
-      setState(() {
-        _currentPageIndex = index;
-      });
-
-      // Load chapter content via provider
-      await ref.read(readerNotifierProvider.notifier).goToChapter(index);
-    } catch (e) {
-      debugPrint('Page changed error: $e');
-      _showError('Failed to load chapter');
-    }
-  }
-
   void _onScrollProgress(double progress) {
+    if (!mounted) return;
     try {
       ref.read(readerNotifierProvider.notifier).updatePosition(progress);
     } catch (e) {
@@ -1874,8 +2788,8 @@ class _ReaderTopBar extends StatelessWidget {
                 onPressed: onBookmarkTap,
               ),
               IconButton(
-                icon: const Icon(Icons.settings, color: Colors.white),
                 onPressed: onSettingsTap,
+                icon: const Icon(Icons.settings, color: Colors.white),
               ),
             ],
           ),
@@ -1884,154 +2798,6 @@ class _ReaderTopBar extends StatelessWidget {
     );
   }
 }
-
-/* // =============================================================================
-// READER BOTTOM BAR
-// =============================================================================
-
-class _ReaderBottomBar extends StatelessWidget {
-  final double progress;
-  final double chapterProgress;
-  final int currentChapter;
-  final int totalChapters;
-  final String? chapterTitle;
-  final bool canGoNext;
-  final bool canGoPrevious;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
-  final void Function(double)? onProgressChange;
-  final VoidCallback? onChapterListTap;
-
-  const _ReaderBottomBar({
-    required this.progress,
-    required this.chapterProgress,
-    required this.currentChapter,
-    required this.totalChapters,
-    this.chapterTitle,
-    required this.canGoNext,
-    required this.canGoPrevious,
-    this.onPrevious,
-    this.onNext,
-    this.onProgressChange,
-    this.onChapterListTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.7),
-            Colors.black.withValues(alpha: 0.0),
-          ],
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Progress slider
-              Row(
-                children: [
-                  Text(
-                    '${(progress * 100).round()}%',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 4,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 8,
-                        ),
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 16,
-                        ),
-                        activeTrackColor: Colors.white,
-                        inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
-                        thumbColor: Colors.white,
-                      ),
-                      child: Slider(
-                        value: progress.clamp(0.0, 1.0),
-                        onChanged: onProgressChange,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-
-              // Navigation buttons
-              Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.skip_previous,
-                      color: canGoPrevious ? Colors.white : Colors.white38,
-                    ),
-                    onPressed: onPrevious,
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: onChapterListTap,
-                      child: Column(
-                        children: [
-                          Text(
-                            chapterTitle ?? 'Chapter ${currentChapter + 1}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.list,
-                                color: Colors.white70,
-                                size: 14,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Table of Contents',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.skip_next,
-                      color: canGoNext ? Colors.white : Colors.white38,
-                    ),
-                    onPressed: onNext,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-} */
 
 // =============================================================================
 // SEARCH SHEET
@@ -2502,9 +3268,15 @@ class _TranslateDialogState extends State<_TranslateDialog> {
   @override
   void initState() {
     super.initState();
-    _sourceLanguage = TranslationApiService.instance.detectSourceLang(
-      widget.originalText,
-    );
+
+    _sourceLanguage = '';
+    TranslationApiService.instance.detectedLanguage(widget.originalText).then((
+      value,
+    ) {
+      setState(() {
+        _sourceLanguage = value;
+      });
+    });
 
     // If detected is English, default target to Spanish (or Hindi), else English
     if (_sourceLanguage == 'en') {
@@ -2617,7 +3389,7 @@ class _TranslateDialogState extends State<_TranslateDialog> {
         _targetLanguage,
       );
 
-      if (apiResponse == null) {
+      if (!apiResponse.isSuccess) {
         setState(() {
           _error = 'Translation failed';
           _isTranslating = false;
@@ -2626,7 +3398,7 @@ class _TranslateDialogState extends State<_TranslateDialog> {
       }
 
       setState(() {
-        _translatedText = 'Translated: $apiResponse';
+        _translatedText = 'Translated: ${apiResponse.translatedText}';
         _isTranslating = false;
       });
     } catch (e) {

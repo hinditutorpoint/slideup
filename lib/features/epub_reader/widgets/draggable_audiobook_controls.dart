@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/epub_audiobook_controller.dart';
 import '../../speaker_player/services/background_chapter_generator.dart';
+import '../../speaker_player/tts_controller.dart';
 
 class DraggableAudiobookControls extends StatefulWidget {
   final AudiobookStatus status;
@@ -10,7 +11,6 @@ class DraggableAudiobookControls extends StatefulWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback? onClose;
-  final VoidCallback? onPlaylistTap; // ✅ NEW
   final void Function(double speed)? onSpeedChange;
   final void Function(Duration duration)? onSleepTimer;
   final VoidCallback? onCancelSleepTimer;
@@ -18,7 +18,9 @@ class DraggableAudiobookControls extends StatefulWidget {
   final Color? textColor;
   final Size screenSize;
   final EdgeInsets safeArea;
-  final String? bookId; // ✅ NEW - for background generation status
+  final String? bookId;
+  final List<String>? chapterTitles;
+  final Function(int chapterIndex)? onChapterTap;
 
   const DraggableAudiobookControls({
     super.key,
@@ -30,13 +32,14 @@ class DraggableAudiobookControls extends StatefulWidget {
     required this.screenSize,
     required this.safeArea,
     this.onClose,
-    this.onPlaylistTap,
     this.onSpeedChange,
     this.onSleepTimer,
     this.onCancelSleepTimer,
     this.backgroundColor,
     this.textColor,
     this.bookId,
+    this.chapterTitles,
+    this.onChapterTap,
   });
 
   @override
@@ -45,23 +48,32 @@ class DraggableAudiobookControls extends StatefulWidget {
 }
 
 class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late Offset _position;
   late AnimationController _dismissAnimationController;
   late Animation<double> _dismissAnimation;
+  TabController? _playlistTabController;
 
   bool _isDragging = false;
   bool _isInDismissZone = false;
   bool _isExpanded = true;
   bool _showSettings = false;
+  bool _showPlaylist = false;
+  int _selectedPlaylistTab = 0;
 
-  // ✅ NEW: Background generation state
   final _bgGenerator = BackgroundChapterGenerator.instance;
 
   static const double _controlsWidth = 340.0;
-  static const double _controlsHeight = 280.0; // Increased for playlist button
-  static const double _miniHeight = 64.0;
+  static const double _baseControlsHeight = 240.0;
+  static const double _playlistHeight = 220.0;
+  static const double _miniHeight = 60.0;
   static const double _dismissZoneHeight = 100.0;
+
+  double get _currentHeight {
+    if (!_isExpanded) return _miniHeight;
+    if (_showSettings) return 280.0;
+    return _baseControlsHeight + (_showPlaylist ? _playlistHeight : 0);
+  }
 
   static const List<double> _speedOptions = [
     0.5,
@@ -72,6 +84,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     1.75,
     2.0,
   ];
+
   static const List<Duration> _sleepTimerOptions = [
     Duration(minutes: 5),
     Duration(minutes: 15),
@@ -87,7 +100,10 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
 
     _position = Offset(
       (widget.screenSize.width - _controlsWidth) / 2,
-      widget.screenSize.height - _controlsHeight - widget.safeArea.bottom - 80,
+      widget.screenSize.height -
+          _baseControlsHeight -
+          widget.safeArea.bottom -
+          80,
     );
 
     _dismissAnimationController = AnimationController(
@@ -100,11 +116,19 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
         curve: Curves.easeOut,
       ),
     );
+
+    _playlistTabController = TabController(length: 3, vsync: this);
+    _playlistTabController!.addListener(() {
+      if (!_playlistTabController!.indexIsChanging) {
+        setState(() => _selectedPlaylistTab = _playlistTabController!.index);
+      }
+    });
   }
 
   @override
   void dispose() {
     _dismissAnimationController.dispose();
+    _playlistTabController?.dispose();
     super.dispose();
   }
 
@@ -116,12 +140,11 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() {
       _position += details.delta;
-      final height = _isExpanded ? _controlsHeight : _miniHeight;
       _position = Offset(
         _position.dx.clamp(0, widget.screenSize.width - _controlsWidth),
         _position.dy.clamp(
           widget.safeArea.top,
-          widget.screenSize.height - height - widget.safeArea.bottom,
+          widget.screenSize.height - _currentHeight - widget.safeArea.bottom,
         ),
       );
 
@@ -150,8 +173,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   void _snapToEdge() {
     final centerX = widget.screenSize.width / 2;
     final newX = _position.dx + _controlsWidth / 2 < centerX
-        ? 16.0
-        : widget.screenSize.width - _controlsWidth - 16;
+        ? 8.0
+        : widget.screenSize.width - _controlsWidth - 8;
 
     setState(() => _position = Offset(newX, _position.dy));
   }
@@ -160,13 +183,37 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     setState(() {
       _isExpanded = !_isExpanded;
       _showSettings = false;
+      _showPlaylist = false;
     });
     HapticFeedback.selectionClick();
   }
 
   void _toggleSettings() {
-    setState(() => _showSettings = !_showSettings);
+    setState(() {
+      _showSettings = !_showSettings;
+      _showPlaylist = false;
+    });
+    _adjustPosition();
     HapticFeedback.selectionClick();
+  }
+
+  void _togglePlaylist() {
+    setState(() {
+      _showPlaylist = !_showPlaylist;
+      _showSettings = false;
+    });
+    _adjustPosition();
+    HapticFeedback.selectionClick();
+  }
+
+  void _adjustPosition() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final maxY =
+          widget.screenSize.height - _currentHeight - widget.safeArea.bottom;
+      if (_position.dy > maxY) {
+        setState(() => _position = Offset(_position.dx, maxY));
+      }
+    });
   }
 
   @override
@@ -236,6 +283,13 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: _controlsWidth,
+                  constraints: BoxConstraints(
+                    maxHeight:
+                        widget.screenSize.height -
+                        widget.safeArea.top -
+                        widget.safeArea.bottom -
+                        20,
+                  ),
                   child: _isExpanded
                       ? (_showSettings
                             ? _buildSettingsPanel()
@@ -259,7 +313,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     return Container(
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.4),
@@ -278,310 +332,918 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
         mainAxisSize: MainAxisSize.min,
         children: [
           // Drag handle
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.only(top: 8),
-            decoration: BoxDecoration(
-              color: fgColor.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(2),
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                color: fgColor.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
 
           // Header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: _getStateColor().withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: _buildStateIcon(),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            'Audiobook',
-                            style: TextStyle(
-                              color: fgColor,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                          if (status.ttsModelName != null) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                status.ttsModelName!,
-                                style: const TextStyle(
-                                  color: Colors.blue,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      Text(
-                        status.userFacingMessage,
-                        style: TextStyle(
-                          color: _getStateColor(),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                // ✅ NEW: Playlist button
-                IconButton(
-                  icon: Icon(
-                    Icons.queue_music,
-                    color: fgColor.withValues(alpha: 0.7),
-                    size: 20,
-                  ),
-                  onPressed: widget.onPlaylistTap,
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Playlist',
-                ),
-                IconButton(
-                  icon: Icon(
-                    Icons.settings,
-                    color: fgColor.withValues(alpha: 0.7),
-                    size: 20,
-                  ),
-                  onPressed: _toggleSettings,
-                  visualDensity: VisualDensity.compact,
-                ),
-                IconButton(
-                  icon: Icon(
-                    Icons.expand_more,
-                    color: fgColor.withValues(alpha: 0.7),
-                  ),
-                  onPressed: _toggleExpanded,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-          ),
+          _buildHeader(status, fgColor),
 
-          // ✅ NEW: Next chapter status
+          // Next chapter status
           if (widget.bookId != null) _buildNextChapterStatus(status, fgColor),
 
           // Chapter info
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        status.currentChapterTitle ??
-                            'Chapter ${status.currentChapter + 1}',
-                        style: TextStyle(
-                          color: fgColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          _buildChapterStatusBadge(
-                            'Current',
-                            status.currentChapterStatus?.state,
-                            fgColor,
-                          ),
-                          if (status.currentChapter < status.totalChapters - 1)
-                            _buildChapterStatusBadge(
-                              'Next',
-                              status.nextChapterStatus?.state,
-                              fgColor,
-                            ),
-                          if (status.readyChapterCount > 0)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.green.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.check_circle,
-                                    size: 10,
-                                    color: Colors.green,
-                                  ),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    '${status.readyChapterCount} ready',
-                                    style: const TextStyle(
-                                      color: Colors.green,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                if (status.detectedLanguage != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.purple.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      status.detectedLanguage!.toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.purple,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          _buildChapterInfo(status, fgColor),
 
           // Progress bar
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: Column(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: status.playbackProgress,
-                    backgroundColor: fgColor.withValues(alpha: 0.2),
-                    valueColor: AlwaysStoppedAnimation(_getStateColor()),
-                    minHeight: 4,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Ch. ${status.currentChapter + 1}/${status.totalChapters}',
-                      style: TextStyle(
-                        color: fgColor.withValues(alpha: 0.7),
-                        fontSize: 10,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Text(
-                          '${status.playbackSpeed}x',
-                          style: TextStyle(
-                            color: fgColor.withValues(alpha: 0.7),
-                            fontSize: 10,
-                          ),
-                        ),
-                        if (status.isSleepTimerActive) ...[
-                          const SizedBox(width: 8),
-                          const Icon(
-                            Icons.bedtime,
-                            size: 12,
-                            color: Colors.amber,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            _formatRemainingTime(status.sleepTimerRemaining),
-                            style: const TextStyle(
-                              color: Colors.amber,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          _buildProgressBar(status, fgColor),
 
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
 
           // Playback controls
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildControlButton(
-                icon: Icons.skip_previous_rounded,
-                onPressed: status.currentChapter > 0 ? widget.onPrevious : null,
-                color: fgColor,
-              ),
-              _buildMainButton(fgColor),
-              _buildControlButton(
-                icon: Icons.skip_next_rounded,
-                onPressed: status.currentChapter < status.totalChapters - 1
-                    ? widget.onNext
-                    : null,
-                color: fgColor,
-              ),
-              _buildControlButton(
-                icon: Icons.stop_rounded,
-                onPressed: status.isActive || status.isPaused
-                    ? widget.onStop
-                    : null,
-                color: Colors.red,
-              ),
-            ],
-          ),
+          _buildPlaybackControls(fgColor),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+
+          // Collapsible Playlist (BELOW player)
+          if (_showPlaylist) _buildPlaylistPanel(fgColor),
         ],
       ),
     );
   }
 
-  // ✅ NEW: Next chapter generation status
+  Widget _buildHeader(AudiobookStatus status, Color fgColor) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: _getStateColor().withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: _buildStateIcon(),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Audiobook',
+                        style: TextStyle(
+                          color: fgColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (status.ttsModelName != null) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          status.ttsModelName!,
+                          style: const TextStyle(
+                            color: Colors.blue,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Text(
+                  status.userFacingMessage,
+                  style: TextStyle(
+                    color: _getStateColor(),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          _buildSmallIconButton(
+            icon: _showPlaylist
+                ? Icons.queue_music
+                : Icons.queue_music_outlined,
+            onPressed: _togglePlaylist,
+            color: _showPlaylist
+                ? _getStateColor()
+                : fgColor.withValues(alpha: 0.7),
+          ),
+          _buildSmallIconButton(
+            icon: Icons.settings,
+            onPressed: _toggleSettings,
+            color: fgColor.withValues(alpha: 0.7),
+          ),
+          _buildSmallIconButton(
+            icon: Icons.expand_more,
+            onPressed: _toggleExpanded,
+            color: fgColor.withValues(alpha: 0.7),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChapterInfo(AudiobookStatus status, Color fgColor) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status.currentChapterTitle ??
+                      'Chapter ${status.currentChapter + 1}',
+                  style: TextStyle(
+                    color: fgColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                SizedBox(
+                  height: 18,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _buildCompactBadge(
+                        'Cur',
+                        status.currentChapterStatus?.state,
+                      ),
+                      if (status.currentChapter < status.totalChapters - 1) ...[
+                        const SizedBox(width: 4),
+                        _buildCompactBadge(
+                          'Next',
+                          status.nextChapterStatus?.state,
+                        ),
+                      ],
+                      if (status.readyChapterCount > 0) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.check_circle,
+                                size: 9,
+                                color: Colors.green,
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${status.readyChapterCount}',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (status.detectedLanguage != null)
+            Container(
+              margin: const EdgeInsets.only(left: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.purple.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                status.detectedLanguage!.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.purple,
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressBar(AudiobookStatus status, Color fgColor) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: status.playbackProgress,
+              backgroundColor: fgColor.withValues(alpha: 0.2),
+              valueColor: AlwaysStoppedAnimation(_getStateColor()),
+              minHeight: 3,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Ch ${status.currentChapter + 1}/${status.totalChapters}',
+                style: TextStyle(
+                  color: fgColor.withValues(alpha: 0.6),
+                  fontSize: 9,
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${status.playbackSpeed}x',
+                    style: TextStyle(
+                      color: fgColor.withValues(alpha: 0.6),
+                      fontSize: 9,
+                    ),
+                  ),
+                  if (status.isSleepTimerActive) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.bedtime, size: 10, color: Colors.amber),
+                    const SizedBox(width: 2),
+                    Text(
+                      _formatRemainingTime(status.sleepTimerRemaining),
+                      style: const TextStyle(color: Colors.amber, fontSize: 9),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaybackControls(Color fgColor) {
+    final status = widget.status;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildControlButton(
+            icon: Icons.skip_previous_rounded,
+            onPressed: status.currentChapter > 0 ? widget.onPrevious : null,
+            color: fgColor,
+            size: 24,
+          ),
+          _buildMainButton(fgColor),
+          _buildControlButton(
+            icon: Icons.skip_next_rounded,
+            onPressed: status.currentChapter < status.totalChapters - 1
+                ? widget.onNext
+                : null,
+            color: fgColor,
+            size: 24,
+          ),
+          _buildControlButton(
+            icon: Icons.stop_rounded,
+            onPressed: status.isActive || status.isPaused
+                ? widget.onStop
+                : null,
+            color: Colors.red,
+            size: 22,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==================== PLAYLIST PANEL ====================
+
+  Widget _buildPlaylistPanel(Color fgColor) {
+    return Container(
+      height: _playlistHeight,
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: fgColor.withValues(alpha: 0.1), width: 1),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Tab bar
+          SizedBox(
+            height: 32,
+            child: Row(
+              children: [
+                _buildPlaylistTab('All', 0, fgColor),
+                _buildPlaylistTab('Ready', 1, fgColor),
+                _buildPlaylistTab('Queue', 2, fgColor),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: fgColor.withValues(alpha: 0.1)),
+          // Tab content
+          Expanded(child: _buildPlaylistContent(fgColor)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaylistTab(String label, int index, Color fgColor) {
+    final isSelected = _selectedPlaylistTab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _selectedPlaylistTab = index),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: isSelected ? _getStateColor() : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected
+                  ? _getStateColor()
+                  : fgColor.withValues(alpha: 0.6),
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaylistContent(Color fgColor) {
+    switch (_selectedPlaylistTab) {
+      case 0:
+        return _buildAllChaptersList(fgColor);
+      case 1:
+        return _buildReadyChaptersList(fgColor);
+      case 2:
+        return _buildQueuedChaptersList(fgColor);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildAllChaptersList(Color fgColor) {
+    if (widget.bookId == null) {
+      return _buildEmptyState('No book loaded', Icons.book_outlined, fgColor);
+    }
+
+    return StreamBuilder<GenerationJob>(
+      stream: _bgGenerator.jobStatusStream,
+      builder: (context, snapshot) {
+        return FutureBuilder<List<dynamic>>(
+          future: TtsController.instance.getGeneratedAudioForBook(
+            widget.bookId!,
+          ),
+          builder: (context, cacheSnapshot) {
+            final cachedChapters = cacheSnapshot.data ?? [];
+            final jobs = _bgGenerator.allJobs
+                .where((j) => j.bookId == widget.bookId)
+                .toList();
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: widget.status.totalChapters,
+              itemBuilder: (context, index) {
+                final isCurrent = index == widget.status.currentChapter;
+                final isCached = cachedChapters.any(
+                  (c) => c.pageNumber == index,
+                );
+                final job = jobs
+                    .where((j) => j.chapterIndex == index)
+                    .firstOrNull;
+
+                return _buildPlaylistItem(
+                  index: index,
+                  fgColor: fgColor,
+                  isCurrent: isCurrent,
+                  isCached: isCached,
+                  job: job,
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildReadyChaptersList(Color fgColor) {
+    if (widget.bookId == null) {
+      return _buildEmptyState('No book loaded', Icons.book_outlined, fgColor);
+    }
+
+    return FutureBuilder<List<dynamic>>(
+      future: TtsController.instance.getGeneratedAudioForBook(widget.bookId!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
+
+        final cachedChapters = snapshot.data ?? [];
+        if (cachedChapters.isEmpty) {
+          return _buildEmptyState(
+            'No chapters ready',
+            Icons.hourglass_empty,
+            fgColor,
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: cachedChapters.length,
+          itemBuilder: (context, index) {
+            final entry = cachedChapters[index];
+            final chapterIndex = entry.pageNumber ?? 0;
+            final isCurrent = chapterIndex == widget.status.currentChapter;
+
+            return _buildPlaylistItem(
+              index: chapterIndex,
+              fgColor: fgColor,
+              isCurrent: isCurrent,
+              isCached: true,
+              job: null,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildQueuedChaptersList(Color fgColor) {
+    return StreamBuilder<GenerationJob>(
+      stream: _bgGenerator.jobStatusStream,
+      builder: (context, snapshot) {
+        final jobs =
+            _bgGenerator.allJobs
+                .where(
+                  (j) =>
+                      j.bookId == widget.bookId &&
+                      (j.status == JobStatus.generating ||
+                          j.status == JobStatus.queued),
+                )
+                .toList()
+              ..sort((a, b) => a.chapterIndex.compareTo(b.chapterIndex));
+
+        if (jobs.isEmpty) {
+          return _buildEmptyState(
+            'No chapters in queue',
+            Icons.check_circle_outline,
+            fgColor,
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: jobs.length,
+          itemBuilder: (context, index) {
+            final job = jobs[index];
+            return _buildQueuedJobItem(job, fgColor);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState(String message, IconData icon, Color fgColor) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 32, color: fgColor.withValues(alpha: 0.3)),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: TextStyle(
+              color: fgColor.withValues(alpha: 0.5),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaylistItem({
+    required int index,
+    required Color fgColor,
+    required bool isCurrent,
+    required bool isCached,
+    GenerationJob? job,
+  }) {
+    final title =
+        (widget.chapterTitles != null && index < widget.chapterTitles!.length)
+        ? widget.chapterTitles![index]
+        : 'Chapter ${index + 1}';
+
+    final isGenerating = job?.status == JobStatus.generating;
+    final isQueued = job?.status == JobStatus.queued;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: isCached ? () => widget.onChapterTap?.call(index) : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: isCurrent ? _getStateColor().withValues(alpha: 0.15) : null,
+          ),
+          child: Row(
+            children: [
+              // Leading icon
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: _buildPlaylistLeadingIcon(
+                  isCurrent: isCurrent,
+                  isCached: isCached,
+                  isGenerating: isGenerating,
+                  isQueued: isQueued,
+                  progress: job?.progress ?? 0,
+                  fgColor: fgColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Title and status
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: fgColor.withValues(alpha: isCurrent ? 1.0 : 0.8),
+                        fontSize: 11,
+                        fontWeight: isCurrent
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      _getItemStatusText(isCached, job),
+                      style: TextStyle(
+                        color: _getItemStatusColor(
+                          isCached,
+                          job,
+                        ).withValues(alpha: 0.8),
+                        fontSize: 9,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Trailing actions
+              if (isGenerating || isQueued)
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.red.shade300,
+                    ),
+                    onPressed: () => _bgGenerator.cancelJob(job!.id),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaylistLeadingIcon({
+    required bool isCurrent,
+    required bool isCached,
+    required bool isGenerating,
+    required bool isQueued,
+    required double progress,
+    required Color fgColor,
+  }) {
+    if (isCurrent && widget.status.state == AudiobookState.playing) {
+      return Container(
+        decoration: BoxDecoration(
+          color: _getStateColor(),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Icon(Icons.play_arrow, size: 16, color: Colors.white),
+      );
+    }
+
+    if (isGenerating) {
+      return Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 2,
+              valueColor: const AlwaysStoppedAnimation(Colors.amber),
+            ),
+          ),
+          Text(
+            '${(progress * 100).toInt()}',
+            style: const TextStyle(fontSize: 7, fontWeight: FontWeight.bold),
+          ),
+        ],
+      );
+    }
+
+    if (isCached) {
+      return const Icon(Icons.check_circle, size: 22, color: Colors.green);
+    }
+
+    if (isQueued) {
+      return const Icon(Icons.schedule, size: 22, color: Colors.orange);
+    }
+
+    return Icon(
+      Icons.music_note_outlined,
+      size: 22,
+      color: fgColor.withValues(alpha: 0.3),
+    );
+  }
+
+  Widget _buildQueuedJobItem(GenerationJob job, Color fgColor) {
+    final title =
+        (widget.chapterTitles != null &&
+            job.chapterIndex < widget.chapterTitles!.length)
+        ? widget.chapterTitles![job.chapterIndex]
+        : 'Chapter ${job.chapterIndex + 1}';
+
+    final isGenerating = job.status == JobStatus.generating;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    value: isGenerating ? job.progress : null,
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(
+                      isGenerating ? Colors.amber : Colors.orange,
+                    ),
+                  ),
+                ),
+                if (isGenerating)
+                  Text(
+                    '${(job.progress * 100).toInt()}',
+                    style: const TextStyle(
+                      fontSize: 7,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: fgColor, fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  isGenerating
+                      ? 'Generating ${(job.progress * 100).toInt()}%'
+                      : 'Queued #${_bgGenerator.queuedJobs.indexOf(job) + 1}',
+                  style: TextStyle(
+                    color: isGenerating ? Colors.amber : Colors.orange,
+                    fontSize: 9,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (job.startedAt != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                _formatElapsedTime(DateTime.now().difference(job.startedAt!)),
+                style: TextStyle(
+                  fontSize: 9,
+                  color: fgColor.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: IconButton(
+              icon: Icon(Icons.close, size: 14, color: Colors.red.shade300),
+              onPressed: () => _bgGenerator.cancelJob(job.id),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getItemStatusText(bool isCached, GenerationJob? job) {
+    if (job != null) {
+      switch (job.status) {
+        case JobStatus.generating:
+          return 'Generating ${(job.progress * 100).toInt()}%';
+        case JobStatus.queued:
+          return 'In queue';
+        case JobStatus.completed:
+        case JobStatus.skipped:
+          return 'Ready';
+        case JobStatus.failed:
+          return 'Failed';
+        case JobStatus.cancelled:
+          return 'Cancelled';
+      }
+    }
+    return isCached ? 'Ready to play' : 'Not generated';
+  }
+
+  Color _getItemStatusColor(bool isCached, GenerationJob? job) {
+    if (job != null) {
+      switch (job.status) {
+        case JobStatus.generating:
+          return Colors.amber;
+        case JobStatus.queued:
+          return Colors.orange;
+        case JobStatus.completed:
+        case JobStatus.skipped:
+          return Colors.green;
+        case JobStatus.failed:
+          return Colors.red;
+        case JobStatus.cancelled:
+          return Colors.grey;
+      }
+    }
+    return isCached ? Colors.green : Colors.grey;
+  }
+
+  String _formatElapsedTime(Duration duration) {
+    final seconds = duration.inSeconds;
+    if (seconds < 60) return '${seconds}s';
+    return '${duration.inMinutes}m ${seconds % 60}s';
+  }
+
+  // ==================== HELPER WIDGETS ====================
+
+  Widget _buildSmallIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required Color color,
+  }) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        icon: Icon(icon, size: 16, color: color),
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  Widget _buildCompactBadge(String label, ChapterGenerationState? state) {
+    Color badgeColor;
+    String statusChar;
+    bool showSpinner = false;
+
+    switch (state) {
+      case ChapterGenerationState.generating:
+        badgeColor = Colors.amber;
+        statusChar = '⟳';
+        showSpinner = true;
+        break;
+      case ChapterGenerationState.ready:
+        badgeColor = Colors.green;
+        statusChar = '✓';
+        break;
+      case ChapterGenerationState.playing:
+        badgeColor = Colors.blue;
+        statusChar = '▶';
+        break;
+      case ChapterGenerationState.queued:
+        badgeColor = Colors.orange;
+        statusChar = '◷';
+        break;
+      case ChapterGenerationState.error:
+        badgeColor = Colors.red;
+        statusChar = '✕';
+        break;
+      default:
+        badgeColor = Colors.grey;
+        statusChar = '○';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: badgeColor.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showSpinner)
+            SizedBox(
+              width: 8,
+              height: 8,
+              child: CircularProgressIndicator(
+                strokeWidth: 1,
+                valueColor: AlwaysStoppedAnimation(badgeColor),
+              ),
+            )
+          else
+            Text(statusChar, style: TextStyle(color: badgeColor, fontSize: 8)),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: badgeColor,
+              fontSize: 8,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNextChapterStatus(AudiobookStatus status, Color fgColor) {
     if (widget.bookId == null) return const SizedBox.shrink();
 
     return StreamBuilder<GenerationJob>(
       stream: _bgGenerator.jobStatusStream,
       builder: (context, snapshot) {
-        // Find next chapter job
         final nextChapterIndex = status.currentChapter + 1;
         final jobs = _bgGenerator.allJobs
             .where(
@@ -592,7 +1254,6 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
             .toList();
 
         if (jobs.isEmpty) return const SizedBox.shrink();
-
         final nextJob = jobs.first;
 
         if (nextJob.status != JobStatus.generating &&
@@ -601,37 +1262,38 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
         }
 
         return Container(
-          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          margin: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: Colors.amber.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
           ),
           child: Row(
             children: [
               SizedBox(
-                width: 14,
-                height: 14,
+                width: 10,
+                height: 10,
                 child: CircularProgressIndicator(
-                  strokeWidth: 2,
+                  strokeWidth: 1.5,
                   valueColor: const AlwaysStoppedAnimation(Colors.amber),
                   value: nextJob.status == JobStatus.generating
                       ? nextJob.progress
                       : null,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   nextJob.status == JobStatus.generating
-                      ? 'Next: Generating ${(nextJob.progress * 100).toInt()}%'
-                      : 'Next: Queued for generation',
+                      ? 'Next: ${(nextJob.progress * 100).toInt()}%'
+                      : 'Next: Queued',
                   style: const TextStyle(
                     color: Colors.amber,
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: FontWeight.w500,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -641,76 +1303,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     );
   }
 
-  Widget _buildChapterStatusBadge(
-    String label,
-    ChapterGenerationState? state,
-    Color fgColor,
-  ) {
-    Color badgeColor;
-    String statusText;
-    bool showSpinner = false;
-
-    switch (state) {
-      case ChapterGenerationState.generating:
-        badgeColor = Colors.amber;
-        statusText = 'Generating';
-        showSpinner = true;
-        break;
-      case ChapterGenerationState.ready:
-        badgeColor = Colors.green;
-        statusText = 'Ready';
-        break;
-      case ChapterGenerationState.playing:
-        badgeColor = Colors.blue;
-        statusText = 'Playing';
-        break;
-      case ChapterGenerationState.queued:
-        badgeColor = Colors.orange;
-        statusText = 'Queued';
-        break;
-      case ChapterGenerationState.error:
-        badgeColor = Colors.red;
-        statusText = 'Error';
-        break;
-      default:
-        badgeColor = Colors.grey;
-        statusText = 'Idle';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: badgeColor.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (showSpinner) ...[
-            SizedBox(
-              width: 8,
-              height: 8,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                valueColor: AlwaysStoppedAnimation(badgeColor),
-              ),
-            ),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            '$label: $statusText',
-            style: TextStyle(
-              color: badgeColor,
-              fontSize: 9,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ... (keep all other existing methods: _buildSettingsPanel, _buildMiniControls, etc.)
+  // ==================== SETTINGS PANEL ====================
 
   Widget _buildSettingsPanel() {
     final bgColor =
@@ -720,7 +1313,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     return Container(
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.4),
@@ -733,149 +1326,162 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
           width: 1,
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(Icons.arrow_back, color: fgColor),
-                  onPressed: _toggleSettings,
-                  visualDensity: VisualDensity.compact,
-                ),
-                Text(
-                  'Settings',
-                  style: TextStyle(
-                    color: fgColor,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: Colors.white24),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Playback Speed',
-                  style: TextStyle(
-                    color: fgColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: _speedOptions.map((speed) {
-                    final isSelected = widget.status.playbackSpeed == speed;
-                    return GestureDetector(
-                      onTap: () => widget.onSpeedChange?.call(speed),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? Colors.blue
-                              : Colors.white.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          '${speed}x',
-                          style: TextStyle(
-                            color: isSelected ? Colors.white : fgColor,
-                            fontSize: 12,
-                            fontWeight: isSelected
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      'Sleep Timer',
-                      style: TextStyle(
-                        color: fgColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.arrow_back, color: fgColor, size: 18),
+                    onPressed: _toggleSettings,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
                     ),
-                    if (widget.status.isSleepTimerActive) ...[
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: widget.onCancelSleepTimer,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Settings',
+                    style: TextStyle(
+                      color: fgColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.1)),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Playback Speed',
+                    style: TextStyle(
+                      color: fgColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 5,
+                    children: _speedOptions.map((speed) {
+                      final isSelected = widget.status.playbackSpeed == speed;
+                      return GestureDetector(
+                        onTap: () => widget.onSpeedChange?.call(speed),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
+                            horizontal: 10,
+                            vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(8),
+                            color: isSelected
+                                ? Colors.blue
+                                : Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Text(
-                            'Cancel',
-                            style: TextStyle(color: Colors.red, fontSize: 10),
+                          child: Text(
+                            '${speed}x',
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : fgColor,
+                              fontSize: 10,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _sleepTimerOptions.map((duration) {
-                    return GestureDetector(
-                      onTap: () {
-                        widget.onSleepTimer?.call(duration);
-                        _toggleSettings();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          _formatDuration(duration),
-                          style: TextStyle(color: fgColor, fontSize: 12),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Sleep Timer',
+                        style: TextStyle(
+                          color: fgColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (widget.status.isSleepTimerActive) ...[
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: widget.onCancelSleepTimer,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(color: Colors.red, fontSize: 8),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 5,
+                    children: _sleepTimerOptions.map((duration) {
+                      return GestureDetector(
+                        onTap: () {
+                          widget.onSleepTimer?.call(duration);
+                          _toggleSettings();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _formatDuration(duration),
+                            style: TextStyle(color: fgColor, fontSize: 10),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  // ==================== MINI CONTROLS ====================
 
   Widget _buildMiniControls() {
     final bgColor =
@@ -886,9 +1492,10 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     return GestureDetector(
       onTap: _toggleExpanded,
       child: Container(
+        height: _miniHeight,
         decoration: BoxDecoration(
           color: bgColor,
-          borderRadius: BorderRadius.circular(32),
+          borderRadius: BorderRadius.circular(30),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.3),
@@ -903,15 +1510,16 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
             width: _isDragging ? 2 : 1,
           ),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Row(
           children: [
+            // Status indicator
             Stack(
               alignment: Alignment.center,
               children: [
                 Container(
-                  width: 12,
-                  height: 12,
+                  width: 10,
+                  height: 10,
                   decoration: BoxDecoration(
                     color: _getStateColor(),
                     shape: BoxShape.circle,
@@ -919,8 +1527,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                 ),
                 if (status.isProcessing)
                   SizedBox(
-                    width: 20,
-                    height: 20,
+                    width: 16,
+                    height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation(_getStateColor()),
@@ -928,19 +1536,22 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                   ),
               ],
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
+            // Chapter info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Ch. ${status.currentChapter + 1}/${status.totalChapters}',
+                    'Ch ${status.currentChapter + 1}/${status.totalChapters}',
                     style: TextStyle(
                       color: fgColor,
-                      fontSize: 12,
+                      fontSize: 10,
                       fontWeight: FontWeight.w500,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 2),
                   ClipRRect(
@@ -949,48 +1560,55 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                       value: status.playbackProgress,
                       backgroundColor: fgColor.withValues(alpha: 0.2),
                       valueColor: AlwaysStoppedAnimation(_getStateColor()),
-                      minHeight: 3,
+                      minHeight: 2,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
+            // Next generating indicator
             if (status.isNextChapterGenerating)
               Padding(
-                padding: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.only(right: 4),
                 child: SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
+                  width: 12,
+                  height: 12,
+                  child: const CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: const AlwaysStoppedAnimation(Colors.amber),
+                    valueColor: AlwaysStoppedAnimation(Colors.amber),
                   ),
                 ),
               ),
-            IconButton(
-              icon: Icon(
-                status.state == AudiobookState.playing
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                color: fgColor,
-                size: 26,
+            // Play/pause button
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                icon: Icon(
+                  status.state == AudiobookState.playing
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  color: fgColor,
+                  size: 20,
+                ),
+                onPressed: widget.onPlayPause,
+                padding: EdgeInsets.zero,
               ),
-              onPressed: widget.onPlayPause,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             ),
-            IconButton(
-              icon: Icon(
-                Icons.close_rounded,
-                color: Colors.red.shade300,
-                size: 22,
+            // Stop button
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: IconButton(
+                icon: Icon(
+                  Icons.close_rounded,
+                  color: Colors.red.shade300,
+                  size: 16,
+                ),
+                onPressed: widget.onStop,
+                padding: EdgeInsets.zero,
               ),
-              onPressed: widget.onStop,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             ),
           ],
         ),
@@ -998,12 +1616,14 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     );
   }
 
+  // ==================== COMMON WIDGETS ====================
+
   Widget _buildStateIcon() {
     final status = widget.status;
     if (status.isTtsInitializing) {
       return const SizedBox(
-        width: 18,
-        height: 18,
+        width: 14,
+        height: 14,
         child: CircularProgressIndicator(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(Colors.blue),
@@ -1012,8 +1632,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     }
     if (status.isProcessing) {
       return SizedBox(
-        width: 18,
-        height: 18,
+        width: 14,
+        height: 14,
         child: CircularProgressIndicator(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(_getStateColor()),
@@ -1029,7 +1649,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
           ? Icons.check_circle_rounded
           : Icons.auto_stories,
       color: _getStateColor(),
-      size: 18,
+      size: 14,
     );
   }
 
@@ -1044,8 +1664,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
           ? widget.onPlayPause
           : null,
       child: Container(
-        width: 56,
-        height: 56,
+        width: 48,
+        height: 48,
         decoration: BoxDecoration(
           color: _getStateColor(),
           shape: BoxShape.circle,
@@ -1059,16 +1679,16 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
         ),
         child: isProcessing
             ? const Padding(
-                padding: EdgeInsets.all(14),
+                padding: EdgeInsets.all(12),
                 child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
+                  strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation(Colors.white),
                 ),
               )
             : Icon(
                 isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                 color: Colors.white,
-                size: 30,
+                size: 26,
               ),
       ),
     );
@@ -1078,11 +1698,17 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     required IconData icon,
     required VoidCallback? onPressed,
     required Color color,
+    double size = 24,
   }) {
-    return IconButton(
-      icon: Icon(icon, size: 28),
-      color: onPressed != null ? color : color.withValues(alpha: 0.3),
-      onPressed: onPressed,
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: IconButton(
+        icon: Icon(icon, size: size),
+        color: onPressed != null ? color : color.withValues(alpha: 0.3),
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+      ),
     );
   }
 
@@ -1112,7 +1738,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     final hours = duration.inHours;
     final minutes = duration.inMinutes % 60;
     if (hours > 0) {
-      return '$hours hr${minutes > 0 ? ' $minutes min' : ''}';
+      return '$hours hr${minutes > 0 ? ' $minutes m' : ''}';
     }
     return '$minutes min';
   }
@@ -1121,9 +1747,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     if (duration == null) return '';
     final minutes = duration.inMinutes;
     final seconds = duration.inSeconds % 60;
-    if (minutes > 0) {
-      return '${minutes}m ${seconds}s';
-    }
+    if (minutes > 0) return '${minutes}m ${seconds}s';
     return '${seconds}s';
   }
 }

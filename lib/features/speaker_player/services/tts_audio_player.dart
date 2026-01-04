@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,6 +62,14 @@ class TtsAudioPlayer {
         _updateStatus(duration: duration);
       }
     });
+
+    _initAudioSession();
+  }
+
+  Future<void> _initAudioSession() async {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.speech());
+    await session.setActive(true);
   }
 
   void _handlePlayerState(PlayerState state) {

@@ -352,6 +352,9 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
+      // Ensure service is initialized (opens Hive boxes)
+      await _readerService.initialize();
+
       final result = await _readerService.getLibrary();
       if (result.isSuccess) {
         state = state.copyWith(books: result.requireData, isLoading: false);
@@ -1257,6 +1260,27 @@ class ReaderNotifier extends StateNotifier<AsyncValue<void>> {
     }
   }
 
+  /// Save chapter translation
+  Future<Result<ChapterTranslation>> saveChapterTranslation({
+    required String translatedTitle,
+    required String translatedContent,
+    required String sourceLanguage,
+    required String targetLanguage,
+    TranslationProvider? provider,
+  }) async {
+    try {
+      return await _readerService.saveChapterTranslation(
+        translatedTitle: translatedTitle,
+        translatedContent: translatedContent,
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
+        provider: provider,
+      );
+    } catch (e, st) {
+      return Result.failure(e, st);
+    }
+  }
+
   /// Get cached translation
   Future<Result<TextTranslation?>> getCachedTranslation({
     required String originalText,
@@ -1269,6 +1293,21 @@ class ReaderNotifier extends StateNotifier<AsyncValue<void>> {
       );
     } catch (e, st) {
       return Result.failure(e, st);
+    }
+  }
+
+  ChapterTranslation? getSavedChapterTranslation({
+    required int chapterIndex,
+    required String targetLanguage,
+  }) {
+    try {
+      return _readerService.getChapterTranslation(
+        chapterIndex: chapterIndex,
+        targetLanguage: targetLanguage,
+      );
+    } catch (e) {
+      debugPrint('getSavedChapterTranslation error: $e');
+      return null;
     }
   }
 
@@ -1333,7 +1372,8 @@ final currentProgressProvider = Provider<ReadingProgress?>((ref) {
 
 /// Reader settings provider
 final readerSettingsProvider = Provider<ReaderSettings>((ref) {
-  return ref.read(readerServiceProvider).settings;
+  final state = ref.watch(readerStateProvider).value;
+  return state?.settings ?? ref.read(readerServiceProvider).settings;
 });
 
 /// Bookmarks provider

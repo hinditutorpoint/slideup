@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
 import '../models/download_model.dart';
@@ -38,7 +39,7 @@ class DownloadManager {
 
   void _log(String message) {
     if (_enableLogging) {
-      print('[DownloadManager] $message');
+      debugPrint('[DownloadManager] $message');
     }
   }
 

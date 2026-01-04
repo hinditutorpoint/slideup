@@ -21,13 +21,43 @@ class ReadingSettingsSheet extends ConsumerStatefulWidget {
       _ReadingSettingsSheetState();
 }
 
-class _ReadingSettingsSheetState extends ConsumerState<ReadingSettingsSheet> {
+class _ReadingSettingsSheetState extends ConsumerState<ReadingSettingsSheet>
+    with SingleTickerProviderStateMixin {
   late ReaderSettings _settings;
+  late TabController _tabController;
+
+  static const List<Map<String, String>> _languages = [
+    {'name': 'Hindi', 'code': 'hi'},
+    {'name': 'Spanish', 'code': 'es'},
+    {'name': 'French', 'code': 'fr'},
+    {'name': 'German', 'code': 'de'},
+    {'name': 'Italian', 'code': 'it'},
+    {'name': 'Japanese', 'code': 'ja'},
+    {'name': 'Korean', 'code': 'ko'},
+    {'name': 'Chinese', 'code': 'zh'},
+    {'name': 'Russian', 'code': 'ru'},
+    {'name': 'Arabic', 'code': 'ar'},
+  ];
 
   @override
   void initState() {
     super.initState();
     _settings = widget.initialSettings;
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(ReadingSettingsSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialSettings != oldWidget.initialSettings) {
+      _settings = widget.initialSettings;
+    }
   }
 
   void _updateSettings(ReaderSettings newSettings) {
@@ -41,70 +71,138 @@ class _ReadingSettingsSheetState extends ConsumerState<ReadingSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Handle bar
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
               ),
-              const SizedBox(height: 20),
-
-              // Title
-              const Text(
-                'Reading Settings',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            TabBar(
+              controller: _tabController,
+              labelColor: Theme.of(context).primaryColor,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: Theme.of(context).primaryColor,
+              tabs: const [
+                Tab(text: 'Appearance'),
+                Tab(text: 'Content'),
+                Tab(text: 'Translation'),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildAppearanceTab(),
+                  _buildContentTab(),
+                  _buildTranslationTab(),
+                ],
               ),
-              const SizedBox(height: 24),
-
-              // Font size
-              _buildFontSizeSection(),
-              const SizedBox(height: 24),
-
-              // Line height
-              _buildLineHeightSection(),
-              const SizedBox(height: 24),
-
-              // Theme
-              _buildThemeSection(),
-              const SizedBox(height: 24),
-
-              // Font family
-              _buildFontFamilySection(),
-              const SizedBox(height: 24),
-
-              // Margins
-              _buildMarginSection(),
-              const SizedBox(height: 24),
-
-              // Toggles
-              _buildTogglesSection(),
-              const SizedBox(height: 16),
-
-              // Reset button
-              TextButton(
-                onPressed: _resetToDefaults,
-                child: const Text('Reset to Defaults'),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAppearanceTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildThemeSection(),
+          const SizedBox(height: 24),
+          _buildFontFamilySection(),
+          const SizedBox(height: 24),
+          _buildFontSizeSection(),
+          const SizedBox(height: 16),
+          TextButton(
+            onPressed: _resetToDefaults,
+            child: const Text('Reset to Defaults'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContentTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildLineHeightSection(),
+          const SizedBox(height: 24),
+          _buildMarginSection(),
+          const SizedBox(height: 24),
+          _buildTogglesSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTranslationTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Translation Settings',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          _buildToggleTile(
+            title: 'Enable Translation',
+            subtitle: 'Translate chapter content automatically',
+            value: _settings.translationEnabled,
+            onChanged: (value) =>
+                _updateSettings(_settings.copyWith(translationEnabled: value)),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Target Language',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _languages.length,
+              separatorBuilder: (context, index) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final lang = _languages[index];
+                final isSelected = _settings.targetLanguage == lang['code'];
+                return ListTile(
+                  title: Text(lang['name']!),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: Theme.of(context).primaryColor)
+                      : null,
+                  onTap: () => _updateSettings(
+                    _settings.copyWith(targetLanguage: lang['code']!),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

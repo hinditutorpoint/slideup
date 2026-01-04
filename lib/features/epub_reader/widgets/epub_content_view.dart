@@ -23,6 +23,8 @@ class EpubContentView extends ConsumerStatefulWidget {
   final void Function(String text, int start, int end)? onTextSelected;
   final void Function(ChapterLink link)? onLinkTapped;
   final void Function(ChapterImage image)? onImageTapped;
+  final String? translatedText;
+  final bool isTranslating;
 
   const EpubContentView({
     super.key,
@@ -34,6 +36,8 @@ class EpubContentView extends ConsumerStatefulWidget {
     this.onTextSelected,
     this.onLinkTapped,
     this.onImageTapped,
+    this.translatedText,
+    this.isTranslating = false,
   });
 
   @override
@@ -203,7 +207,10 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
   Widget _buildChapterContent(_ThemeColors theme, BoxConstraints constraints) {
     try {
       final content =
-          widget.chapter.htmlContent ?? widget.chapter.textContent ?? '';
+          widget.translatedText ??
+          widget.chapter.htmlContent ??
+          widget.chapter.textContent ??
+          '';
 
       if (content.isEmpty) {
         return _buildEmptyContent(theme);

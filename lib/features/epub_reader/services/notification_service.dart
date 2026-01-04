@@ -54,7 +54,7 @@ class NotificationPayload {
   };
 
   String encode() {
-    return '${type}|${taskId ?? ''}|${bookId ?? ''}|${action ?? ''}';
+    return '$type|${taskId ?? ''}|${bookId ?? ''}|${action ?? ''}';
   }
 
   factory NotificationPayload.decode(String encoded) {

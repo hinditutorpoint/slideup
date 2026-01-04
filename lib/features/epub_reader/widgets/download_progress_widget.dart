@@ -207,7 +207,7 @@ class DownloadProgressCard extends ConsumerWidget {
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         shape: BoxShape.circle,
       ),
       child: Icon(iconData, color: color, size: 24),

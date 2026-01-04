@@ -602,7 +602,7 @@ class _ModelsScreenState extends ConsumerState<ModelsScreen> {
     final importServiceAsync = ref.read(modelImportServiceProvider);
 
     // Wait for the import service to be ready
-    final importService = await importServiceAsync.when(
+    final importService = importServiceAsync.when(
       data: (service) => service,
       loading: () => null,
       error: (e, _) {

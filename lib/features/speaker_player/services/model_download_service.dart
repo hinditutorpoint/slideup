@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+
 import '../models/download_model.dart';
 import '../models/model_info.dart';
 import '../repositories/model_repository.dart';
@@ -25,7 +27,7 @@ class ModelDownloadService {
 
   void _log(String message) {
     if (_enableLogging) {
-      print('[ModelDownloadService] $message');
+      debugPrint('[ModelDownloadService] $message');
     }
   }
 

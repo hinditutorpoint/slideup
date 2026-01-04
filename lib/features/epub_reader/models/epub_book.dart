@@ -220,7 +220,9 @@ class EpubBook extends Equatable {
         chapters:
             (json['chapters'] as List<dynamic>?)
                 ?.map(
-                  (e) => EpubChapterMeta.fromJson(e as Map<String, dynamic>),
+                  (e) => EpubChapterMeta.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ),
                 )
                 .toList() ??
             [],
@@ -246,11 +248,13 @@ class EpubBook extends Equatable {
             [],
         readingProgress: (json['readingProgress'] as num?)?.toDouble() ?? 0.0,
         currentChapterIndex: json['currentChapterIndex'] as int? ?? 0,
-        metadata: (json['metadata'] as Map<String, dynamic>?)?.map(
-          (k, v) => MapEntry(k, v.toString()),
-        ),
+        metadata: json['metadata'] != null
+            ? Map<String, dynamic>.from(
+                json['metadata'] as Map,
+              ).map((k, v) => MapEntry(k.toString(), v.toString()))
+            : null,
         tableOfContents: (json['tableOfContents'] as List<dynamic>?)
-            ?.map((e) => TocEntry.fromJson(e as Map<String, dynamic>))
+            ?.map((e) => TocEntry.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
         spine: (json['spine'] as List<dynamic>?)
             ?.map((e) => e as String)
@@ -561,7 +565,9 @@ class TocEntry extends Equatable {
       level: json['level'] as int? ?? 0,
       children:
           (json['children'] as List<dynamic>?)
-              ?.map((e) => TocEntry.fromJson(e as Map<String, dynamic>))
+              ?.map(
+                (e) => TocEntry.fromJson(Map<String, dynamic>.from(e as Map)),
+              )
               .toList() ??
           [],
       anchor: json['anchor'] as String?,

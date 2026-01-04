@@ -405,22 +405,31 @@ class ReadingProgress extends Equatable {
         wordOffset: json['wordOffset'] as int?,
         bookmarks:
             (json['bookmarks'] as List<dynamic>?)
-                ?.map((e) => Bookmark.fromJson(e as Map<String, dynamic>))
+                ?.map(
+                  (e) => Bookmark.fromJson(Map<String, dynamic>.from(e as Map)),
+                )
                 .toList() ??
             [],
         highlights:
             (json['highlights'] as List<dynamic>?)
-                ?.map((e) => Highlight.fromJson(e as Map<String, dynamic>))
+                ?.map(
+                  (e) =>
+                      Highlight.fromJson(Map<String, dynamic>.from(e as Map)),
+                )
                 .toList() ??
             [],
         notes:
             (json['notes'] as List<dynamic>?)
-                ?.map((e) => Note.fromJson(e as Map<String, dynamic>))
+                ?.map((e) => Note.fromJson(Map<String, dynamic>.from(e as Map)))
                 .toList() ??
             [],
         sessions:
             (json['sessions'] as List<dynamic>?)
-                ?.map((e) => ReadingSession.fromJson(e as Map<String, dynamic>))
+                ?.map(
+                  (e) => ReadingSession.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ),
+                )
                 .toList() ??
             [],
         lastCFI: json['lastCFI'] as String?,
@@ -442,24 +451,30 @@ class ReadingProgress extends Equatable {
         lastReadDate: json['lastReadDate'] != null
             ? DateTime.tryParse(json['lastReadDate'] as String)
             : null,
-        metadata: json['metadata'] as Map<String, dynamic>?,
+        metadata: json['metadata'] != null
+            ? Map<String, dynamic>.from(json['metadata'] as Map)
+            : null,
         textTranslations:
             (json['textTranslations'] as List<dynamic>?)
                 ?.map(
-                  (e) => TextTranslation.fromJson(e as Map<String, dynamic>),
+                  (e) => TextTranslation.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ),
                 )
                 .toList() ??
             [],
         chapterTranslations:
             (json['chapterTranslations'] as List<dynamic>?)
                 ?.map(
-                  (e) => ChapterTranslation.fromJson(e as Map<String, dynamic>),
+                  (e) => ChapterTranslation.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ),
                 )
                 .toList() ??
             [],
         translationSettings: json['translationSettings'] != null
             ? TranslationSettings.fromJson(
-                json['translationSettings'] as Map<String, dynamic>,
+                Map<String, dynamic>.from(json['translationSettings'] as Map),
               )
             : null,
       );
@@ -1336,7 +1351,7 @@ class TextTranslation extends Equatable {
 
   @override
   String toString() =>
-      'TextTranslation(id: $id, $languagePair, "${originalPreview}")';
+      'TextTranslation(id: $id, $languagePair, "$originalPreview")';
 }
 
 // =============================================================================
@@ -1770,7 +1785,9 @@ class TranslationSettings extends Equatable {
               ?.map((e) => e as String)
               .toList() ??
           [],
-      additionalSettings: json['additionalSettings'] as Map<String, dynamic>?,
+      additionalSettings: json['additionalSettings'] != null
+          ? Map<String, dynamic>.from(json['additionalSettings'] as Map)
+          : null,
     );
   }
 
@@ -2363,7 +2380,9 @@ class Highlight extends Equatable {
           ? DateTime.tryParse(json['updatedAt'] as String)
           : null,
       isDeleted: json['isDeleted'] as bool? ?? false,
-      metadata: json['metadata'] as Map<String, dynamic>?,
+      metadata: json['metadata'] != null
+          ? Map<String, dynamic>.from(json['metadata'] as Map)
+          : null,
     );
   }
 
@@ -2564,7 +2583,9 @@ class Note extends Equatable {
           ? DateTime.tryParse(json['updatedAt'] as String)
           : null,
       isDeleted: json['isDeleted'] as bool? ?? false,
-      metadata: json['metadata'] as Map<String, dynamic>?,
+      metadata: json['metadata'] != null
+          ? Map<String, dynamic>.from(json['metadata'] as Map)
+          : null,
     );
   }
 
@@ -2735,7 +2756,9 @@ class ReadingSession extends Equatable {
       progressGained: (json['progressGained'] as num?)?.toDouble() ?? 0.0,
       wordsRead: json['wordsRead'] as int? ?? 0,
       averageSpeed: (json['averageSpeed'] as num?)?.toDouble() ?? 0.0,
-      metadata: json['metadata'] as Map<String, dynamic>?,
+      metadata: json['metadata'] != null
+          ? Map<String, dynamic>.from(json['metadata'] as Map)
+          : null,
     );
   }
 

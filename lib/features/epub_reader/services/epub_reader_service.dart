@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/exceptions/epub_exceptions.dart';
@@ -93,6 +94,8 @@ class ReaderSettings {
   final double brightness;
   final bool autoSaveProgress;
   final Duration autoSaveInterval;
+  final bool translationEnabled;
+  final String targetLanguage; // ISO 639-1 code (e.g., 'hi', 'es', 'fr')
 
   const ReaderSettings({
     this.fontSize = AppConstants.defaultFontSize,
@@ -107,6 +110,8 @@ class ReaderSettings {
     this.brightness = 1.0,
     this.autoSaveProgress = true,
     this.autoSaveInterval = const Duration(seconds: 30),
+    this.translationEnabled = false,
+    this.targetLanguage = 'hi', // Default to Hindi
   });
 
   ReaderSettings copyWith({
@@ -122,6 +127,8 @@ class ReaderSettings {
     double? brightness,
     bool? autoSaveProgress,
     Duration? autoSaveInterval,
+    bool? translationEnabled,
+    String? targetLanguage,
   }) {
     return ReaderSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -137,6 +144,8 @@ class ReaderSettings {
       brightness: brightness ?? this.brightness,
       autoSaveProgress: autoSaveProgress ?? this.autoSaveProgress,
       autoSaveInterval: autoSaveInterval ?? this.autoSaveInterval,
+      translationEnabled: translationEnabled ?? this.translationEnabled,
+      targetLanguage: targetLanguage ?? this.targetLanguage,
     );
   }
 
@@ -153,6 +162,8 @@ class ReaderSettings {
     'brightness': brightness,
     'autoSaveProgress': autoSaveProgress,
     'autoSaveInterval': autoSaveInterval.inSeconds,
+    'translationEnabled': translationEnabled,
+    'targetLanguage': targetLanguage,
   };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) {
@@ -182,6 +193,8 @@ class ReaderSettings {
       autoSaveInterval: Duration(
         seconds: json['autoSaveInterval'] as int? ?? 30,
       ),
+      translationEnabled: json['translationEnabled'] as bool? ?? false,
+      targetLanguage: json['targetLanguage'] as String? ?? 'hi',
     );
   }
 }
@@ -640,6 +653,27 @@ class EpubReaderService {
 
       return await _goToChapter(chapterIndex);
     }, operationName: 'goToChapter');
+  }
+
+  /// Get chapter WITHOUT updating state (for background tasks/audio)
+  Future<Result<EpubChapter>> getChapter(int chapterIndex) async {
+    return SafeAsync.run(() async {
+      if (!_currentState.hasBook) {
+        throw ReaderException.navigationError(targetChapter: chapterIndex);
+      }
+
+      // Reuse existing load logic but don't update state
+      final result = await _loadChapter(
+        book: _currentState.book!,
+        chapterIndex: chapterIndex,
+      );
+
+      if (result.isFailure) {
+        throw result.error!;
+      }
+
+      return result.requireData;
+    }, operationName: 'getChapter');
   }
 
   /// Go to chapter by href
@@ -1417,11 +1451,17 @@ class EpubReaderService {
   /// Get all books in library
   Future<Result<List<EpubBook>>> getLibrary() async {
     return SafeAsync.run(() async {
+      await initialize(); // Ensure initialized
+
       final books = <EpubBook>[];
 
-      for (final key in _booksBox?.keys ?? []) {
+      if (_booksBox == null) {
+        throw Exception('Library storage not initialized');
+      }
+
+      for (final key in _booksBox!.keys) {
         try {
-          final data = _booksBox?.get(key);
+          final data = _booksBox!.get(key);
           if (data != null) {
             books.add(
               EpubBook.fromJson(Map<String, dynamic>.from(data as Map)),
@@ -1439,9 +1479,27 @@ class EpubReaderService {
   /// Delete book from library
   Future<Result<void>> deleteBook(String bookId) async {
     return SafeAsync.run(() async {
+      await initialize();
+
       // Close if currently open
       if (_currentState.book?.id == bookId) {
         await closeBook();
+      }
+
+      // Delete associated audio folder
+      try {
+        final baseDir = await getExternalStorageDirectory();
+        final appDir = baseDir ?? await getApplicationDocumentsDirectory();
+        final audioDir = Directory(
+          path.join(appDir.path, 'audiobooks', bookId),
+        );
+        if (await audioDir.exists()) {
+          await audioDir.delete(recursive: true);
+          debugPrint('Deleted audio folder for book: $bookId');
+        }
+      } catch (e) {
+        debugPrint('Failed to delete audio folder: $e');
+        // Continue with book deletion even if audio cleanup fails
       }
 
       // Delete from Hive
@@ -1455,6 +1513,7 @@ class EpubReaderService {
 
   /// Save book to library
   Future<void> _saveBook(EpubBook book) async {
+    if (_booksBox == null) await initialize();
     await _booksBox?.put(book.id, book.toJson());
   }
 

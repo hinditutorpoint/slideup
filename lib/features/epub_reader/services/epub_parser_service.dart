@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -647,10 +648,8 @@ EpubBook _parseEpubBytes(_ParseEpubParams params) {
       );
     }
 
-    // Generate book ID
-    final bookId =
-        metadata['identifier'] ??
-        'book_${params.filePath.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
+    // Generate deterministic book ID from file hash
+    final bookId = _generateBookIdFromBytes(params.bytes);
 
     return EpubBook(
       id: bookId,
@@ -684,6 +683,13 @@ EpubBook _parseEpubBytes(_ParseEpubParams params) {
       originalError: e,
     );
   }
+}
+
+/// Generate deterministic book ID from file bytes using MD5 hash
+String _generateBookIdFromBytes(Uint8List bytes) {
+  // Use MD5 hash of file bytes for deterministic ID
+  final hash = md5.convert(bytes);
+  return 'book_${hash.toString()}';
 }
 
 /// Extract OPF path from container.xml

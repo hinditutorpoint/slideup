@@ -388,7 +388,7 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     return GestureDetector(
       onTap: () {}, // Capture taps
       child: Container(
-        color: Colors.black.withOpacity(0.95),
+        color: Colors.black.withValues(alpha: 0.95),
         child: SafeArea(
           child: Column(
             children: [
