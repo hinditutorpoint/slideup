@@ -14,11 +14,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2.10.1
+      # Setup JDK
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          flutter-version: "3.13.4"
-          cache: true
+          distribution: temurin
+          java-version: '17'
+
+      # Setup Flutter SDK
+      - name: Setup Flutter
+        uses: flutter-actions/setup-flutter@v4
+        with:
+          channel: stable
+          version: "latest"
 
       - name: Flutter doctor
         run: flutter doctor -v
@@ -28,7 +36,7 @@ jobs:
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/my-release-key.keystore
 
-      # Inject Gradle properties (Kotlin DSL compatible)
+      # Create gradle.properties
       - name: Create gradle.properties
         run: |
           cat <<EOF > android/gradle.properties
@@ -38,7 +46,7 @@ jobs:
           MY_KEY_PASSWORD=${{ secrets.MY_KEY_PASSWORD }}
           EOF
 
-      # Auto versionCode increment
+      # Auto version bump
       - name: Update build number
         run: |
           BUILD_NUMBER=${{ github.run_number }}
@@ -49,7 +57,7 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      # SIGNED APK
+      # Build signed APK
       - name: Build signed APK
         run: flutter build apk --release
 
