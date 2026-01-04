@@ -1,4 +1,4 @@
-name: Dart
+name: Flutter CI
 
 on:
   push:
@@ -11,18 +11,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout
       - uses: actions/checkout@v4
 
-      # Use official setup-dart action
-      - uses: dart-lang/setup-dart@v1
+      # 2️⃣ Setup Flutter
+      - name: Setup Flutter
+        uses: flutter-actions/setup-flutter@v4
         with:
-          sdk: stable
+          channel: stable
+          version: latest
 
-      - name: Install dependencies
-        run: dart pub get
+      # 3️⃣ Check Flutter
+      - name: Flutter doctor
+        run: flutter doctor -v
 
-      - name: Analyze project source
-        run: dart analyze
+      # 4️⃣ Install dependencies
+      - name: Flutter pub get
+        run: flutter pub get
 
-      - name: Run tests
-        run: dart test
+      # 5️⃣ Analyze code
+      - name: Analyze project
+        run: flutter analyze
+
+      # 6️⃣ Run tests
+      - name: Run Flutter tests
+        run: flutter test
