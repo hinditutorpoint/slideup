@@ -940,7 +940,7 @@ class _TextTabState extends State<TextTab> {
                 try {
                   setState(() {
                     _editingOverlay = overlay.copyWith(
-                      style: style.copyWith(color: c.value),
+                      style: style.copyWith(color: c.toARGB32()),
                     );
                   });
                 } catch (e) {
@@ -957,7 +957,7 @@ class _TextTabState extends State<TextTab> {
                   try {
                     setState(() {
                       _editingOverlay = overlay.copyWith(
-                        style: style.copyWith(backgroundColor: c.value),
+                        style: style.copyWith(backgroundColor: c.toARGB32()),
                       );
                     });
                   } catch (e) {
@@ -1092,7 +1092,7 @@ class _TextTabState extends State<TextTab> {
     Function(Color) onChanged,
     bool isCompact,
   ) {
-    final isTransparent = color.alpha == 0;
+    final isTransparent = color.a == 0;
 
     return GestureDetector(
       onTap: () => _showColorPicker(color, onChanged),
@@ -1278,7 +1278,7 @@ class _TextTabState extends State<TextTab> {
                     final isTransparent = color == Colors.transparent;
                     final isSelected =
                         currentColor == color ||
-                        (isTransparent && currentColor.alpha == 0);
+                        (isTransparent && currentColor.a == 0);
 
                     return GestureDetector(
                       onTap: () {

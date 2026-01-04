@@ -56,7 +56,7 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
         final screenshotsDir = Directory('${_filesDir.path}/screenshots');
         if (await screenshotsDir.exists()) {
           final files = await screenshotsDir.list().toList();
-          allFiles.addAll(files.where((e) => e is File));
+          allFiles.addAll(files.whereType<File>());
         }
 
         final audioDir = Directory('${_filesDir.path}/audio');
@@ -82,7 +82,7 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
             final subdirs = await categoryDir.list().toList();
             for (var subdir in subdirs.whereType<Directory>()) {
               final files = await subdir.list().toList();
-              allFiles.addAll(files.where((e) => e is File));
+              allFiles.addAll(files.whereType<File>());
             }
           } else {
             // Screenshots and audio are flat
@@ -349,7 +349,7 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
       onSelected: (selected) {
         setState(() => _selectedCategory = selected ? category : null);
       },
-      selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
+      selectedColor: Theme.of(context).primaryColor.withValues(alpha: 0.2),
     );
   }
 

@@ -240,6 +240,7 @@ class ThumbnailService {
       for (final sideData in sideDataList) {
         if (sideData is Map) {
           final sideDataMap = _convertToStringDynamicMap(
+            // ignore: unnecessary_type_check
             sideData is Map<Object?, Object?> ? sideData : null,
           );
           if (sideDataMap != null && sideDataMap['rotation'] != null) {

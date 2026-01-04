@@ -500,6 +500,7 @@ class _VideoEditorSheetState extends ConsumerState<VideoEditorSheet>
   // Media state
   // ─────────────────────────────────────────────────────
   String? _selectedMusicPath;
+  // ignore: unused_field
   MusicTrack? _selectedMusicTrack;
   List<StockImage> _selectedImages = [];
   String? _attachedAudioPath;
@@ -1023,7 +1024,8 @@ class _VideoEditorSheetState extends ConsumerState<VideoEditorSheet>
         currentProjectId: _currentProjectId,
         onRefresh: () async {
           await _loadRecentProjects();
-          if (mounted) Navigator.pop(ctx);
+          if (!context.mounted) return;
+          Navigator.pop(ctx);
           _showOpenProjectDialog();
         },
         onOpen: (project) async {
@@ -3311,22 +3313,6 @@ class _VideoEditorSheetState extends ConsumerState<VideoEditorSheet>
     if (_isDisposed) return;
     HapticFeedback.selectionClick();
     _showInfo('Edit feature coming soon');
-  }
-
-  String _formatDate(DateTime date) {
-    try {
-      final now = DateTime.now();
-      final diff = now.difference(date);
-
-      if (diff.inMinutes < 1) return 'Just now';
-      if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-      if (diff.inDays < 1) return '${diff.inHours}h ago';
-      if (diff.inDays < 7) return '${diff.inDays}d ago';
-
-      return '${date.day}/${date.month}/${date.year}';
-    } catch (e) {
-      return '';
-    }
   }
 }
 

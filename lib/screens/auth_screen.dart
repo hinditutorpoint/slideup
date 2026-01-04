@@ -50,14 +50,14 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       if (widget.isSetup) {
         await SecurityService.instance.setAppPassword(password);
-        if (context.mounted) {
-          Navigator.pop(context, true);
-        }
+        if (!mounted) return;
+        Navigator.pop(context, true);
       } else {
         final isValid = await SecurityService.instance.verifyAppPassword(
           password,
         );
         if (isValid) {
+          if (!mounted) return;
           Navigator.pop(context, true);
         } else {
           _showError('Invalid password');
@@ -81,6 +81,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _isLoading = false);
 
     if (authenticated) {
+      if (!mounted) return;
       Navigator.pop(context, true);
     } else {
       _showError('Biometric authentication failed');

@@ -9,8 +9,7 @@ import '../models/database_config.dart';
 class MultiBackupRestoreScreen extends StatefulWidget {
   final MultiDatabaseBackupService backupService;
 
-  const MultiBackupRestoreScreen({Key? key, required this.backupService})
-    : super(key: key);
+  const MultiBackupRestoreScreen({super.key, required this.backupService});
 
   @override
   State<MultiBackupRestoreScreen> createState() =>
@@ -414,9 +413,9 @@ class _MultiBackupRestoreScreenState extends State<MultiBackupRestoreScreen>
   }
 
   Future<void> _shareBackup(BackupInfo backup) async {
-    await Share.shareXFiles([
-      XFile(backup.filePath),
-    ], subject: 'Database Backup');
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(backup.filePath)], subject: 'Database Backup'),
+    );
   }
 
   // ============================================

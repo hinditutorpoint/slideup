@@ -330,7 +330,11 @@ class _DownloadedPdfWidgetState extends ConsumerState<DownloadedPdfWidget> {
       ),
       child: Row(
         children: [
-          Icon(Icons.download_done, color: colorScheme.primary, size: 24),
+          if (widget.showHeader && Navigator.of(context).canPop())
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

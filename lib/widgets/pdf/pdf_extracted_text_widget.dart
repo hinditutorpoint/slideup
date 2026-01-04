@@ -597,11 +597,11 @@ class _PdfExtractedTextWidgetState
 
   Widget _buildTextCard(ExtractedTextInfo textInfo, int index, bool isCompact) {
     final hasText = textInfo.text.isNotEmpty;
-    final previewText = hasText
-        ? (textInfo.text.length > 150
-              ? '${textInfo.text.substring(0, 150)}...'
-              : textInfo.text)
-        : 'No text extracted';
+    //final previewText = hasText
+    //    ? (textInfo.text.length > 150
+    //          ? '${textInfo.text.substring(0, 150)}...'
+    //          : textInfo.text)
+    //    : 'No text extracted';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),

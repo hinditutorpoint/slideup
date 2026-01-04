@@ -29,10 +29,12 @@ class _AudioPlayerWrapperState extends ConsumerState<AudioPlayerWrapper> {
   Widget build(BuildContext context) {
     final audioHandler = ref.watch(audioHandlerProvider);
 
-    return WillPopScope(
-      onWillPop: () async {
-        _onPop();
-        return true;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _onPop();
+        }
       },
       child: StreamBuilder<MediaItem?>(
         stream: audioHandler.mediaItem,

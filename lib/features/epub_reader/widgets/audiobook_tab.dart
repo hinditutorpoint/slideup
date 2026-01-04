@@ -255,8 +255,8 @@ class _AudiobookTabState extends ConsumerState<AudiobookTab> {
       final entry = entries
           .where((e) => e.pageNumber == chapterIndex)
           .firstOrNull;
-
-      if (entry != null && context.mounted) {
+      if (!mounted) return;
+      if (entry != null) {
         await TtsController.instance.playCachedEntry(
           entry: entry,
           context: context,

@@ -411,7 +411,7 @@ class _IntentReceiverScreenState extends ConsumerState<IntentReceiverScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
           _goToHome();
         }

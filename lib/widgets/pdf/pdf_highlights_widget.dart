@@ -492,7 +492,7 @@ class _PdfHighlightsWidgetState extends ConsumerState<PdfHighlightsWidget> {
     final highlights = pdfState.highlights[pageNum];
     if (highlights == null || highlights.isEmpty) return;
 
-    final text = highlights.map((h) => h.text).join('\n\n');
+    //final text = highlights.map((h) => h.text).join('\n\n');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(

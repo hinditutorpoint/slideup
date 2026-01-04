@@ -118,7 +118,7 @@ class VideoPlayerService {
 
       // Get initial brightness
       try {
-        final brightness = await ScreenBrightness().current;
+        final brightness = await ScreenBrightness().application;
         _updateState(_state.copyWith(brightness: brightness));
       } catch (e) {
         debugPrint('⚠️ Could not get brightness: $e');
@@ -644,7 +644,7 @@ class VideoPlayerService {
 
     try {
       final clamped = brightness.clamp(0.0, 1.0);
-      await ScreenBrightness().setScreenBrightness(clamped);
+      await ScreenBrightness().setApplicationScreenBrightness(clamped);
       _updateState(_state.copyWith(brightness: clamped));
     } catch (e) {
       debugPrint('⚠️ Could not set brightness: $e');
@@ -1235,7 +1235,7 @@ class VideoPlayerService {
 
     // Reset brightness
     try {
-      await ScreenBrightness().resetScreenBrightness();
+      await ScreenBrightness().resetApplicationScreenBrightness();
       debugPrint('✅ Brightness reset');
     } catch (e) {
       debugPrint('⚠️ Error resetting brightness: $e');

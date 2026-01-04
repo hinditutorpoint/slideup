@@ -281,7 +281,8 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
 
       // Initialize TTS first (non-blocking UI update)
       await _audiobookController!.initializeTts();
-      if (context.mounted && _audiobookController != null) {
+      if (_audiobookController != null) {
+        if (!mounted) return;
         await _audiobookController!.start(
           fromChapter: state.currentChapterIndex,
           context: context,
@@ -301,7 +302,7 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
 
       if (_audiobookController != null) {
         // Only use context if mounted
-        if (context.mounted) {
+        if (mounted) {
           await _audiobookController!.stop(context);
         } else {
           _audiobookController!.forceStop();
@@ -539,17 +540,31 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     );
   }
 
+  Future<void> _handleBackCleanup() async {
+    try {
+      await _saveProgressSafely();
+      await ref.read(readerNotifierProvider.notifier).closeBook();
+      _setImmersiveMode(false);
+    } catch (e) {
+      debugPrint('On pop cleanup error: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: true, // allow pop immediately
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _handleBackCleanup(); // 🔥 async side-effect
+        }
+      },
       child: Stack(
         children: [
           Scaffold(
             key: _scaffoldKey,
             body: _buildBody(),
             drawer: _buildDrawer(),
-            // endDrawer: _buildEndDrawer(), // Using custom Stack drawer for "close only on button"
           ),
           if (_showSettings) _buildCustomEndDrawer(settings),
           if (_isPreloading) _buildPreloadIndicator(),
@@ -2256,18 +2271,6 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
       book: state.book!,
       onClose: () => Navigator.pop(context),
     );
-  }
-
-  Future<bool> _onWillPop() async {
-    try {
-      await _saveProgressSafely();
-      await ref.read(readerNotifierProvider.notifier).closeBook();
-      _setImmersiveMode(false);
-      return true;
-    } catch (e) {
-      debugPrint('On will pop error: $e');
-      return true;
-    }
   }
 
   void _handleBack() {

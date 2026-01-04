@@ -40,7 +40,8 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(project.findProperty("MY_KEYSTORE") as String? ?: "")
+            val keystorePath = project.findProperty("MY_KEYSTORE") as String?
+            storeFile = if (keystorePath != null && keystorePath.isNotEmpty()) File(keystorePath) else null
             storePassword = project.findProperty("MY_STORE_PASSWORD") as String? ?: ""
             keyAlias = project.findProperty("MY_KEY_ALIAS") as String? ?: ""
             keyPassword = project.findProperty("MY_KEY_PASSWORD") as String? ?: ""

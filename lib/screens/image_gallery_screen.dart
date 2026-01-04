@@ -24,13 +24,12 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
     final imagesAsync = ref.watch(imagesProvider);
     final galleryState = ref.watch(imageGalleryProvider);
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (galleryState.isSelectionMode) {
+    return PopScope(
+      canPop: !galleryState.isSelectionMode,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && galleryState.isSelectionMode) {
           ref.read(imageGalleryProvider.notifier).exitSelectionMode();
-          return false;
         }
-        return true;
       },
       child: Scaffold(
         appBar: _buildAppBar(galleryState),
@@ -555,8 +554,13 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => WillPopScope(
-          onWillPop: () async => false,
+        builder: (context) => PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (!didPop) {
+              ref.read(imageGalleryProvider.notifier).setDeleting(false);
+            }
+          },
           child: AlertDialog(
             content: Column(
               mainAxisSize: MainAxisSize.min,

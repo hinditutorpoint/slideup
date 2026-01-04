@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'dart:io';
 import '../models/media_file.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -68,12 +69,28 @@ class _PDFViewerScreenState extends ConsumerState<PDFViewerScreen>
     _loadBrightness();
     _initAnimations();
     _initPdfData();
-
+    _enableScreenOn();
     Future.microtask(() {
       if (mounted) {
         ref.read(mediaProvider.notifier).addToRecent(widget.mediaFile);
       }
     });
+  }
+
+  Future<void> _enableScreenOn() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (e) {
+      debugPrint('Failed to enable wakelock: $e');
+    }
+  }
+
+  Future<void> _disableScreenOn() async {
+    try {
+      await WakelockPlus.disable();
+    } catch (e) {
+      debugPrint('Failed to disable wakelock: $e');
+    }
   }
 
   void _initAnimations() {
@@ -110,7 +127,7 @@ class _PDFViewerScreenState extends ConsumerState<PDFViewerScreen>
 
   Future<void> _loadBrightness() async {
     try {
-      final brightness = await ScreenBrightness().current;
+      final brightness = await ScreenBrightness().application;
       if (mounted) {
         setState(() => _brightness = brightness);
       }
@@ -301,6 +318,7 @@ class _PDFViewerScreenState extends ConsumerState<PDFViewerScreen>
     _searchController.dispose();
     _controlsAnimationController.dispose();
     _sidePanelAnimationController.dispose();
+    _disableScreenOn();
     super.dispose();
   }
 

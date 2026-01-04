@@ -61,7 +61,7 @@ class VideoSettings {
       'pipEnabled': pipEnabled,
       'speed': speed.value,
       'subtitlesEnabled': subtitlesEnabled,
-      'subtitleColor': subtitleColor.value,
+      'subtitleColor': subtitleColor.toARGB32(),
       'subtitleSize': subtitleSize,
     };
   }
@@ -76,7 +76,7 @@ class VideoSettings {
       pipEnabled: json['pipEnabled'] ?? false,
       speed: PlaybackSpeed.fromValue(json['speed'] ?? 1.0),
       subtitlesEnabled: json['subtitlesEnabled'] ?? false,
-      subtitleColor: Color(json['subtitleColor'] ?? Colors.white.value),
+      subtitleColor: Color(json['subtitleColor'] ?? Colors.white.toARGB32()),
       subtitleSize: json['subtitleSize'] ?? 16.0,
     );
   }

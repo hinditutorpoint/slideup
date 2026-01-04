@@ -21,7 +21,7 @@ class GenerationJob {
   final int chapterIndex;
   final String chapterTitle;
   final String text;
-  final bool isSilent; // ✅ ADDED
+  final bool isSilent;
 
   JobStatus status;
   double progress;
@@ -37,7 +37,7 @@ class GenerationJob {
     required this.chapterIndex,
     required this.chapterTitle,
     required this.text,
-    this.isSilent = false, // ✅ ADDED
+    this.isSilent = false,
     this.status = JobStatus.queued,
     this.progress = 0.0,
     this.error,
@@ -52,24 +52,36 @@ class GenerationJob {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NOTIFICATION PAYLOAD
+// NOTIFICATION IDS
 // ═══════════════════════════════════════════════════════════════════════════
 
-class GenerationNotification {
-  final String jobId;
-  final String bookId;
-  final int chapterIndex;
-  final JobStatus status;
-  final double progress;
-  final String? error;
+class _NotificationIds {
+  static const int queue = 0; // Global queue notification
+  static const int summary = 999999;
+  static int chapter(int index) => 1000 + index; // Individual chapters
+}
 
-  GenerationNotification({
-    required this.jobId,
-    required this.bookId,
-    required this.chapterIndex,
-    required this.status,
-    required this.progress,
-    this.error,
+// ═══════════════════════════════════════════════════════════════════════════
+// QUEUE STATUS
+// ═══════════════════════════════════════════════════════════════════════════
+
+class QueueStatus {
+  final int queueLength;
+  final int processingCount;
+  final int readyCount;
+  final int completedCount;
+  final bool isProcessing;
+  final String? currentTaskId;
+  final dynamic currentTask;
+
+  const QueueStatus({
+    this.queueLength = 0,
+    this.processingCount = 0,
+    this.readyCount = 0,
+    this.completedCount = 0,
+    this.isProcessing = false,
+    this.currentTaskId,
+    this.currentTask,
   });
 }
 
@@ -92,7 +104,6 @@ class BackgroundChapterGenerator {
   bool _isPaused = false;
   bool _isDisposed = false;
 
-  // ✅ Use global notification plugin
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
@@ -100,7 +111,7 @@ class BackgroundChapterGenerator {
   final _jobStatusController = StreamController<GenerationJob>.broadcast();
   final _queueStatusController = StreamController<QueueStatus>.broadcast();
 
-  // ✅ Keep-alive player
+  // Keep-alive player
   final AudioPlayer _silentPlayer = AudioPlayer();
   String? _silentWavPath;
 
@@ -118,13 +129,16 @@ class BackgroundChapterGenerator {
   List<GenerationJob> get allJobs => _allJobs.values.toList();
   List<GenerationJob> get queuedJobs => _jobQueue.toList();
 
-  // ✅ Initialize with global notification plugin
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INITIALIZATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
   Future<void> initialize() async {
     if (_notificationsInitialized) return;
 
     try {
       const androidSettings = AndroidInitializationSettings(
-        '@drawable/ic_notification', // recommended custom drawable
+        '@drawable/ic_notification',
       );
 
       const iosSettings = DarwinInitializationSettings(
@@ -146,7 +160,6 @@ class BackgroundChapterGenerator {
       _notificationsInitialized = true;
       debugPrint('✓ Notification service initialized');
 
-      // Request permission AFTER initialization
       await requestPermission();
     } catch (e, stack) {
       debugPrint('⚠️ Failed to initialize notifications: $e');
@@ -154,7 +167,6 @@ class BackgroundChapterGenerator {
     }
   }
 
-  /// Android 13+ & iOS permission handling
   Future<bool> requestPermission() async {
     try {
       if (kIsWeb) return false;
@@ -165,11 +177,9 @@ class BackgroundChapterGenerator {
               AndroidFlutterLocalNotificationsPlugin
             >();
 
-        // Android 13+ only
         final bool? granted = await androidPlugin
             ?.requestNotificationsPermission();
 
-        // Android <=12 returns null → permission granted by default
         return granted ?? true;
       }
 
@@ -196,22 +206,84 @@ class BackgroundChapterGenerator {
     }
   }
 
-  /// Notification tap handler (Android + iOS)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NOTIFICATION ACTIONS HANDLER
+  // ═══════════════════════════════════════════════════════════════════════════
+
   void _onNotificationTap(NotificationResponse response) {
-    debugPrint('Notification tapped: ${response.payload}');
+    final actionId = response.actionId;
+    final payload = response.payload;
+
+    debugPrint('📲 Notification action: $actionId, payload: $payload');
+
+    if (actionId == null) {
+      // User tapped notification body
+      debugPrint('Notification tapped: $payload');
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QUEUE CONTROLS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    if (actionId == 'queue_toggle_pause') {
+      if (_isPaused) {
+        resume();
+      } else {
+        pause();
+      }
+      _showQueueNotification();
+      return;
+    }
+
+    if (actionId == 'queue_cancel_all') {
+      cancelAll();
+      _cancelNotification(_NotificationIds.queue);
+
+      // Cancel all chapter notifications
+      for (final job in _allJobs.values) {
+        _cancelNotification(_NotificationIds.chapter(job.chapterIndex));
+      }
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INDIVIDUAL CHAPTER CONTROLS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    if (actionId.startsWith('chapter_cancel_')) {
+      if (payload != null) {
+        cancelJob(payload);
+        final job = _allJobs[payload];
+        if (job != null) {
+          _cancelNotification(_NotificationIds.chapter(job.chapterIndex));
+        }
+        _showQueueNotification();
+      }
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUMMARY CONTROLS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    if (actionId == 'summary_clear') {
+      clearCompleted();
+      _cancelNotification(_NotificationIds.summary);
+      return;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ADD JOBS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Add a single chapter to generation queue
   String addJob({
     required String bookId,
     required int chapterIndex,
     required String chapterTitle,
     required String text,
-    bool isSilent = false, // ✅ ADDED
+    bool isSilent = false,
   }) {
     final jobId =
         '${bookId}_ch${chapterIndex}_${DateTime.now().millisecondsSinceEpoch}';
@@ -222,7 +294,7 @@ class BackgroundChapterGenerator {
       chapterIndex: chapterIndex,
       chapterTitle: chapterTitle,
       text: text,
-      isSilent: isSilent, // ✅ ADDED
+      isSilent: isSilent,
     );
 
     _allJobs[jobId] = job;
@@ -235,7 +307,6 @@ class BackgroundChapterGenerator {
     _emitJobStatus(job);
     _emitQueueStatus();
 
-    // ✅ Start processing independently (non-blocking)
     if (!_isProcessing && !_isPaused) {
       _processQueue();
     }
@@ -243,12 +314,11 @@ class BackgroundChapterGenerator {
     return jobId;
   }
 
-  /// Add multiple chapters at once
   List<String> addMultipleJobs({
     required String bookId,
-    required Map<int, String> chapters, // chapterIndex -> text
-    required Map<int, String> chapterTitles, // chapterIndex -> title
-    bool isSilent = true, // ✅ Default to true for bulk/background
+    required Map<int, String> chapters,
+    required Map<int, String> chapterTitles,
+    bool isSilent = true,
   }) {
     try {
       final jobIds = <String>[];
@@ -292,11 +362,12 @@ class BackgroundChapterGenerator {
         return;
       }
 
-      // ✅ Start silent audio to keep app alive
       await _startSilentAudio();
 
       _isProcessing = true;
       _emitQueueStatus();
+
+      _showQueueNotification();
 
       debugPrint(
         '[BgGenerator] 🔄 Started processing queue (${_jobQueue.length} jobs)',
@@ -315,10 +386,12 @@ class BackgroundChapterGenerator {
         _emitJobStatus(job);
         _emitQueueStatus();
 
+        _showQueueNotification();
+
         try {
           debugPrint('[BgGenerator] 📝 Processing: Ch.${job.chapterIndex + 1}');
 
-          // ✅ CHECK CACHE FIRST
+          // Check cache first
           final isCached = await TtsController.instance.isPageCached(
             bookId: job.bookId,
             pageNumber: job.chapterIndex,
@@ -342,16 +415,14 @@ class BackgroundChapterGenerator {
                 .firstOrNull;
             job.audioPath = entry?.filePath;
 
-            // ✅ Cancel notification for skipped
-            _cancelNotification(job.chapterIndex);
+            _showQueueNotification();
 
             continue;
           }
 
-          // ✅ Show initial notification (if not silent)
+          // Show individual chapter notification
           _showProgressNotification(job);
 
-          // ✅ GENERATE IN BACKGROUND (non-blocking for UI)
           debugPrint(
             '[BgGenerator] 🎵 Generating Ch.${job.chapterIndex + 1}...',
           );
@@ -367,7 +438,7 @@ class BackgroundChapterGenerator {
               job.progress = progress;
               _emitJobStatus(job);
 
-              // ✅ Update notification every 10% (if not silent)
+              // Update notification every 10%
               final currentPercent = (progress * 10).floor();
               final lastPercent = ((progress - 0.1) * 10).floor();
 
@@ -380,7 +451,6 @@ class BackgroundChapterGenerator {
           if (_isDisposed || job.status == JobStatus.cancelled) continue;
 
           if (audioPath != null) {
-            // ✅ SUCCESS
             job.status = JobStatus.completed;
             job.completedAt = DateTime.now();
             job.audioPath = audioPath;
@@ -407,8 +477,8 @@ class BackgroundChapterGenerator {
         }
 
         _emitQueueStatus();
+        _showQueueNotification();
 
-        // ✅ Small delay between jobs (yield to system)
         await Future.delayed(const Duration(milliseconds: 500));
       }
 
@@ -420,14 +490,14 @@ class BackgroundChapterGenerator {
 
       debugPrint('[BgGenerator] ✓ Queue processing complete');
 
-      // ✅ Stop silent audio
-      await _stopSilentAudio();
-
       if (_jobQueue.isEmpty && !_isDisposed) {
         _showSummaryNotification();
+      } else {
+        _showQueueNotification();
       }
     } catch (e) {
       debugPrint('[BgGenerator] Error: $e');
+      _isProcessing = false;
     }
   }
 
@@ -435,22 +505,87 @@ class BackgroundChapterGenerator {
   // NOTIFICATIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
+  void _showQueueNotification() {
+    if (!_notificationsInitialized) return;
+
+    try {
+      final current = _currentJob;
+      final remaining = _jobQueue.length;
+      final completed = completedCount;
+      final total = _allJobs.length;
+
+      if (current == null && remaining == 0) {
+        _cancelNotification(_NotificationIds.queue);
+        return;
+      }
+
+      final title = _isPaused
+          ? '⏸ Queue Paused'
+          : '📚 Processing Audiobook Queue';
+
+      final body = current != null
+          ? 'Ch.${current.chapterIndex + 1}: ${current.chapterTitle}\n$completed/$total done • $remaining remaining'
+          : '$completed/$total chapters ready';
+
+      _notifications.show(
+        _NotificationIds.queue,
+        title,
+        body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'audiobook_queue',
+            'Audiobook Queue',
+            channelDescription: 'Overall queue progress',
+            importance: Importance.low,
+            priority: Priority.low,
+            ongoing: !_isPaused && _isProcessing,
+            autoCancel: false,
+            playSound: false,
+            enableVibration: false,
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction(
+                'queue_toggle_pause',
+                _isPaused ? 'Resume All' : 'Pause All',
+                showsUserInterface: false,
+                cancelNotification: false,
+              ),
+              AndroidNotificationAction(
+                'queue_cancel_all',
+                'Cancel All',
+                showsUserInterface: false,
+                cancelNotification: false,
+              ),
+            ],
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: false,
+            presentBadge: true,
+            presentSound: false,
+          ),
+        ),
+        payload: 'queue_control',
+      );
+    } catch (e) {
+      debugPrint('[BgGenerator] Queue notification error: $e');
+    }
+  }
+
   void _showProgressNotification(GenerationJob job) {
-    if (job.isSilent) return; // ✅ respect isSilent
+    if (job.isSilent) return;
     if (!_notificationsInitialized) return;
 
     try {
       final percentage = (job.progress * 100).toInt();
 
       _notifications.show(
-        job.chapterIndex, // Unique ID per chapter
-        '📖 Generating Chapter ${job.chapterIndex + 1}',
+        _NotificationIds.chapter(job.chapterIndex),
+        '📖 Chapter ${job.chapterIndex + 1}',
         '${job.chapterTitle} - $percentage%',
         NotificationDetails(
           android: AndroidNotificationDetails(
             'audiobook_generation',
             'Audiobook Generation',
-            channelDescription: 'Background chapter audio generation',
+            channelDescription: 'Individual chapter progress',
             importance: Importance.low,
             priority: Priority.low,
             showProgress: true,
@@ -460,33 +595,41 @@ class BackgroundChapterGenerator {
             autoCancel: false,
             playSound: false,
             enableVibration: false,
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction(
+                'chapter_cancel_${job.id}',
+                'Cancel This',
+                showsUserInterface: false,
+                cancelNotification: true,
+              ),
+            ],
           ),
-          iOS: DarwinNotificationDetails(
+          iOS: const DarwinNotificationDetails(
             presentAlert: false,
             presentBadge: true,
             presentSound: false,
           ),
         ),
+        payload: job.id,
       );
     } catch (e) {
-      debugPrint('[BgGenerator] Notification error: $e');
+      debugPrint('[BgGenerator] Chapter notification error: $e');
     }
   }
 
   void _showCompletionNotification(GenerationJob job) {
-    if (job.isSilent) return; // ✅ respect isSilent
+    if (job.isSilent) return;
     if (!_notificationsInitialized) return;
 
     try {
       _notifications.show(
-        job.chapterIndex,
+        _NotificationIds.chapter(job.chapterIndex),
         '✓ Chapter ${job.chapterIndex + 1} Ready',
         job.chapterTitle,
         const NotificationDetails(
           android: AndroidNotificationDetails(
             'audiobook_generation',
             'Audiobook Generation',
-            channelDescription: 'Chapter ready to play',
             importance: Importance.low,
             priority: Priority.low,
             playSound: false,
@@ -495,9 +638,8 @@ class BackgroundChapterGenerator {
         ),
       );
 
-      // Auto-dismiss after 3 seconds
       Future.delayed(const Duration(seconds: 3), () {
-        _cancelNotification(job.chapterIndex);
+        _cancelNotification(_NotificationIds.chapter(job.chapterIndex));
       });
     } catch (e) {
       debugPrint('[BgGenerator] Notification error: $e');
@@ -505,12 +647,12 @@ class BackgroundChapterGenerator {
   }
 
   void _showErrorNotification(GenerationJob job) {
-    if (job.isSilent) return; // ✅ respect isSilent
+    if (job.isSilent) return;
     if (!_notificationsInitialized) return;
 
     try {
       _notifications.show(
-        job.chapterIndex,
+        _NotificationIds.chapter(job.chapterIndex),
         '✗ Chapter ${job.chapterIndex + 1} Failed',
         job.error ?? 'Generation failed',
         const NotificationDetails(
@@ -528,11 +670,6 @@ class BackgroundChapterGenerator {
   }
 
   void _showSummaryNotification() {
-    // Summary could be respected or not, let's just make it silent if all jobs were silent?
-    // Hard to track without flags. For now let's just show it, or check if we want to.
-    // The user didn't explicitly say "no summary", but "no notification chapter change".
-    // I'll leave summary for now as it's useful to know "All Done".
-
     if (!_notificationsInitialized) return;
 
     try {
@@ -543,22 +680,32 @@ class BackgroundChapterGenerator {
           .length;
 
       _notifications.show(
-        999999, // Summary ID
+        _NotificationIds.summary,
         '📚 Audiobook Generation Complete',
         '✓ $completed ready${skipped > 0 ? ', ⊘ $skipped skipped' : ''}${failed > 0 ? ', ✗ $failed failed' : ''}',
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
             'audiobook_generation',
             'Audiobook Generation',
             importance: Importance.defaultImportance,
             priority: Priority.defaultPriority,
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction(
+                'summary_clear',
+                'Clear',
+                showsUserInterface: false,
+                cancelNotification: true,
+              ),
+            ],
           ),
         ),
+        payload: 'summary',
       );
 
-      // Auto-dismiss after 5 seconds
+      _cancelNotification(_NotificationIds.queue);
+
       Future.delayed(const Duration(seconds: 5), () {
-        _cancelNotification(999999);
+        _cancelNotification(_NotificationIds.summary);
       });
     } catch (e) {
       debugPrint('[BgGenerator] Notification error: $e');
@@ -581,11 +728,13 @@ class BackgroundChapterGenerator {
     _isPaused = true;
     debugPrint('[BgGenerator] Queue paused');
     _emitQueueStatus();
+    _showQueueNotification();
   }
 
   void resume() {
     _isPaused = false;
     debugPrint('[BgGenerator] Queue resumed');
+    _showQueueNotification();
     if (!_isProcessing && _jobQueue.isNotEmpty) {
       _processQueue();
     }
@@ -602,10 +751,11 @@ class BackgroundChapterGenerator {
     _emitJobStatus(job);
     _emitQueueStatus();
 
-    // Cancel notification
-    _notifications.cancel(job.chapterIndex);
+    _notifications.cancel(_NotificationIds.chapter(job.chapterIndex));
 
     debugPrint('[BgGenerator] Job cancelled: $jobId');
+
+    _showQueueNotification();
   }
 
   void cancelAll() {
@@ -613,7 +763,7 @@ class BackgroundChapterGenerator {
       if (job.status == JobStatus.queued ||
           job.status == JobStatus.generating) {
         job.status = JobStatus.cancelled;
-        _notifications.cancel(job.chapterIndex);
+        _notifications.cancel(_NotificationIds.chapter(job.chapterIndex));
       }
     }
 
@@ -657,7 +807,7 @@ class BackgroundChapterGenerator {
           completedCount: completedCount,
           isProcessing: _isProcessing,
           currentTaskId: _currentJob?.id,
-          currentTask: null, // Not using TtsTask here
+          currentTask: null,
         ),
       );
     }
@@ -673,7 +823,6 @@ class BackgroundChapterGenerator {
 
       debugPrint('[BgGenerator] Starting silent audio (Keep-Alive)...');
 
-      // Init session
       final session = await AudioSession.instance;
       await session.configure(const AudioSessionConfiguration.speech());
       await session.setActive(true);
@@ -682,7 +831,7 @@ class BackgroundChapterGenerator {
       if (_silentWavPath != null && _silentWavPath!.isNotEmpty) {
         await _silentPlayer.setFilePath(_silentWavPath!);
         await _silentPlayer.setLoopMode(LoopMode.one);
-        await _silentPlayer.setVolume(0.0); // Ensure silent
+        await _silentPlayer.setVolume(0.0);
         await _silentPlayer.play();
       }
     } catch (e) {
@@ -731,9 +880,7 @@ class BackgroundChapterGenerator {
           (totalDataLen >> 24) & 0xFF,
         ];
 
-        bytes.addAll(
-          List.filled(totalDataLen, 0x80),
-        ); // 0x80 is silence for 8-bit unsigned
+        bytes.addAll(List.filled(totalDataLen, 0x80));
 
         await file.writeAsBytes(bytes);
       }
@@ -756,25 +903,4 @@ class BackgroundChapterGenerator {
     _jobStatusController.close();
     _queueStatusController.close();
   }
-}
-
-// Reuse QueueStatus from tts_queue_manager.dart
-class QueueStatus {
-  final int queueLength;
-  final int processingCount;
-  final int readyCount;
-  final int completedCount;
-  final bool isProcessing;
-  final String? currentTaskId;
-  final dynamic currentTask;
-
-  const QueueStatus({
-    this.queueLength = 0,
-    this.processingCount = 0,
-    this.readyCount = 0,
-    this.completedCount = 0,
-    this.isProcessing = false,
-    this.currentTaskId,
-    this.currentTask,
-  });
 }

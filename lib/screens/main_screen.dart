@@ -1247,134 +1247,128 @@ class _MainScreenState extends ConsumerState<MainScreen>
   }
 
   void _openFilePicker() async {
-    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
-      // Pick multiple files
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: true,
         type: FileType.any,
       );
 
-      if (result != null && result.files.isNotEmpty) {
-        final selectedFiles = result.files;
+      if (!mounted || result == null || result.files.isEmpty) {
+        return;
+      }
 
-        // Get all files from the selected location
-        final directoryPath = path.dirname(selectedFiles.first.path ?? '');
-        final directory = Directory(directoryPath);
+      final selectedFiles = result.files;
+      final firstPath = selectedFiles.first.path;
+      if (firstPath == null) return;
 
-        if (await directory.exists()) {
-          final allFiles = await directory.list().toList();
+      final directory = Directory(path.dirname(firstPath));
+      if (!await directory.exists()) return;
 
-          // Convert to MediaFile objects
-          final mediaFiles = <MediaFile>[];
-          for (final file in allFiles) {
-            if (file is File) {
-              final mediaFile = MediaFile.fromFile(file);
-              if (mediaFile != null) {
-                mediaFiles.add(mediaFile);
-              }
-            }
-          }
+      final allFiles = await directory.list().toList();
+      if (!mounted) return;
 
-          if (mediaFiles.isNotEmpty) {
-            // Determine file types
-            final videoFiles = mediaFiles
-                .where((f) => f.type == MediaType.video)
-                .toList();
-            final audioFiles = mediaFiles
-                .where((f) => f.type == MediaType.audio)
-                .toList();
-            final documentFiles = mediaFiles
-                .where((f) => f.type == MediaType.document)
-                .toList();
-
-            // Find the selected file in the media files list
-            final selectedFile = mediaFiles.firstWhere(
-              (f) => selectedFiles.any((sf) => sf.path == f.path),
-              orElse: () => mediaFiles.first,
-            );
-
-            // Determine action based on file types
-            if (videoFiles.isNotEmpty &&
-                audioFiles.isEmpty &&
-                documentFiles.isEmpty) {
-              // All files are videos
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => VideoPlayerLauncher.screen(
-                    file: selectedFile,
-                    files: videoFiles,
-                    index: videoFiles.indexOf(selectedFile),
-                  ),
-                ),
-              );
-            } else if (audioFiles.isNotEmpty &&
-                videoFiles.isEmpty &&
-                documentFiles.isEmpty) {
-              // All files are audio
-              AudioPlaybackHelper.playAudio(ref, selectedFile, audioFiles);
-            } else if (documentFiles.isNotEmpty &&
-                videoFiles.isEmpty &&
-                audioFiles.isEmpty) {
-              // All files are documents
-              final supportedDocs = documentFiles
-                  .where(
-                    (f) =>
-                        f.extension == '.pdf' ||
-                        f.extension == '.epub' ||
-                        f.extension == '.txt' ||
-                        f.extension == '.json',
-                  )
-                  .toList();
-
-              if (supportedDocs.isNotEmpty) {
-                final selectedIndex = supportedDocs.indexOf(selectedFile);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => UnifiedReaderScreen(
-                      documentUrl: selectedFile.path,
-                      title: selectedFile.name,
-                      source: 'local',
-                    ),
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('No supported document files found'),
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-            } else {
-              // Mixed file types
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text(
-                    'Selected location contains mixed file types',
-                  ),
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            }
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text(
-                  'No supported files found in selected location',
-                ),
-                backgroundColor: Theme.of(context).colorScheme.error,
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
+      final mediaFiles = <MediaFile>[];
+      for (final entity in allFiles) {
+        if (entity is File) {
+          final mediaFile = MediaFile.fromFile(entity);
+          if (mediaFile != null) {
+            mediaFiles.add(mediaFile);
           }
         }
       }
+
+      if (mediaFiles.isEmpty) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text(
+              'No supported files found in selected location',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
+      final selectedFile = mediaFiles.firstWhere(
+        (f) => selectedFiles.any((sf) => sf.path == f.path),
+        orElse: () => mediaFiles.first,
+      );
+
+      final videoFiles = mediaFiles
+          .where((f) => f.type == MediaType.video)
+          .toList();
+      final audioFiles = mediaFiles
+          .where((f) => f.type == MediaType.audio)
+          .toList();
+      final documentFiles = mediaFiles
+          .where((f) => f.type == MediaType.document)
+          .toList();
+
+      if (!mounted) return;
+
+      // ---------- UI ACTIONS (SYNC ONLY) ----------
+
+      if (videoFiles.isNotEmpty &&
+          audioFiles.isEmpty &&
+          documentFiles.isEmpty) {
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerLauncher.screen(
+              file: selectedFile,
+              files: videoFiles,
+              index: videoFiles.indexOf(selectedFile),
+            ),
+          ),
+        );
+      } else if (audioFiles.isNotEmpty &&
+          videoFiles.isEmpty &&
+          documentFiles.isEmpty) {
+        AudioPlaybackHelper.playAudio(ref, selectedFile, audioFiles);
+      } else if (documentFiles.isNotEmpty &&
+          videoFiles.isEmpty &&
+          audioFiles.isEmpty) {
+        final supportedDocs = documentFiles.where(
+          (f) =>
+              f.extension == '.pdf' ||
+              f.extension == '.epub' ||
+              f.extension == '.txt' ||
+              f.extension == '.json',
+        );
+
+        if (supportedDocs.isNotEmpty) {
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => UnifiedReaderScreen(
+                documentUrl: selectedFile.path,
+                title: selectedFile.name,
+                source: 'local',
+              ),
+            ),
+          );
+        } else {
+          messenger.showSnackBar(
+            SnackBar(
+              content: const Text('No supported document files found'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } else {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('Selected location contains mixed file types'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error opening file picker: $e'),

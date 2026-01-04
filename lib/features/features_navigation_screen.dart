@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:slideup/features/documents/utils/reader_utils.dart';
 
 import '../features/epub_reader/downloaded_epub_catalogue.dart';
 import '../features/txt_reader/screens/text_downloads_screen.dart';
 import '../features/documents/screens/pdf_search_screen.dart';
+import '../features/documents/widgets/downloaded_pdf_widget.dart';
+import '../features/documents/screens/unified_reader_screen.dart';
 
 class FeaturesNavigationScreen extends ConsumerStatefulWidget {
   const FeaturesNavigationScreen({super.key});
@@ -49,9 +53,10 @@ class _FeaturesNavigationScreenState
         physics: const NeverScrollableScrollPhysics(),
         children: const [
           HomeTab(),
+          PdfSearchScreen(),
           DownloadedEpubCatalogue(),
           TextDownloadsScreen(),
-          PdfSearchScreen(),
+          DownloadedPdfWidget(),
         ],
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -79,6 +84,11 @@ class _FeaturesNavigationScreenState
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home_rounded),
             label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search),
+            selectedIcon: Icon(Icons.search),
+            label: 'Search',
           ),
           NavigationDestination(
             icon: Icon(Icons.auto_stories_outlined),
@@ -307,6 +317,15 @@ class HomeTab extends StatelessWidget {
       children: [
         Expanded(
           child: _StatMiniCard(
+            icon: Icons.search_rounded,
+            label: 'Search',
+            value: '0',
+            color: const Color.fromARGB(255, 39, 176, 98),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _StatMiniCard(
             icon: Icons.auto_stories_rounded,
             label: 'EPUB',
             value: '0',
@@ -348,8 +367,64 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  void _pickFile(BuildContext context) {
-    // Use file picker
+  void _pickFile(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['epub', 'pdf', 'txt'],
+        allowMultiple: false,
+      );
+      if (result != null) {
+        final file = result.files.first;
+        final extension = file.extension;
+        final fileName = file.name;
+        if (extension == 'epub') {
+          if (!context.mounted) {
+            return;
+          }
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => UnifiedReaderScreen(
+                title: fileName,
+                documentUrl: file.path!,
+                forceType: DocumentType.epub,
+                source: 'local',
+              ),
+            ),
+          );
+        } else if (extension == 'pdf') {
+          if (!context.mounted) {
+            return;
+          }
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => UnifiedReaderScreen(
+                title: fileName,
+                documentUrl: file.path!,
+                forceType: DocumentType.pdf,
+                source: 'local',
+              ),
+            ),
+          );
+        } else if (extension == 'txt') {
+          if (!context.mounted) {
+            return;
+          }
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => UnifiedReaderScreen(
+                title: fileName,
+                documentUrl: file.path!,
+                forceType: DocumentType.txt,
+                source: 'local',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking file: $e');
+    }
   }
 
   void _navigateToTab(BuildContext context, int index) {

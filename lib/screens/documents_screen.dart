@@ -201,20 +201,23 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
   }
 
   void _openDocument(List<MediaFile> files, int index) async {
-    await ref.read(mediaProvider.notifier).addToRecent(files[index]);
-
     final file = files[index];
+
+    // Async side-effect FIRST
+    await ref.read(mediaProvider.notifier).addToRecent(file);
+
+    if (!mounted) return;
 
     if (file.documentType == DocumentType.pdf) {
       final pdfFiles = files
           .where((f) => f.documentType == DocumentType.pdf)
           .toList();
+
       final pdfIndex = pdfFiles.indexOf(file);
 
-      Navigator.push(
-        context,
+      Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => PDFViewerScreen(
+          builder: (_) => PDFViewerScreen(
             mediaFile: file,
             playlist: pdfFiles,
             currentIndex: pdfIndex,
@@ -222,7 +225,7 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
         ),
       );
     } else {
-      // Open with external app
+      // External app opening does NOT need BuildContext
       await OpenFilex.open(file.path);
     }
   }

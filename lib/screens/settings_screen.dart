@@ -351,6 +351,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ElevatedButton(
             onPressed: () async {
               await SecurityService.instance.removeAppPassword();
+              if (!context.mounted) return;
               Navigator.pop(context);
               setState(() {});
             },
@@ -414,6 +415,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       title: Text(sortBy.name.toUpperCase()),
       onTap: () async {
         await SettingsService.instance.setSortBy(sortBy);
+        if (!mounted) return;
         Navigator.pop(context);
         setState(() {});
       },
@@ -441,6 +443,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       title: Text(order.name.toUpperCase()),
       onTap: () async {
         await SettingsService.instance.setSortOrder(order);
+        if (!mounted) return;
         Navigator.pop(context);
         setState(() {});
       },
@@ -466,13 +469,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               try {
                 final cleaned = await ImageHelper.cleanupDatabaseOrphans();
                 if (cleaned > 0) {
+                  if (!context.mounted) return;
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Cache cleared')),
                   );
                 }
               } catch (e) {
-                print('Error during cleanup: $e');
+                debugPrint('Error during cleanup: $e');
               }
             },
             child: const Text('Clear'),

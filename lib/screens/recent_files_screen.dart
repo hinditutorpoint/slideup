@@ -138,7 +138,7 @@ class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
   void _openFile(MediaFile file, List<MediaFile> playlist, int index) async {
     // Add to recent files
     await ref.read(mediaProvider.notifier).addToRecent(file);
-
+    if (!mounted) return;
     switch (file.type) {
       case MediaType.video:
         Navigator.push(
@@ -344,6 +344,7 @@ class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
           ElevatedButton(
             onPressed: () async {
               await ref.read(mediaProvider.notifier).clearRecent();
+              if (!context.mounted) return;
               Navigator.pop(context);
               ref.invalidate(recentFilesProvider);
             },

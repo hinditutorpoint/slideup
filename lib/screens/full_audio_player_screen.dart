@@ -61,15 +61,14 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   Widget build(BuildContext context) {
     final audioHandler = ref.watch(audioHandlerProvider);
 
-    return WillPopScope(
-      onWillPop: () async {
-        final hasMedia = audioHandler.mediaItem.value != null;
-        if (hasMedia) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
           ref.read(miniPlayerProvider.notifier).collapse();
         } else {
           ref.read(miniPlayerProvider.notifier).hide();
         }
-        return true;
       },
       child: Scaffold(
         body: Container(

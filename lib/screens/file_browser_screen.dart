@@ -80,35 +80,38 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Permission Required'),
         content: Text(PermissionService.instance.getPermissionDeniedMessage()),
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.of(dialogContext).pop();
               // Continue with limited functionality
             },
             child: const Text('Continue Without'),
           ),
           TextButton(
-            onPressed: () async {
-              final granted = await PermissionService.instance
-                  .requestPermissions();
-              if (mounted) {
-                Navigator.pop(context);
-                if (granted) {
-                  _initialize();
-                } else {
-                  _showPermissionDeniedDialog();
-                }
-              }
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _handlePermissionRequest();
             },
             child: const Text('Grant Permission'),
           ),
         ],
       ),
     );
+  }
+
+  void _handlePermissionRequest() async {
+    final granted = await PermissionService.instance.requestPermissions();
+    if (mounted) {
+      if (granted) {
+        _initialize();
+      } else {
+        _showPermissionDeniedDialog();
+      }
+    }
   }
 
   void _showPermissionDeniedDialog() {
@@ -151,22 +154,19 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       }
     });
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (state.isSelectionMode) {
-          notifier.clearSelection();
-          return false;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          if (state.isSelectionMode) {
+            notifier.clearSelection();
+          } else if (_showSearch) {
+            setState(() => _showSearch = false);
+            notifier.clearSearch();
+          } else if (_navigationStack.isNotEmpty) {
+            _navigateBack(notifier);
+          }
         }
-        if (_showSearch) {
-          setState(() => _showSearch = false);
-          notifier.clearSearch();
-          return false;
-        }
-        if (_navigationStack.isNotEmpty) {
-          await _navigateBack(notifier);
-          return false;
-        }
-        return true;
       },
       child: Scaffold(
         appBar: _buildAppBar(state, notifier),
@@ -928,20 +928,6 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
-  /// Get human-readable file size using MediaFile's humanReadableSize
-  String _getHumanReadableSize(FileSystemEntity entity) {
-    if (entity is File) {
-      try {
-        final size = entity.lengthSync();
-        final mediaFile = _entityToMediaFile(entity);
-        return mediaFile.humanReadableSize;
-      } catch (e) {
-        return 'Unknown';
-      }
-    }
-    return '0 B';
-  }
-
   int _getFileSize(FileSystemEntity entity) {
     if (entity is File) {
       try {
@@ -1697,6 +1683,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   /// Play all media in current folder
   Future<void> _playAllMedia() async {
     final mediaFiles = await _scanCurrentFolderForMedia();
+    if (!mounted) return;
     final videos = mediaFiles['videos']!;
     final audios = mediaFiles['audios']!;
     final images = mediaFiles['images']!;

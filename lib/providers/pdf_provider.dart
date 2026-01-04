@@ -92,7 +92,7 @@ class HighlightInfo {
 
   Map<String, dynamic> toJson() => {
     'pageNumber': pageNumber,
-    'color': color.value,
+    'color': color.toARGB32(),
     'timestamp': timestamp.toIso8601String(),
     'text': text,
     'id': id,

@@ -20,7 +20,7 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
 
   // Responsive helpers
   bool get _isTablet => MediaQuery.of(context).size.width >= 600;
-  bool get _isDesktop => MediaQuery.of(context).size.width >= 1024;
+  //bool get _isDesktop => MediaQuery.of(context).size.width >= 1024;
 
   int get _gridCrossAxisCount {
     final width = MediaQuery.of(context).size.width;

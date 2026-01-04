@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
@@ -15,6 +17,7 @@ import '../utils/reader_utils.dart';
 
 import '../../txt_reader/screens/txt_reader_screen.dart';
 import '../../epub_reader/downloaded_epub_catalogue.dart';
+import '../providers/sf_thumbnail_manager.dart';
 
 // ========== Configuration ==========
 
@@ -25,8 +28,9 @@ class ReaderConfig {
   static const Duration pageTransitionDuration = Duration(milliseconds: 300);
   static const Duration positionSaveDebounce = Duration(seconds: 2);
   static const Duration gestureCooldown = Duration(milliseconds: 300);
+  static const Duration zoomRestoreDelay = Duration(milliseconds: 200);
 
-  static const double minZoom = 1.0;
+  static const double minZoom = 0.5;
   static const double maxZoom = 4.0;
   static const double zoomStep = 0.25;
 
@@ -35,11 +39,141 @@ class ReaderConfig {
   static const double swipeVelocityThreshold = 200.0;
   static const double panThreshold = 15.0;
   static const double zoomThresholdForSwipe = 1.02;
+
+  static const double fitWidthZoom = 1.0;
+  static const double fitHeightZoom = 0.7;
 }
 
-// ========== Gesture State ==========
+// ========== Enums ==========
+
+enum FitMode { fitWidth, fitHeight, custom }
 
 enum GestureState { idle, tapping, panning, zooming, swiping }
+
+// ========== CUSTOM FLIP WIDGET (Paint-phase only, no layout issues) ==========
+
+/// A widget that flips its child horizontally and/or vertically.
+/// Unlike Transform, this applies the flip only during paint phase,
+/// avoiding layout conflicts with widgets like SfPdfViewer.
+// ========== CUSTOM FLIP WIDGET (SAFE) ==========
+
+class FlipWidget extends SingleChildRenderObjectWidget {
+  final bool flipX;
+  final bool flipY;
+
+  const FlipWidget({
+    super.key,
+    super.child,
+    this.flipX = false,
+    this.flipY = false,
+  });
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderFlip(flipX: flipX, flipY: flipY);
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderFlip renderObject) {
+    renderObject
+      ..flipX = flipX
+      ..flipY = flipY;
+  }
+}
+
+class _RenderFlip extends RenderProxyBox {
+  _RenderFlip({bool flipX = false, bool flipY = false})
+    : _flipX = flipX,
+      _flipY = flipY;
+
+  bool _flipX;
+  bool get flipX => _flipX;
+  set flipX(bool value) {
+    if (_flipX == value) return;
+    _flipX = value;
+    markNeedsPaint();
+  }
+
+  bool _flipY;
+  bool get flipY => _flipY;
+  set flipY(bool value) {
+    if (_flipY == value) return;
+    _flipY = value;
+    markNeedsPaint();
+  }
+
+  Matrix4 _paintFlipTransform() {
+    // Only call this after layout (hasSize == true).
+    final w = size.width;
+    final h = size.height;
+
+    return Matrix4.identity()
+      ..translate(w / 2, h / 2)
+      ..scale(_flipX ? -1.0 : 1.0, _flipY ? -1.0 : 1.0, 1.0)
+      ..translate(-w / 2, -h / 2);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+
+    // If not flipped or not laid out yet, paint normally.
+    if ((!_flipX && !_flipY) || !hasSize) {
+      super.paint(context, offset);
+      return;
+    }
+
+    context.pushTransform(
+      needsCompositing,
+      offset,
+      _paintFlipTransform(),
+      super.paint,
+    );
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    // If not laid out yet, don't try to use size.
+    if (!hasSize || (!_flipX && !_flipY)) {
+      return super.hitTest(result, position: position);
+    }
+
+    final dx = _flipX ? (size.width - position.dx) : position.dx;
+    final dy = _flipY ? (size.height - position.dy) : position.dy;
+
+    return super.hitTest(result, position: Offset(dx, dy));
+  }
+
+  // IMPORTANT:
+  // Do NOT override applyPaintTransform().
+  // SfPdfViewer calls localToGlobal() during layout; that walks applyPaintTransform().
+  // If applyPaintTransform reads `size`, you'll hit 'hasSize' assertions.
+}
+
+// ========== INVERT COLORS WIDGET (For Dark Mode) ==========
+
+/// A widget that inverts colors of its child for dark mode reading.
+class InvertColors extends StatelessWidget {
+  final Widget child;
+  final bool enabled;
+
+  const InvertColors({super.key, required this.child, this.enabled = true});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        -1, 0, 0, 0, 255, // Red
+        0, -1, 0, 0, 255, // Green
+        0, 0, -1, 0, 255, // Blue
+        0, 0, 0, 1, 0, // Alpha
+      ]),
+      child: child,
+    );
+  }
+}
 
 // ========== Main Widget ==========
 
@@ -106,6 +240,18 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
   double _sliderValue = 1.0;
   bool _isScrubbing = false;
 
+  // Zoom Memory & Fit Mode
+  FitMode _fitMode = FitMode.fitWidth;
+  double _userZoomLevel = 1.0;
+  bool _isRestoringZoom = false;
+  Timer? _zoomRestoreTimer;
+  int _zoomRestoreRetries = 0;
+
+  // Flip & Dark Mode
+  bool _flipHorizontal = false;
+  bool _flipVertical = false;
+  bool _darkModeEnabled = false;
+
   File? _pdfFile;
   double? _downloadProgress;
   CancelToken? _cancelToken;
@@ -119,7 +265,6 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
   // Managers
   final ReaderStorageManager _storageManager = ReaderStorageManager();
-  //final DocumentCacheManager _cacheManager = DocumentCacheManager();
   final DownloadLibraryManager _libraryManager = DownloadLibraryManager();
   final ArchivePageThumbnailManager _thumbnailManager =
       ArchivePageThumbnailManager();
@@ -127,7 +272,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
   ReaderSettings _settings = const ReaderSettings();
 
-  // Gesture State - IMPROVED
+  // Gesture State
   GestureState _gestureState = GestureState.idle;
   int _activePointers = 0;
   Offset? _pointerDownPos;
@@ -138,6 +283,9 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
   // Search
   PdfTextSearchResult? _searchResult;
+
+  final SfThumbnailManager _sfThumbs = SfThumbnailManager();
+  Uint8List? _thumbDocBytes;
 
   @override
   void initState() {
@@ -180,6 +328,19 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
         state == AppLifecycleState.paused) {
       _savePositionNow();
     }
+  }
+
+  Future<RgbaThumb?> _getLocalThumb(int pageNumber) async {
+    if (_pdfFile == null) return null;
+
+    // Lazy load bytes once
+    _thumbDocBytes ??= await _pdfFile!.readAsBytes();
+
+    // Open renderer once for this document
+    await _sfThumbs.open(bytes: _thumbDocBytes!, documentId: _docId);
+
+    // Render thumb
+    return await _sfThumbs.getThumb(pageNumber: pageNumber, thumbWidth: 200);
   }
 
   Future<void> _initializeAndLoad() async {
@@ -305,6 +466,11 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
         });
       },
     );
+
+    SafeAsync.run(() async {
+      _thumbDocBytes = null;
+      await _sfThumbs.close();
+    });
   }
 
   void _handleFileLoaded(File file) {
@@ -432,6 +598,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
       if (!_isScrubbing) _sliderValue = _currentPage.toDouble();
     });
     _scheduleSavePosition();
+    _scheduleZoomRestore();
   }
 
   void _onZoomLevelChanged(PdfZoomDetails d) {
@@ -439,10 +606,135 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
     _prevZoomLevel = _zoomLevel;
     setState(() => _zoomLevel = d.newZoomLevel);
 
-    // If zoom changed significantly, mark as zooming
+    if (!_isRestoringZoom) {
+      _userZoomLevel = d.newZoomLevel;
+      _updateFitModeFromZoom(d.newZoomLevel);
+    }
+
     if ((_zoomLevel - _prevZoomLevel).abs() > 0.05) {
       _gestureState = GestureState.zooming;
       _gestureConsumed = true;
+    }
+  }
+
+  // ========== ZOOM MEMORY SYSTEM ==========
+
+  void _scheduleZoomRestore() {
+    _zoomRestoreTimer?.cancel();
+    _zoomRestoreRetries = 0;
+    _attemptZoomRestore();
+  }
+
+  void _attemptZoomRestore() {
+    if (!mounted || _pdfController == null) return;
+
+    _zoomRestoreTimer = Timer(ReaderConfig.zoomRestoreDelay, () {
+      if (!mounted || _pdfController == null) return;
+
+      final currentZoom = _pdfController!.zoomLevel;
+      final targetZoom = _userZoomLevel;
+
+      if ((targetZoom - currentZoom).abs() > 0.02) {
+        _isRestoringZoom = true;
+
+        SafeAsync.run(() async {
+          if (_pdfController != null) {
+            _pdfController!.zoomLevel = targetZoom;
+          }
+        });
+
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (!mounted || _pdfController == null) return;
+
+          final newZoom = _pdfController!.zoomLevel;
+          if ((targetZoom - newZoom).abs() > 0.02 && _zoomRestoreRetries < 3) {
+            _zoomRestoreRetries++;
+            _attemptZoomRestore();
+          } else {
+            _isRestoringZoom = false;
+          }
+        });
+      }
+    });
+  }
+
+  void _updateFitModeFromZoom(double zoom) {
+    if ((zoom - ReaderConfig.fitWidthZoom).abs() < 0.05) {
+      _fitMode = FitMode.fitWidth;
+    } else if ((zoom - ReaderConfig.fitHeightZoom).abs() < 0.05) {
+      _fitMode = FitMode.fitHeight;
+    } else {
+      _fitMode = FitMode.custom;
+    }
+    if (mounted) setState(() {});
+  }
+
+  // ========== FIT MODE ==========
+
+  void _setFitWidth() {
+    _fitMode = FitMode.fitWidth;
+    _userZoomLevel = ReaderConfig.fitWidthZoom;
+    _applyZoomSafely(ReaderConfig.fitWidthZoom);
+    setState(() {});
+  }
+
+  void _setFitHeight() {
+    _fitMode = FitMode.fitHeight;
+    _userZoomLevel = ReaderConfig.fitHeightZoom;
+    _applyZoomSafely(ReaderConfig.fitHeightZoom);
+    setState(() {});
+  }
+
+  void _toggleFitMode() {
+    if (_fitMode == FitMode.fitWidth) {
+      _setFitHeight();
+    } else {
+      _setFitWidth();
+    }
+  }
+
+  void _applyZoomSafely(double zoom) {
+    SafeAsync.run(() async {
+      if (_pdfController != null) {
+        _isRestoringZoom = true;
+        _pdfController!.zoomLevel = zoom.clamp(
+          ReaderConfig.minZoom,
+          ReaderConfig.maxZoom,
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+        _isRestoringZoom = false;
+      }
+    });
+  }
+
+  // ========== FLIP CONTROLS ==========
+
+  void _toggleFlipHorizontal() {
+    if (mounted) {
+      setState(() => _flipHorizontal = !_flipHorizontal);
+    }
+  }
+
+  void _toggleFlipVertical() {
+    if (mounted) {
+      setState(() => _flipVertical = !_flipVertical);
+    }
+  }
+
+  void _resetFlip() {
+    if (mounted) {
+      setState(() {
+        _flipHorizontal = false;
+        _flipVertical = false;
+      });
+    }
+  }
+
+  // ========== DARK MODE ==========
+
+  void _toggleDarkMode() {
+    if (mounted) {
+      setState(() => _darkModeEnabled = !_darkModeEnabled);
     }
   }
 
@@ -468,7 +760,6 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
   }
 
   bool _canNavigate() {
-    // Prevent navigation if zoomed, panning, or recently gestured
     if (_zoomLevel > ReaderConfig.zoomThresholdForSwipe) return false;
     if (_gestureState == GestureState.panning) return false;
     if (_gestureState == GestureState.zooming) return false;
@@ -518,7 +809,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
   void _togglePageGrid() => setState(() => _showPageGrid = !_showPageGrid);
   void _toggleSettings() => setState(() => _showSettings = !_showSettings);
 
-  // ========== Gesture Handling - IMPROVED ==========
+  // ========== Gesture Handling ==========
 
   void _onPointerDown(PointerDownEvent e) {
     _activePointers++;
@@ -530,7 +821,6 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
       _gestureState = GestureState.tapping;
       _gestureConsumed = false;
     } else if (_activePointers >= 2) {
-      // Multi-touch = zooming
       _gestureState = GestureState.zooming;
       _gestureConsumed = true;
     }
@@ -538,7 +828,6 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
   void _onPointerMove(PointerMoveEvent e) {
     if (_gestureConsumed || _activePointers >= 2) {
-      // Already consumed by zoom/pan - let PDF viewer handle
       return;
     }
 
@@ -549,18 +838,14 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
     _lastPointerPos = e.position;
 
-    // Detect pan vs swipe
     if (_zoomLevel > ReaderConfig.zoomThresholdForSwipe) {
-      // Zoomed in - any movement is panning
       if (distance > ReaderConfig.panThreshold) {
         _gestureState = GestureState.panning;
         _gestureConsumed = true;
       }
     } else {
-      // Not zoomed - check for swipe intention
       if (distance > ReaderConfig.panThreshold &&
           distance < ReaderConfig.swipeThreshold) {
-        // Might be starting to swipe or just scrolling
         _gestureState = GestureState.swiping;
       }
     }
@@ -569,9 +854,8 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
   void _onPointerUp(PointerUpEvent e) {
     _activePointers = math.max(0, _activePointers - 1);
 
-    if (_activePointers > 0) return; // Wait for all fingers up
+    if (_activePointers > 0) return;
 
-    // Process the gesture
     if (!_gestureConsumed &&
         _pointerDownPos != null &&
         _lastPointerPos != null) {
@@ -584,13 +868,11 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
       if (distance < ReaderConfig.tapThreshold &&
           duration.inMilliseconds < 250) {
-        // TAP
         _handleTap(e.position);
       } else if (_settings.enableSwipeNavigation &&
           _zoomLevel <= ReaderConfig.zoomThresholdForSwipe &&
           _gestureState != GestureState.panning &&
           _gestureState != GestureState.zooming) {
-        // SWIPE - check threshold and velocity
         if (distance > ReaderConfig.swipeThreshold ||
             velocity > ReaderConfig.swipeVelocityThreshold) {
           _handleSwipe(delta);
@@ -620,10 +902,9 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
       return;
     }
 
-    // Check if tap is in control areas
     final size = MediaQuery.of(context).size;
     final topBarH = MediaQuery.of(context).padding.top + 56;
-    final bottomBarH = 100.0;
+    final bottomBarH = 120.0;
     final gridW = _showPageGrid ? 220.0 : 0.0;
 
     final inTop = pos.dy < topBarH;
@@ -656,21 +937,28 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
   // ========== Zoom ==========
 
   void _zoomIn() {
-    _pdfController?.zoomLevel = (_zoomLevel + ReaderConfig.zoomStep).clamp(
+    final newZoom = (_zoomLevel + ReaderConfig.zoomStep).clamp(
       ReaderConfig.minZoom,
       ReaderConfig.maxZoom,
     );
+    _userZoomLevel = newZoom;
+    _pdfController?.zoomLevel = newZoom;
   }
 
   void _zoomOut() {
-    _pdfController?.zoomLevel = (_zoomLevel - ReaderConfig.zoomStep).clamp(
+    final newZoom = (_zoomLevel - ReaderConfig.zoomStep).clamp(
       ReaderConfig.minZoom,
       ReaderConfig.maxZoom,
     );
+    _userZoomLevel = newZoom;
+    _pdfController?.zoomLevel = newZoom;
   }
 
   void _resetZoom() {
+    _userZoomLevel = 1.0;
     _pdfController?.zoomLevel = 1.0;
+    _fitMode = FitMode.fitWidth;
+    setState(() {});
   }
 
   // ========== Actions ==========
@@ -839,12 +1127,14 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
     WidgetsBinding.instance.removeObserver(this);
     _savePositionNow();
     _savePositionTimer?.cancel();
+    _zoomRestoreTimer?.cancel();
     _cancelToken?.cancel();
     _downloader.dispose();
     _controlsAnimController.dispose();
     _pageTransitionController.dispose();
     _pdfController?.dispose();
     SafeAsync.run(() => WakelockPlus.disable());
+    SafeAsync.run(() async => _sfThumbs.close());
     super.dispose();
   }
 
@@ -871,11 +1161,16 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
     );
   }
 
-  Color get _bgColor => switch (_settings.theme) {
-    'light' => Colors.white,
-    'sepia' => const Color(0xFFF5E6D3),
-    _ => const Color(0xFF121212),
-  };
+  Color get _bgColor {
+    if (_darkModeEnabled) return Colors.black;
+    return switch (_settings.theme) {
+      'light' => Colors.white,
+      'sepia' => const Color(0xFFF5E6D3),
+      _ => const Color(0xFF121212),
+    };
+  }
+
+  // ========== FIXED: Using Custom FlipWidget ==========
 
   Widget _buildContent() {
     if (_hasError) return _buildError();
@@ -885,31 +1180,49 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
         ? PdfScrollDirection.vertical
         : PdfScrollDirection.horizontal;
 
+    // Build the PDF viewer
+    Widget pdfViewer = SfPdfViewer.file(
+      _pdfFile!,
+      key: _pdfViewerKey,
+      controller: _pdfController,
+      onDocumentLoaded: _onDocumentLoaded,
+      onDocumentLoadFailed: _onDocumentLoadFailed,
+      onPageChanged: _onPageChanged,
+      onZoomLevelChanged: _onZoomLevelChanged,
+      pageLayoutMode: PdfPageLayoutMode.single,
+      scrollDirection: scrollDir,
+      pageSpacing: 0,
+      canShowScrollHead: false,
+      canShowScrollStatus: false,
+      canShowPaginationDialog: false,
+      enableDoubleTapZooming: true,
+      maxZoomLevel: ReaderConfig.maxZoom,
+      enableTextSelection: true,
+      interactionMode: PdfInteractionMode.pan,
+    );
+
+    // Apply custom FlipWidget (paint-phase only, no layout issues)
+    if (_flipHorizontal || _flipVertical) {
+      pdfViewer = FlipWidget(
+        flipX: _flipHorizontal,
+        flipY: _flipVertical,
+        child: pdfViewer,
+      );
+    }
+
+    // Apply dark mode color inversion
+    if (_darkModeEnabled) {
+      pdfViewer = InvertColors(enabled: true, child: pdfViewer);
+    }
+
+    // Wrap with gesture listener
     return Listener(
       onPointerDown: _onPointerDown,
       onPointerMove: _onPointerMove,
       onPointerUp: _onPointerUp,
       onPointerCancel: _onPointerCancel,
       behavior: HitTestBehavior.translucent,
-      child: SfPdfViewer.file(
-        _pdfFile!,
-        key: _pdfViewerKey,
-        controller: _pdfController,
-        onDocumentLoaded: _onDocumentLoaded,
-        onDocumentLoadFailed: _onDocumentLoadFailed,
-        onPageChanged: _onPageChanged,
-        onZoomLevelChanged: _onZoomLevelChanged,
-        pageLayoutMode: PdfPageLayoutMode.single,
-        scrollDirection: scrollDir,
-        pageSpacing: 0,
-        canShowScrollHead: false,
-        canShowScrollStatus: false,
-        canShowPaginationDialog: false,
-        enableDoubleTapZooming: true,
-        maxZoomLevel: ReaderConfig.maxZoom,
-        enableTextSelection: true,
-        interactionMode: PdfInteractionMode.pan,
-      ),
+      child: pdfViewer,
     );
   }
 
@@ -949,7 +1262,9 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
   Widget _buildLoading() => Center(
     child: CircularProgressIndicator(
-      color: _settings.theme == 'dark' ? Colors.white : null,
+      color: _settings.theme == 'dark' || _darkModeEnabled
+          ? Colors.white
+          : null,
     ),
   );
 
@@ -1005,7 +1320,9 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: _settings.theme == 'dark' ? Colors.white : Colors.black,
+              color: _settings.theme == 'dark' || _darkModeEnabled
+                  ? Colors.white
+                  : Colors.black,
             ),
           ),
           const SizedBox(height: 8),
@@ -1013,7 +1330,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
             _errorMessage,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: _settings.theme == 'dark'
+              color: _settings.theme == 'dark' || _darkModeEnabled
                   ? Colors.white70
                   : Colors.black54,
             ),
@@ -1106,24 +1423,43 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
                           _share();
                         case 'resetZoom':
                           _resetZoom();
+                        case 'resetFlip':
+                          _resetFlip();
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
                         value: 'bookmarks',
                         child: Text('Bookmarks'),
                       ),
-                      PopupMenuItem(value: 'goto', child: Text('Go to Page')),
-                      PopupMenuItem(value: 'outline', child: Text('Outline')),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 'settings', child: Text('Settings')),
-                      PopupMenuItem(
+                      const PopupMenuItem(
+                        value: 'goto',
+                        child: Text('Go to Page'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'outline',
+                        child: Text('Outline'),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'settings',
+                        child: Text('Settings'),
+                      ),
+                      const PopupMenuItem(
                         value: 'resetZoom',
                         child: Text('Reset Zoom'),
                       ),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 'save', child: Text('Save Offline')),
-                      PopupMenuItem(value: 'share', child: Text('Share')),
+                      if (_flipHorizontal || _flipVertical)
+                        const PopupMenuItem(
+                          value: 'resetFlip',
+                          child: Text('Reset Flip'),
+                        ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'save',
+                        child: Text('Save Offline'),
+                      ),
+                      const PopupMenuItem(value: 'share', child: Text('Share')),
                     ],
                   ),
                 ],
@@ -1135,7 +1471,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
     ),
   );
 
-  // ========== COMPACT Bottom Bar ==========
+  // ========== Bottom Bar ==========
 
   Widget _buildBottomBar() {
     final page = _isScrubbing ? _sliderValue.round() : _currentPage;
@@ -1245,6 +1581,7 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
         child: Row(
           children: [
             const SizedBox(width: 4),
+            // Navigation
             _CompactBtn(
               Icons.chevron_left,
               _currentPage > 1 ? _goPrev : null,
@@ -1258,6 +1595,8 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
               size: 20,
             ),
             _Divider(),
+
+            // Zoom controls
             _CompactBtn(
               Icons.remove,
               _zoomLevel > ReaderConfig.minZoom ? _zoomOut : null,
@@ -1268,6 +1607,37 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
               _zoomLevel < ReaderConfig.maxZoom ? _zoomIn : null,
             ),
             _Divider(),
+
+            // Fit Mode Toggle
+            _FitModeToggle(fitMode: _fitMode, onToggle: _toggleFitMode),
+            _Divider(),
+
+            // Flip Horizontal
+            _CompactBtn(
+              Icons.flip,
+              _toggleFlipHorizontal,
+              active: _flipHorizontal,
+              tooltip: 'Flip Horizontal',
+            ),
+
+            // Flip Vertical
+            _CompactBtn(
+              Icons.swap_vert,
+              _toggleFlipVertical,
+              active: _flipVertical,
+              tooltip: 'Flip Vertical',
+            ),
+
+            // Dark Mode
+            _CompactBtn(
+              _darkModeEnabled ? Icons.light_mode : Icons.dark_mode,
+              _toggleDarkMode,
+              active: _darkModeEnabled,
+              tooltip: _darkModeEnabled ? 'Light Mode' : 'Dark Mode',
+            ),
+            _Divider(),
+
+            // Other controls
             _CompactBtn(
               Icons.grid_view,
               _togglePageGrid,
@@ -1372,6 +1742,9 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
                         isCurrent: p == _currentPage,
                         identifier: widget.identifier,
                         manager: _thumbnailManager,
+                        localThumbProvider: (widget.identifier == null)
+                            ? _getLocalThumb
+                            : null,
                         onTap: () {
                           _jumpToPage(p);
                           _togglePageGrid();
@@ -1434,39 +1807,103 @@ class _CompactBtn extends StatelessWidget {
   final VoidCallback? onTap;
   final bool active;
   final double size;
+  final String? tooltip;
+
   const _CompactBtn(
     this.icon,
     this.onTap, {
     this.active = false,
     this.size = 18,
+    this.tooltip,
   });
+
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: Material(
-      color: active
-          ? Theme.of(context).primaryColor.withValues(alpha: 0.25)
-          : Colors.white10,
-      borderRadius: BorderRadius.circular(6),
-      child: InkWell(
-        onTap: onTap,
+  Widget build(BuildContext context) {
+    final button = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: active
+            ? Theme.of(context).primaryColor.withValues(alpha: 0.25)
+            : Colors.white10,
         borderRadius: BorderRadius.circular(6),
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: Icon(
-            icon,
-            size: size,
-            color: onTap == null
-                ? Colors.white24
-                : active
-                ? Theme.of(context).primaryColor
-                : Colors.white,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Icon(
+              icon,
+              size: size,
+              color: onTap == null
+                  ? Colors.white24
+                  : active
+                  ? Theme.of(context).primaryColor
+                  : Colors.white,
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+
+    if (tooltip != null) {
+      return Tooltip(message: tooltip!, child: button);
+    }
+    return button;
+  }
+}
+
+class _FitModeToggle extends StatelessWidget {
+  final FitMode fitMode;
+  final VoidCallback onToggle;
+
+  const _FitModeToggle({required this.fitMode, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label) = switch (fitMode) {
+      FitMode.fitWidth => (Icons.width_normal, 'W'),
+      FitMode.fitHeight => (Icons.height, 'H'),
+      FitMode.custom => (Icons.aspect_ratio, 'C'),
+    };
+
+    return Tooltip(
+      message: switch (fitMode) {
+        FitMode.fitWidth => 'Fit Width (tap for Height)',
+        FitMode.fitHeight => 'Fit Height (tap for Width)',
+        FitMode.custom => 'Custom Zoom (tap for Width)',
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Material(
+          color: Theme.of(context).primaryColor.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 16, color: Colors.white),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PageChip extends StatelessWidget {
@@ -1501,21 +1938,24 @@ class _ZoomChip extends StatelessWidget {
   final VoidCallback onTap;
   const _ZoomChip(this.zoom, this.onTap);
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: Colors.white12,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        '${(zoom * 100).round()}%',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Reset Zoom',
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          color: Colors.white12,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '${(zoom * 100).round()}%',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     ),
@@ -1540,20 +1980,24 @@ class _PageThumb extends StatefulWidget {
   final String? identifier;
   final ArchivePageThumbnailManager manager;
   final VoidCallback onTap;
+  final Future<RgbaThumb?> Function(int pageNumber)? localThumbProvider;
+
   const _PageThumb({
     required this.page,
     required this.isCurrent,
     this.identifier,
     required this.manager,
     required this.onTap,
+    this.localThumbProvider,
   });
   @override
   State<_PageThumb> createState() => _PageThumbState();
 }
 
 class _PageThumbState extends State<_PageThumb> {
-  Uint8List? _data;
+  Uint8List? _encodedBytes;
   bool _loading = true;
+  ui.Image? _uiImage;
 
   @override
   void initState() {
@@ -1562,26 +2006,99 @@ class _PageThumbState extends State<_PageThumb> {
   }
 
   Future<void> _load() async {
-    if (widget.identifier == null) {
-      setState(() => _loading = false);
-      return;
-    }
-    final r = await SafeAsync.run(
-      () => widget.manager.getPageThumbnail(
-        widget.identifier!,
-        widget.page - 1,
-        scale: 1,
-      ),
-    );
-    if (mounted) {
+    setState(() {
+      _loading = true;
+      _encodedBytes = null;
+    });
+    _uiImage?.dispose();
+    _uiImage = null;
+
+    // 1) Archive thumbnails
+    if (widget.identifier != null) {
+      final r = await SafeAsync.run(
+        () => widget.manager.getPageThumbnail(
+          widget.identifier!,
+          widget.page - 1,
+          scale: 1,
+        ),
+        operationName: 'Thumb (archive)',
+      );
+
+      if (!mounted) return;
       r.when(
         success: (d) => setState(() {
-          _data = d;
+          _encodedBytes = d;
           _loading = false;
         }),
         failure: (_, __) => setState(() => _loading = false),
       );
+      return;
     }
+
+    // 2) Local thumbnails via PdfViewerPlatform
+    if (widget.localThumbProvider != null) {
+      final r = await SafeAsync.run<RgbaThumb?>(
+        () => widget.localThumbProvider!(widget.page),
+        operationName: 'Thumb (local)',
+      );
+
+      if (!mounted) return;
+
+      RgbaThumb? thumb;
+      r.when(success: (t) => thumb = t, failure: (_, __) => thumb = null);
+
+      if (thumb == null) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      final imgRes = await SafeAsync.run<ui.Image>(
+        () => _rgbaToUiImage(thumb!),
+        operationName: 'Thumb decode',
+      );
+
+      if (!mounted) return;
+
+      imgRes.when(
+        success: (img) => setState(() {
+          _uiImage = img;
+          _loading = false;
+        }),
+        failure: (_, __) => setState(() => _loading = false),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PageThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page != widget.page ||
+        oldWidget.identifier != widget.identifier ||
+        oldWidget.localThumbProvider != widget.localThumbProvider) {
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _uiImage?.dispose();
+    super.dispose();
+  }
+
+  Future<ui.Image> _rgbaToUiImage(RgbaThumb t) {
+    final c = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      t.pixels,
+      t.width,
+      t.height,
+      ui.PixelFormat.rgba8888,
+      (img) => c.complete(img),
+    );
+    return c.future;
   }
 
   @override
@@ -1616,8 +2133,10 @@ class _PageThumbState extends State<_PageThumb> {
                   ),
                 ),
               )
-            else if (_data != null)
-              Image.memory(_data!, fit: BoxFit.cover)
+            else if (_uiImage != null)
+              RawImage(image: _uiImage!, fit: BoxFit.cover)
+            else if (_encodedBytes != null)
+              Image.memory(_encodedBytes!, fit: BoxFit.cover)
             else
               Container(
                 color: Colors.grey[850],

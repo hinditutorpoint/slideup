@@ -329,6 +329,7 @@ class _MediaKitVideoPlayerState extends State<MediaKitVideoPlayer>
     debugPrint('📝 Subtitles disabled');
   }
 
+  // ignore: unused_element
   Future<void> _loadExternalSubtitle(String path) async {
     await _player.setSubtitleTrack(SubtitleTrack.uri(path));
     debugPrint('📝 External subtitle loaded: $path');
@@ -419,7 +420,7 @@ class _MediaKitVideoPlayerState extends State<MediaKitVideoPlayer>
 
   Future<void> _adjustBrightness(double delta) async {
     try {
-      final current = await ScreenBrightness().current;
+      final current = await ScreenBrightness().application;
       final newValue = (current + delta).clamp(0.0, 1.0);
       await ScreenBrightness().setApplicationScreenBrightness(newValue);
 
@@ -543,13 +544,12 @@ class _MediaKitVideoPlayerState extends State<MediaKitVideoPlayer>
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_isFullScreen) {
+    return PopScope(
+      canPop: !_isFullScreen,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
           _toggleFullScreen();
-          return false;
         }
-        return true;
       },
       child: Scaffold(
         backgroundColor: Colors.black,

@@ -1646,10 +1646,9 @@ class _LibraryPickerDialogState extends ConsumerState<_LibraryPickerDialog> {
                       }
                     }
 
-                    if (mounted) {
-                      Navigator.pop(context);
-                      widget.onFilesSelected(selectedFiles);
-                    }
+                    if (!context.mounted) return;
+                    Navigator.pop(context);
+                    widget.onFilesSelected(selectedFiles);
                   } catch (e) {
                     setState(() => _isLoading = false);
                     debugPrint('Error selecting files: $e');

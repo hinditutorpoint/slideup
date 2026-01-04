@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'package:audio_service/audio_service.dart';
 import 'models/tts_request.dart';
 import 'models/download_model.dart';
 import 'services/tts_service.dart';
@@ -164,12 +165,26 @@ class TtsController {
     return await _modelService!.getActiveModelForType(SherpaModelType.tts);
   }
 
+  AudioHandler? _audioHandler;
+
   /// Clear current model
   void clearCurrentModel() {
     _currentModelId = null;
     _currentModelName = null;
     _currentModelPath = null;
     _currentModel = null;
+  }
+
+  /// Register audio handler for background playback
+  void registerAudioHandler(AudioHandler handler) {
+    _audioHandler = handler;
+    debugPrint('[TtsController] Audio handler registered');
+  }
+
+  /// Unregister audio handler
+  void unregisterAudioHandler() {
+    _audioHandler = null;
+    debugPrint('[TtsController] Audio handler unregistered');
   }
 
   /// Current playback speed
@@ -1197,6 +1212,7 @@ class TtsController {
 
     if (effectiveModelPath == null) {
       final initialized = await initializeWithActiveModel();
+      if (!context.mounted) return false;
       if (!initialized) {
         final error = 'No TTS model available. Please download a TTS model.';
         onError?.call(error);
@@ -1674,7 +1690,10 @@ class TtsController {
     try {
       // Stop audio player
       _audioPlayer.forceStop();
-
+      // ✅ Notify audio service
+      if (_audioHandler != null) {
+        _audioHandler!.stop();
+      }
       // Hide overlay if shown
       if (_isOverlayShown) {
         TtsOverlayManager.forceHide();
@@ -1685,14 +1704,40 @@ class TtsController {
     }
   }
 
-  /// Playback controls
-  Future<void> play() => _audioPlayer.play();
-  Future<void> pause() => _audioPlayer.pause();
+  Future<void> play() async {
+    try {
+      await _audioPlayer.play();
+      if (_audioHandler != null) {
+        await _audioHandler!.play();
+      }
+    } catch (e) {
+      debugPrint('[TtsController] Play error: $e');
+    }
+  }
+
+  Future<void> pause() async {
+    try {
+      await _audioPlayer.pause();
+
+      // ✅ Notify audio service
+      if (_audioHandler != null) {
+        await _audioHandler!.pause();
+      }
+    } catch (e) {
+      debugPrint('[TtsController] Pause error: $e');
+    }
+  }
+
   Future<void> togglePlayPause() => _audioPlayer.togglePlayPause();
 
   Future<void> stop(BuildContext context) async {
     try {
       await _audioPlayer.stop();
+
+      // ✅ Notify audio service
+      if (_audioHandler != null) {
+        await _audioHandler!.stop();
+      }
 
       if (context.mounted) {
         hidePlayer(context);
@@ -2127,6 +2172,9 @@ class TtsController {
 
   Future<void> dispose() async {
     try {
+      // ✅ Unregister audio handler first
+      unregisterAudioHandler();
+
       _queueManager.dispose();
       await _audioPlayer.dispose();
       _ttsService.dispose();

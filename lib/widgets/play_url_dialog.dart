@@ -80,8 +80,9 @@ class _PlayUrlDialogState extends State<PlayUrlDialog>
   MediaType _detectMediaType(String mime) {
     if (mime.startsWith('video/') ||
         mime.startsWith('application/vnd.apple.mpegurl') ||
-        mime.startsWith('application/dash+xml'))
+        mime.startsWith('application/dash+xml')) {
       return MediaType.video;
+    }
     if (mime.startsWith('audio/')) return MediaType.audio;
     return MediaType.other;
   }

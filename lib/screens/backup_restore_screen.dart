@@ -7,8 +7,7 @@ import '../models/backup_info.dart';
 class BackupRestoreScreen extends StatefulWidget {
   final DatabaseBackupService backupService;
 
-  const BackupRestoreScreen({Key? key, required this.backupService})
-    : super(key: key);
+  const BackupRestoreScreen({super.key, required this.backupService});
 
   @override
   State<BackupRestoreScreen> createState() => _BackupRestoreScreenState();
@@ -142,9 +141,9 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   }
 
   Future<void> _shareBackup(BackupInfo backup) async {
-    await Share.shareXFiles([
-      XFile(backup.filePath),
-    ], subject: 'Database Backup');
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(backup.filePath)], subject: 'Database Backup'),
+    );
   }
 
   Future<void> _deleteAllBackups() async {

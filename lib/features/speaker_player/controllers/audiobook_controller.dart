@@ -247,7 +247,7 @@ class AudiobookController {
 
         // Notify page change (this will scroll the reader)
         _safePageChanged(_currentPageIndex);
-
+        if (!context.mounted) return;
         // Speak the page
         final success = await _speakPageSafe(textToSpeak, context);
 

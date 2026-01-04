@@ -15,6 +15,7 @@ class SettingsSheetWidget extends ConsumerWidget {
         final playerState = ref.watch(videoPlayerProvider);
 
         // Add null check for player state
+        // ignore: unnecessary_null_comparison
         if (playerState == null) {
           return _buildErrorWidget(context, 'Player state is null');
         }
@@ -287,6 +288,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       // Show speed selector after delay
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!context.mounted) return;
         try {
           _safeShowBottomSheet(
             context: context,
@@ -296,6 +298,7 @@ class SettingsSheetWidget extends ConsumerWidget {
                 _safePopContext(sheetContext);
                 _safeExecute(() async {
                   await notifier.setSpeed(speed);
+                  if (!context.mounted) return;
                   _showMessage(context, 'Speed set to ${speed}x', Colors.green);
                 });
               },
@@ -333,11 +336,11 @@ class SettingsSheetWidget extends ConsumerWidget {
       // Filter valid tracks
       final List<AudioTrack> validTracks;
       try {
-        final audioTracks = playerState.audioTracks ?? [];
+        final audioTracks = playerState.audioTracks;
         validTracks = audioTracks.where((track) {
           try {
             final id = track.id;
-            return id != null && id != 'auto' && id != 'no';
+            return id.isNotEmpty && id != 'auto' && id != 'no';
           } catch (e) {
             return false;
           }
@@ -360,6 +363,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       if (validTracks.isEmpty) {
         Future.delayed(const Duration(milliseconds: 100), () {
+          if (!context.mounted) return;
           _showMessage(context, 'No audio tracks available', Colors.blue);
         });
         return;
@@ -367,6 +371,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       // Show audio selector after delay
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!context.mounted) return;
         try {
           _safeShowBottomSheet(
             context: context,
@@ -378,6 +383,7 @@ class SettingsSheetWidget extends ConsumerWidget {
                 _safeExecute(() async {
                   debugPrint('🎵 Setting audio track: ${track.id}');
                   await notifier.setAudioTrack(track);
+                  if (!context.mounted) return;
                   _showMessage(context, 'Audio track changed', Colors.green);
                 });
               },
@@ -415,7 +421,7 @@ class SettingsSheetWidget extends ConsumerWidget {
       // Filter valid tracks
       List<SubtitleTrack> validTracks;
       try {
-        final subtitleTracks = playerState.subtitleTracks ?? [];
+        final subtitleTracks = playerState.subtitleTracks;
         validTracks = subtitleTracks.where((track) {
           try {
             final id = track.id;
@@ -438,6 +444,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       // Show subtitle selector after delay
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!context.mounted) return;
         try {
           _safeShowBottomSheet(
             context: context,
@@ -450,10 +457,12 @@ class SettingsSheetWidget extends ConsumerWidget {
                   if (track == null) {
                     debugPrint('📝 Disabling subtitles');
                     await notifier.disableSubtitles();
+                    if (!context.mounted) return;
                     _showMessage(context, 'Subtitles disabled', Colors.green);
                   } else {
                     debugPrint('📝 Setting subtitle track: ${track.id}');
                     await notifier.setSubtitleTrack(track);
+                    if (!context.mounted) return;
                     _showMessage(context, 'Subtitle changed', Colors.green);
                   }
                 });
@@ -492,11 +501,11 @@ class SettingsSheetWidget extends ConsumerWidget {
       // Filter valid tracks
       final List<VideoTrack> validTracks;
       try {
-        final videoTracks = playerState.videoTracks ?? [];
+        final videoTracks = playerState.videoTracks;
         validTracks = videoTracks.where((track) {
           try {
             final id = track.id;
-            return id != null && id != 'auto' && id != 'no';
+            return id.isNotEmpty && id != 'auto' && id != 'no';
           } catch (e) {
             return false;
           }
@@ -519,6 +528,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       if (validTracks.isEmpty) {
         Future.delayed(const Duration(milliseconds: 100), () {
+          if (!context.mounted) return;
           _showMessage(context, 'No quality options available', Colors.blue);
         });
         return;
@@ -526,6 +536,7 @@ class SettingsSheetWidget extends ConsumerWidget {
 
       // Show quality selector after delay
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!context.mounted) return;
         try {
           _safeShowBottomSheet(
             context: context,
@@ -537,6 +548,7 @@ class SettingsSheetWidget extends ConsumerWidget {
                 _safeExecute(() async {
                   debugPrint('🎬 Setting video track: ${track.id}');
                   await notifier.setVideoTrack(track);
+                  if (!context.mounted) return;
                   _showMessage(context, 'Quality changed', Colors.green);
                 });
               },
@@ -576,8 +588,10 @@ class SettingsSheetWidget extends ConsumerWidget {
         _safeExecute(() async {
           final screenshot = await notifier.takeScreenshot();
           if (screenshot != null) {
+            if (!context.mounted) return;
             _showMessage(context, 'Screenshot saved!', Colors.green);
           } else {
+            if (!context.mounted) return;
             _showMessage(context, 'Failed to take screenshot', Colors.red);
           }
         });
@@ -929,7 +943,7 @@ class _AudioTrackSelectorSheet extends StatelessWidget {
       title =
           track.title ??
           _getLanguageName(track.language) ??
-          (track.id != null ? 'Track ${track.id}' : 'Unknown Track');
+          (track.id.isNotEmpty ? 'Track ${track.id}' : 'Unknown Track');
     } catch (e) {
       title = 'Unknown Track';
     }
@@ -1113,7 +1127,7 @@ class _SubtitleSelectorSheet extends StatelessWidget {
       title =
           track.title ??
           _getLanguageName(track.language) ??
-          (track.id != null ? 'Track ${track.id}' : 'Unknown Track');
+          (track.id.isNotEmpty ? 'Track ${track.id}' : 'Unknown Track');
     } catch (e) {
       title = 'Unknown Track';
     }
@@ -1278,10 +1292,10 @@ class _QualitySelectorSheet extends StatelessWidget {
           }
           subtitle = w != null ? '$w × $h' : null;
         } else {
-          title = 'Track ${track.id != null ? track.id : 'unknown'}';
+          title = 'Track ${track.id}';
         }
       } else {
-        title = 'Track ${track.id != null ? track.id : 'unknown'}';
+        title = 'Track ${track.id}';
       }
     } catch (e) {
       title = 'Unknown Quality';

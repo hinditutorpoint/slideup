@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../utils/reader_utils.dart';
 import 'enhanced_pdf_reader.dart';
@@ -77,8 +79,6 @@ class _UnifiedReaderScreenState extends State<UnifiedReaderScreen> {
   Future<DocumentType> _detectFromHeaders() async {
     try {
       final uri = Uri.parse(widget.documentUrl);
-      // We could make a HEAD request to check content-type
-      // For now, default to PDF for Archive.org URLs
       if (uri.host.contains('archive.org')) {
         return DocumentType.pdf;
       }
@@ -179,12 +179,21 @@ class _UnifiedReaderScreenState extends State<UnifiedReaderScreen> {
   Widget _buildReader() {
     switch (_documentType!) {
       case DocumentType.pdf:
-        return EnhancedPdfReader(
-          pdfUrl: widget.documentUrl,
-          title: widget.title,
-          identifier: widget.identifier,
-          initialPage: widget.initialPage,
-        );
+        if (widget.source == 'local') {
+          return EnhancedPdfReader(
+            localFile: File(widget.documentUrl),
+            title: widget.title,
+            identifier: widget.identifier,
+            initialPage: widget.initialPage,
+          );
+        } else {
+          return EnhancedPdfReader(
+            pdfUrl: widget.documentUrl,
+            title: widget.title,
+            identifier: widget.identifier,
+            initialPage: widget.initialPage,
+          );
+        }
       case DocumentType.epub:
         if (widget.source == 'local') {
           return DownloadedEpubCatalogue(

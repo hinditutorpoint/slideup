@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:percent_indicator/circular_percent_indicator.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:path/path.dart' as path;
 import '../shared/widgets/empty_state_widget.dart';
 import '../shared/widgets/loading_widget.dart';
 import '../../features/documents/models/download_task.dart';
@@ -421,7 +420,7 @@ class _CompletedDownloadItem extends ConsumerWidget {
       if (await file.exists()) {
         final size = await file.length();
         final modified = await file.lastModified();
-        final extension = path.extension(file.path).toLowerCase();
+        //final extension = path.extension(file.path).toLowerCase();
         final MediaFile mediafile = MediaFile(
           id: file.path,
           name: file.path,
@@ -430,7 +429,7 @@ class _CompletedDownloadItem extends ConsumerWidget {
           size: size,
           dateModified: modified,
         );
-
+        if (!context.mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -461,9 +460,12 @@ class _CompletedDownloadItem extends ConsumerWidget {
     if (download.filePath == null) return;
 
     try {
-      await Share.shareXFiles([
-        XFile(download.filePath!),
-      ], text: download.title);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(download.filePath!)],
+          subject: download.title,
+        ),
+      );
     } catch (e) {
       debugPrint('Failed to share file: $e');
     }

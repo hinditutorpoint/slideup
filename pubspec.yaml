@@ -95,6 +95,7 @@ dependencies:
 
   sherpa_onnx: ^1.12.20
   audio_session: ^0.2.2
+  syncfusion_pdfviewer_platform_interface: ^28.2.12
 
 dev_dependencies:
   flutter_test:

@@ -2122,7 +2122,8 @@ class TxtReaderScreenState extends ConsumerState<TxtReaderScreen>
         if (didPop) return;
 
         final canPop = await _handleBackPress();
-        if (canPop && mounted) {
+        if (!context.mounted) return;
+        if (canPop) {
           Navigator.pop(context);
         }
       },

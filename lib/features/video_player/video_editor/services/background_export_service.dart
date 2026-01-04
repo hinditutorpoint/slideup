@@ -149,10 +149,7 @@ class BackgroundExportService {
     try {
       await _initializeNotifications();
 
-      await Workmanager().initialize(
-        callbackDispatcher,
-        isInDebugMode: kDebugMode,
-      );
+      await Workmanager().initialize(callbackDispatcher);
 
       _isInitialized = true;
       debugPrint('✅ BackgroundExportService initialized');
@@ -803,7 +800,7 @@ class BackgroundExportService {
     }
   }
 
-  Future<void> _startBackgroundTask(ExportJob job) async {
+  /* Future<void> _startBackgroundTask(ExportJob job) async {
     try {
       await Workmanager().registerOneOffTask(
         job.id,
@@ -823,7 +820,7 @@ class BackgroundExportService {
     } catch (e) {
       debugPrint('❌ Start background task error: $e');
     }
-  }
+  } */
 
   // ═══════════════════════════════════════════════════════
   // ✅ PERSISTENCE

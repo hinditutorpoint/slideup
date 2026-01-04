@@ -142,6 +142,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
 
   void _openVideo(List<MediaFile> files, int index) async {
     await ref.read(mediaProvider.notifier).addToRecent(files[index]);
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(

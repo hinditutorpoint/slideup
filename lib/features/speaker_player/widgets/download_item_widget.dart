@@ -465,14 +465,13 @@ class _DownloadItemWidgetState extends ConsumerState<DownloadItemWidget> {
                     _isProcessing = false;
                     _isActive = true;
                   });
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('${model.name} is now the default'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  }
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${model.name} is now the default'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
                 },
               ),
 
@@ -556,14 +555,13 @@ class _DownloadItemWidgetState extends ConsumerState<DownloadItemWidget> {
         _isProcessing = false;
         _isActive = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${model.name} is no longer the default'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${model.name} is no longer the default'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 

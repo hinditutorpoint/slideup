@@ -1,13 +1,14 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter/material.dart';
+
 import '../models/media_file.dart';
 import '../navigation_service.dart';
 
 class AudioPlayerHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
-  final _player = AudioPlayer();
-  final _playlist = ConcatenatingAudioSource(children: []);
+  final AudioPlayer _player = AudioPlayer();
+
   bool _initialized = false;
 
   AudioPlayerHandler() {
@@ -21,30 +22,29 @@ class AudioPlayerHandler extends BaseAudioHandler
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
 
     _player.sequenceStateStream.listen((sequenceState) {
+      if (sequenceState == null) return;
+
       final currentItem = sequenceState.currentSource?.tag as MediaItem?;
       if (currentItem != null) {
         mediaItem.add(currentItem);
       }
 
-      final queueList = sequenceState.effectiveSequence
+      final queueItems = sequenceState.effectiveSequence
           .map((source) => source.tag as MediaItem)
           .toList();
-      queue.add(queueList);
+
+      queue.add(queueItems);
     });
 
     _player.processingStateStream.listen((state) {
-      if (state == ProcessingState.completed) {
-        final repeatMode = playbackState.value.repeatMode;
-        if (repeatMode == AudioServiceRepeatMode.none) {
-          stop();
-        }
+      if (state == ProcessingState.completed &&
+          playbackState.value.repeatMode == AudioServiceRepeatMode.none) {
+        stop();
       }
     });
 
     AudioService.notificationClicked.listen((clicked) {
-      if (clicked) {
-        _handleNotificationClick();
-      }
+      if (clicked) _handleNotificationClick();
     });
   }
 
@@ -53,11 +53,10 @@ class AudioPlayerHandler extends BaseAudioHandler
       final navigator = rootNavigatorKey.currentState;
       if (navigator == null) return;
 
-      final currentRoute = navigator.overlay?.context;
-      if (currentRoute != null) {
-        final modalRoute = ModalRoute.of(currentRoute);
-        if (modalRoute?.settings.name == '/audio-player') return;
-      }
+      final context = navigator.overlay?.context;
+      final route = context != null ? ModalRoute.of(context) : null;
+
+      if (route?.settings.name == '/audio-player') return;
 
       navigator.pushNamed('/audio-player');
     });
@@ -67,7 +66,7 @@ class AudioPlayerHandler extends BaseAudioHandler
     return PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
-        if (_player.playing) MediaControl.pause else MediaControl.play,
+        _player.playing ? MediaControl.pause : MediaControl.play,
         MediaControl.skipToNext,
         MediaControl.stop,
       ],
@@ -92,19 +91,19 @@ class AudioPlayerHandler extends BaseAudioHandler
     );
   }
 
+  // ================= PLAYLIST =================
+
   Future<void> loadPlaylist(
     List<MediaFile> files, {
     int initialIndex = 0,
   }) async {
     try {
-      final items = files.map((file) => _createMediaItem(file)).toList();
-      final sources = files.map((file) => _createAudioSource(file)).toList();
+      final mediaItems = files.map(_createMediaItem).toList();
+      final audioSources = files.map(_createAudioSource).toList();
 
-      _playlist.clear();
-      await _playlist.addAll(sources);
+      queue.add(mediaItems);
 
-      queue.add(items);
-      await _player.setAudioSource(_playlist, initialIndex: initialIndex);
+      await _player.setAudioSources(audioSources, initialIndex: initialIndex);
     } catch (e) {
       debugPrint('Error loading playlist: $e');
     }
@@ -135,10 +134,84 @@ class AudioPlayerHandler extends BaseAudioHandler
   }
 
   AudioSource _createAudioSource(MediaFile file) {
-    return file.path.startsWith('http') || file.path.startsWith('https')
-        ? AudioSource.uri(Uri.parse(file.path), tag: _createMediaItem(file))
-        : AudioSource.file(file.path, tag: _createMediaItem(file));
+    final uri = file.path.startsWith('http')
+        ? Uri.parse(file.path)
+        : Uri.file(file.path);
+
+    return AudioSource.uri(uri, tag: _createMediaItem(file));
   }
+
+  Future<void> addNext(MediaFile file) async {
+    try {
+      final source = _createAudioSource(file);
+      final item = _createMediaItem(file);
+
+      final currentIndex = _player.currentIndex ?? 0;
+      final insertIndex = currentIndex + 1;
+
+      final currentSources = List<AudioSource>.from(_player.sequence ?? []);
+
+      currentSources.insert(insertIndex, source);
+
+      queue.value.insert(insertIndex, item);
+      queue.add(List<MediaItem>.from(queue.value));
+
+      await _player.setAudioSources(
+        currentSources,
+        initialIndex: currentIndex,
+        initialPosition: _player.position,
+      );
+    } catch (e) {
+      debugPrint('Add next error: $e');
+    }
+  }
+
+  Future<void> addToQueue(MediaFile file) async {
+    try {
+      final source = _createAudioSource(file);
+      final item = _createMediaItem(file);
+
+      final sources = List<AudioSource>.from(_player.sequence ?? [])
+        ..add(source);
+
+      queue.value.add(item);
+      queue.add(List<MediaItem>.from(queue.value));
+
+      await _player.setAudioSources(
+        sources,
+        initialIndex: _player.currentIndex ?? 0,
+        initialPosition: _player.position,
+      );
+    } catch (e) {
+      debugPrint('Add queue error: $e');
+    }
+  }
+
+  Future<void> removeFromQueue(int index) async {
+    try {
+      final sources = List<AudioSource>.from(_player.sequence ?? []);
+
+      if (index < 0 || index >= sources.length) return;
+
+      final currentIndex = _player.currentIndex ?? 0;
+
+      sources.removeAt(index);
+      queue.value.removeAt(index);
+      queue.add(List<MediaItem>.from(queue.value));
+
+      final newIndex = index < currentIndex ? currentIndex - 1 : currentIndex;
+
+      await _player.setAudioSources(
+        sources,
+        initialIndex: newIndex.clamp(0, sources.length - 1),
+        initialPosition: _player.position,
+      );
+    } catch (e) {
+      debugPrint('Remove queue error: $e');
+    }
+  }
+
+  // ================= CONTROLS =================
 
   @override
   Future<void> play() => _player.play();
@@ -158,7 +231,7 @@ class AudioPlayerHandler extends BaseAudioHandler
   @override
   Future<void> skipToQueueItem(int index) async {
     if (index < 0 || index >= queue.value.length) return;
-    _player.seek(Duration.zero, index: index);
+    await _player.seek(Duration.zero, index: index);
   }
 
   @override
@@ -169,7 +242,7 @@ class AudioPlayerHandler extends BaseAudioHandler
       queue.add([]);
       mediaItem.add(null);
     } catch (e) {
-      debugPrint('Error stopping player: $e');
+      debugPrint('Stop error: $e');
     }
   }
 
@@ -177,16 +250,16 @@ class AudioPlayerHandler extends BaseAudioHandler
   Future<void> setSpeed(double speed) => _player.setSpeed(speed);
 
   @override
-  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) async {
-    switch (repeatMode) {
+  Future<void> setRepeatMode(AudioServiceRepeatMode mode) async {
+    switch (mode) {
       case AudioServiceRepeatMode.none:
-        _player.setLoopMode(LoopMode.off);
+        await _player.setLoopMode(LoopMode.off);
         break;
       case AudioServiceRepeatMode.one:
-        _player.setLoopMode(LoopMode.one);
+        await _player.setLoopMode(LoopMode.one);
         break;
       case AudioServiceRepeatMode.all:
-        _player.setLoopMode(LoopMode.all);
+        await _player.setLoopMode(LoopMode.all);
         break;
       case AudioServiceRepeatMode.group:
         break;
@@ -194,8 +267,8 @@ class AudioPlayerHandler extends BaseAudioHandler
   }
 
   @override
-  Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
-    if (shuffleMode == AudioServiceShuffleMode.all) {
+  Future<void> setShuffleMode(AudioServiceShuffleMode mode) async {
+    if (mode == AudioServiceShuffleMode.all) {
       await _player.shuffle();
       await _player.setShuffleModeEnabled(true);
     } else {
@@ -203,9 +276,13 @@ class AudioPlayerHandler extends BaseAudioHandler
     }
   }
 
+  // ================= DISPOSE =================
+
   Future<void> dispose() async {
     await _player.dispose();
   }
+
+  // ================= STREAMS =================
 
   AudioPlayer get player => _player;
   Stream<Duration> get positionStream => _player.positionStream;

@@ -253,6 +253,7 @@ class _PdfPagesWidgetState extends ConsumerState<PdfPagesWidget> {
 
   // ==================== HELPER METHODS ====================
 
+  // ignore: unused_element
   bool _isPageExtracted(int pageNumber) {
     for (final page in _extractedPages) {
       if (page.pageNumber == pageNumber) {
@@ -262,6 +263,7 @@ class _PdfPagesWidgetState extends ConsumerState<PdfPagesWidget> {
     return false;
   }
 
+  // ignore: unused_element
   ExtractedPageInfo? _getPageInfo(int pageNumber) {
     for (final page in _extractedPages) {
       if (page.pageNumber == pageNumber) {

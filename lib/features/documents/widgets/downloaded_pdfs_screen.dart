@@ -198,7 +198,9 @@ class _DownloadedPdfsScreenState extends State<DownloadedPdfsScreen> {
       _showSnackBar('File not found');
       return;
     }
-    await Share.shareXFiles([XFile(file.path)], subject: item.title);
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path)], subject: item.title),
+    );
   }
 
   Future<void> _delete(DownloadedPdfItem item) async {

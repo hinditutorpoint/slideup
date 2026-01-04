@@ -289,8 +289,10 @@ class VideoPlayerLauncher {
   ///
   /// Can accept any source type:
   /// - MediaFile
+  // ignore: unintended_html_in_doc_comment
   /// - List<MediaFile>
   /// - String (URL)
+  // ignore: unintended_html_in_doc_comment
   /// - List<String> (URLs)
   ///
   /// Examples:
