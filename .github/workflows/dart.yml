@@ -7,21 +7,21 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  flutter-ci:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout
+      # 1️⃣ Checkout repo
       - uses: actions/checkout@v4
 
-      # 2️⃣ Setup Flutter
+      # 2️⃣ Setup Flutter (match your local version)
       - name: Setup Flutter
         uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: latest
+          version: "3.8.1"   # <-- same as your local system
 
-      # 3️⃣ Check Flutter
+      # 3️⃣ Check Flutter installation
       - name: Flutter doctor
         run: flutter doctor -v
 
@@ -33,6 +33,6 @@ jobs:
       - name: Analyze project
         run: flutter analyze
 
-      # 6️⃣ Run tests
-      - name: Run Flutter tests
+      # 6️⃣ Run Flutter tests
+      - name: Run tests
         run: flutter test

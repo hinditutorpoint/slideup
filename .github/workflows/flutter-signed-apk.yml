@@ -1,68 +1,42 @@
-name: Flutter Signed APK
+name: Flutter CI & Signed APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # 1️⃣ Checkout repo
+      - uses: actions/checkout@v4
 
-      # Setup JDK
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      # Setup Flutter SDK
+      # 2️⃣ Setup Flutter (exact revision match)
       - name: Setup Flutter
         uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: "latest"
+          version: "3.8.1"  # Dart 3.8.1 comes bundled in this Flutter version
 
+      # 3️⃣ Verify Flutter
       - name: Flutter doctor
         run: flutter doctor -v
 
-      # Restore keystore
-      - name: Decode keystore
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/my-release-key.keystore
-
-      # Create gradle.properties
-      - name: Create gradle.properties
-        run: |
-          cat <<EOF > android/gradle.properties
-          MY_KEYSTORE=app/my-release-key.keystore
-          MY_STORE_PASSWORD=${{ secrets.MY_STORE_PASSWORD }}
-          MY_KEY_ALIAS=${{ secrets.MY_KEY_ALIAS }}
-          MY_KEY_PASSWORD=${{ secrets.MY_KEY_PASSWORD }}
-          EOF
-
-      # Auto version bump
-      - name: Update build number
-        run: |
-          BUILD_NUMBER=${{ github.run_number }}
-          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //')
-          APP_VERSION=$(echo $VERSION | cut -d'+' -f1)
-          sed -i "s/^version:.*/version: $APP_VERSION+$BUILD_NUMBER/" pubspec.yaml
-
+      # 4️⃣ Install dependencies
       - name: Flutter pub get
         run: flutter pub get
 
-      # Build signed APK
+      # 5️⃣ Analyze code
+      - name: Analyze project
+        run: flutter analyze
+
+      # 6️⃣ Run tests
+      - name: Run Flutter tests
+        run: flutter test
+
+      # 7️⃣ Build signed APK (keystore step optional)
       - name: Build signed APK
         run: flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
