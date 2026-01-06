@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../../../core/constants/api.dart';
+import 'package:slideup/core/constants/api.dart';
 import '../../speaker_player/services/language_detection_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════

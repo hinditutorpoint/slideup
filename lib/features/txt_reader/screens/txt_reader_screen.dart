@@ -12,7 +12,7 @@ import '../../speaker_player/tts_controller.dart';
 import '../../speaker_player/models/tts_request.dart';
 import '../../speaker_player/providers/model_download_provider.dart';
 import '../../speaker_player/providers/tts_provider.dart';
-import '../../../core/constants/api.dart';
+import 'package:slideup/core/constants/api.dart';
 
 import '../../speaker_player/controllers/audiobook_controller.dart';
 import '../utils/reader_utils.dart';
