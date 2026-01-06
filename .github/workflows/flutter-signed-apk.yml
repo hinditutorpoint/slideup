@@ -26,7 +26,6 @@ jobs:
           flutter clean
           rm -rf build
           rm -rf $HOME/.gradle/caches/
-          rm -rf android/.gradle/
           rm -rf $HOME/.pub-cache/hosted/pub.dev/video_thumbnail-0.5.6
           rm -rf $HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_android-*
 
@@ -45,18 +44,3 @@ jobs:
       # 6️⃣ Run tests
       - name: Run Flutter tests
         run: flutter test
-
-      - name: Network debug (Maven Central)
-        run: |
-          set -x
-          curl -I https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.pom || true
-          curl -I https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.pom || true
-          env | sort | grep -i proxy || true
-
-      # 7️⃣ Build signed APK (keystore step optional)
-      - name: Build signed APK
-        run: |
-          flutter build apk --release --no-shrink --split-per-abi \
-          --dart-define=API_BASE_URL=${{ secrets.API_BASE_URL }} \
-          --dart-define=API_KEY=${{ secrets.API_KEY }} \
-          --dart-define=PIXABAY_KEY=${{ secrets.PIXABAY_KEY }}
