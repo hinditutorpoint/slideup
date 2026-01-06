@@ -26,6 +26,8 @@ jobs:
           flutter clean
           rm -rf build
           rm -rf $HOME/.gradle/caches/
+          rm -rf $HOME/.pub-cache/hosted/pub.dev/video_thumbnail-0.5.6
+          rm -rf $HOME/.pub-cache/hosted/pub.dev/sherpa_onnx_android-*
 
       # 3️⃣ Verify Flutter
       - name: Flutter doctor
@@ -46,7 +48,7 @@ jobs:
       # 7️⃣ Build signed APK (keystore step optional)
       - name: Build signed APK
         run: |
-          flutter build apk --release --no-shrink \
+          flutter build apk --release --no-shrink --split-per-abi \
           --dart-define=API_BASE_URL=${{ secrets.API_BASE_URL }} \
           --dart-define=API_KEY=${{ secrets.API_KEY }} \
           --dart-define=PIXABAY_KEY=${{ secrets.PIXABAY_KEY }}
