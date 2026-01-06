@@ -74,6 +74,7 @@ class FlipWidget extends SingleChildRenderObjectWidget {
   }
 
   @override
+  // ignore: library_private_types_in_public_api
   void updateRenderObject(BuildContext context, _RenderFlip renderObject) {
     renderObject
       ..flipX = flipX

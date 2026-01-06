@@ -1231,7 +1231,11 @@ class _MediaKitVideoPlayerState extends State<MediaKitVideoPlayer>
                 color: Colors.white,
               ),
               title: Text(
-                track.title ?? '${track.w}x${track.h}' ?? 'Track ${track.id}',
+                track.title ??
+                    (track.w != null && track.h != null
+                        ? '${track.w}x${track.h}'
+                        : 'Track ${track.id}'),
+
                 style: const TextStyle(color: Colors.white),
               ),
               onTap: () {

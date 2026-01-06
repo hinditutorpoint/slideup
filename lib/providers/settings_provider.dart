@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -94,7 +95,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
       _isInitialized = true;
     } catch (e) {
-      print('Error initializing settings: $e');
+      debugPrint('Error initializing settings: $e');
     }
   }
 

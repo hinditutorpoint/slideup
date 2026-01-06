@@ -249,8 +249,8 @@ class AudioPlayerHandler extends BaseAudioHandler
   Future<void> setSpeed(double speed) => _player.setSpeed(speed);
 
   @override
-  Future<void> setRepeatMode(AudioServiceRepeatMode mode) async {
-    switch (mode) {
+  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) async {
+    switch (repeatMode) {
       case AudioServiceRepeatMode.none:
         await _player.setLoopMode(LoopMode.off);
         break;
@@ -266,8 +266,8 @@ class AudioPlayerHandler extends BaseAudioHandler
   }
 
   @override
-  Future<void> setShuffleMode(AudioServiceShuffleMode mode) async {
-    if (mode == AudioServiceShuffleMode.all) {
+  Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
+    if (shuffleMode == AudioServiceShuffleMode.all) {
       await _player.shuffle();
       await _player.setShuffleModeEnabled(true);
     } else {

@@ -31,6 +31,7 @@ abstract class BaseExtractedListWidgetState<
   ViewMode _viewMode = ViewMode.grid;
   bool _isLoading = false;
   String? _error;
+  // ignore: prefer_final_fields
   List<T> _items = [];
   List<ExtractedFolder> _folders = [];
   String? _currentFolderPath;

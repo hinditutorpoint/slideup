@@ -14,6 +14,7 @@ class PdfHighlightsWidget extends ConsumerStatefulWidget {
 }
 
 class _PdfHighlightsWidgetState extends ConsumerState<PdfHighlightsWidget> {
+  // ignore: prefer_final_fields
   bool _isExpanded = true;
 
   int _getTotalHighlights(PdfState state) {

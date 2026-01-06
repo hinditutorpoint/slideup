@@ -164,6 +164,7 @@ class ManagedIsolate {
   }
 
   /// Execute one task in this managed isolate
+  // ignore: library_private_types_in_public_api
   Future<Result<R>> execute<T, R>(_IsolateTaskMessage<T, R> task) async {
     if (_isDisposed || _sendPort == null) {
       return Result.failure(StateError('Isolate is not available'));

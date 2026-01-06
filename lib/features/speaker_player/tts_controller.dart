@@ -215,12 +215,7 @@ class TtsController {
       }
 
       // Update position
-      if (status.position != null && status.duration != null) {
-        _audioHandler!.updatePosition(
-          status.position,
-          duration: status.duration,
-        );
-      }
+      _audioHandler!.updatePosition(status.position, duration: status.duration);
     } catch (e) {
       debugPrint('[TtsController] Sync to handler error: $e');
     }
@@ -456,7 +451,7 @@ class TtsController {
       // ✅ Update notification info
       if (_audioHandler != null) {
         await _audioHandler!.updateMediaInfo(
-          title: textPreview ?? 'Playing',
+          title: textPreview.isNotEmpty ? textPreview : 'Playing',
           album: 'Audiobook',
           duration: duration,
         );
@@ -468,7 +463,7 @@ class TtsController {
 
       // Create request
       final request = TtsRequest(
-        text: textPreview ?? '',
+        text: textPreview.isNotEmpty ? textPreview : '',
         modelPath: _currentModelPath,
         speed: speed,
         speakerId: speakerId,

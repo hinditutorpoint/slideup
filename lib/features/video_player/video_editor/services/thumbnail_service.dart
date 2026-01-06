@@ -156,7 +156,6 @@ class ThumbnailService {
   // ✅ HELPER METHODS FOR TYPE CONVERSION
   // ═══════════════════════════════════════════════════════
 
-  /// Safely convert Map<Object?, Object?> to Map<String, dynamic>
   Map<String, dynamic>? _convertToStringDynamicMap(
     Map<Object?, Object?>? source,
   ) {

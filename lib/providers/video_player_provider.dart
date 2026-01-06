@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/whisper_service.dart';
 import '../models/subtitle_segment.dart';
@@ -91,7 +92,7 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
       state = state.copyWith(subtitles: segments, isTranscribing: false);
     } catch (e) {
       state = state.copyWith(isTranscribing: false);
-      print('Error transcribing: $e');
+      debugPrint('Error transcribing: $e');
     }
   }
 

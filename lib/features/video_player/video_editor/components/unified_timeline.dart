@@ -132,7 +132,7 @@ class _UnifiedTimelineState extends State<UnifiedTimeline>
   // ─────────────────────────────────────────────────────
   double _scale = 1.0;
   double _minScale = 0.3;
-  double _maxScale = 4.0;
+  final double _maxScale = 4.0;
   double _baseScale = 1.0;
   Offset? _scaleStartFocalPoint;
 

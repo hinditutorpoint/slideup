@@ -371,7 +371,7 @@ class MultiDatabaseBackupService {
       final zipEncoder = ZipEncoder();
       final zipData = zipEncoder.encode(archive);
 
-      if (zipData == null) {
+      if (zipData.isEmpty) {
         return BackupResponse(
           result: BackupResult.error,
           message: 'Failed to create ZIP archive',
@@ -566,7 +566,7 @@ class MultiDatabaseBackupService {
       final zipEncoder = ZipEncoder();
       final zipData = zipEncoder.encode(archive);
 
-      if (zipData == null) {
+      if (zipData.isEmpty) {
         return BackupResponse(
           result: BackupResult.error,
           message: 'Failed to create ZIP archive',

@@ -39,4 +39,8 @@ jobs:
 
       # 7️⃣ Build signed APK (keystore step optional)
       - name: Build signed APK
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release \
+          --dart-define=API_BASE_URL=${{ secrets.API_BASE_URL }} \
+          --dart-define=API_KEY=${{ secrets.API_KEY }} \
+          --dart-define=PIXABAY_KEY=${{ secrets.PIXABAY_KEY }}

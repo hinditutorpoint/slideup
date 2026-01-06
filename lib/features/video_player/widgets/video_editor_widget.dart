@@ -29,8 +29,6 @@ class _VideoEditorWidgetState extends ConsumerState<VideoEditorWidget> {
   // Trim state
   double _trimStartPercent = 0.0;
   double _trimEndPercent = 1.0;
-  bool _isDraggingStart = false;
-  bool _isDraggingEnd = false;
 
   @override
   void initState() {
@@ -284,22 +282,22 @@ class _VideoEditorWidgetState extends ConsumerState<VideoEditorWidget> {
       bottom: 0,
       child: GestureDetector(
         onHorizontalDragStart: (_) {
-          setState(() {
+          /* setState(() {
             if (isStart) {
               _isDraggingStart = true;
             } else {
               _isDraggingEnd = true;
             }
-          });
+          }); */
         },
         onHorizontalDragUpdate: (details) {
           _handleTrimDrag(details, isStart, width);
         },
         onHorizontalDragEnd: (_) {
-          setState(() {
+          /* setState(() {
             _isDraggingStart = false;
             _isDraggingEnd = false;
-          });
+          }); */
           _updateTrimValues();
         },
         child: Container(
@@ -614,6 +612,7 @@ class _ActionButton extends StatelessWidget {
     required this.icon,
     required this.label,
     this.onTap,
+    // ignore: unused_element_parameter
     this.isLoading = false,
   });
 

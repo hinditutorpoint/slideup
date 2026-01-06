@@ -34,6 +34,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   late AnimationController _selectionAnimationController;
 
   bool _showSearch = false;
+  // ignore: prefer_final_fields
   String _currentPath = '';
 
   @override
