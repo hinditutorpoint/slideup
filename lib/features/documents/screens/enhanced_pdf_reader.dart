@@ -70,20 +70,19 @@ class FlipWidget extends SingleChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) {
-    return _RenderFlip(flipX: flipX, flipY: flipY);
+    return RenderFlip(flipX: flipX, flipY: flipY);
   }
 
   @override
-  // ignore: library_private_types_in_public_api
-  void updateRenderObject(BuildContext context, _RenderFlip renderObject) {
+  void updateRenderObject(BuildContext context, RenderFlip renderObject) {
     renderObject
       ..flipX = flipX
       ..flipY = flipY;
   }
 }
 
-class _RenderFlip extends RenderProxyBox {
-  _RenderFlip({bool flipX = false, bool flipY = false})
+class RenderFlip extends RenderProxyBox {
+  RenderFlip({bool flipX = false, bool flipY = false})
     : _flipX = flipX,
       _flipY = flipY;
 
@@ -104,7 +103,6 @@ class _RenderFlip extends RenderProxyBox {
   }
 
   Matrix4 _paintFlipTransform() {
-    // Only call this after layout (hasSize == true).
     final w = size.width;
     final h = size.height;
 
@@ -118,7 +116,6 @@ class _RenderFlip extends RenderProxyBox {
   void paint(PaintingContext context, Offset offset) {
     if (child == null) return;
 
-    // If not flipped or not laid out yet, paint normally.
     if ((!_flipX && !_flipY) || !hasSize) {
       super.paint(context, offset);
       return;
@@ -134,7 +131,6 @@ class _RenderFlip extends RenderProxyBox {
 
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
-    // If not laid out yet, don't try to use size.
     if (!hasSize || (!_flipX && !_flipY)) {
       return super.hitTest(result, position: position);
     }
@@ -144,11 +140,6 @@ class _RenderFlip extends RenderProxyBox {
 
     return super.hitTest(result, position: Offset(dx, dy));
   }
-
-  // IMPORTANT:
-  // Do NOT override applyPaintTransform().
-  // SfPdfViewer calls localToGlobal() during layout; that walks applyPaintTransform().
-  // If applyPaintTransform reads `size`, you'll hit 'hasSize' assertions.
 }
 
 // ========== INVERT COLORS WIDGET (For Dark Mode) ==========
