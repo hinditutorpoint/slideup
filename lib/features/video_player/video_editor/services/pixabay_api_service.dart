@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:just_audio/just_audio.dart';
-
+import 'package:slideup/core/constants/api.dart';
 import '../models/video_edit_settings.dart';
 
 class PixabayApiService {
@@ -16,7 +16,6 @@ class PixabayApiService {
 
   // 🔑 Replace with your Pixabay API Key
   // Get free API key from: https://pixabay.com/api/docs/
-  static const String _apiKey = '7728716-2d9054381871f3f39700f8c1c';
   static const String _imageBaseUrl = 'https://pixabay.com/api/';
   //static const String _musicBaseUrl =
   //'https://pixabay.com/api/videos/'; // Note: Pixabay music is limited
@@ -44,12 +43,17 @@ class PixabayApiService {
     int perPage = 30,
   }) async {
     try {
+      if (!Api.isConfigured) {
+        throw StateError(
+          'API not configured. Provide API_BASE_URL and API_KEY via --dart-define.',
+        );
+      }
       final searchQuery = query.isNotEmpty
           ? query
           : _getCategoryQuery(category);
 
       final params = {
-        'key': _apiKey,
+        'key': Api.pixaBayKey,
         'q': searchQuery,
         'page': page.toString(),
         'per_page': perPage.toString(),

@@ -1767,6 +1767,11 @@ class TxtReaderScreenState extends ConsumerState<TxtReaderScreen>
 
   Future<String> _translateTextFallback(String text, String targetLang) async {
     final sourceLang = detectLanguage(text);
+    if (!Api.isConfigured) {
+      throw StateError(
+        'API not configured. Provide API_BASE_URL and API_KEY via --dart-define.',
+      );
+    }
     final Uri url = Uri.parse('${Api.baseUrl}/translation');
 
     final Map<String, dynamic> payload = {

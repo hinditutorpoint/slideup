@@ -852,6 +852,11 @@ class TranslationApiService {
     String targetLang,
     TranslationCancelToken cancelToken,
   ) async {
+    if (!Api.isConfigured) {
+      throw StateError(
+        'API not configured. Provide API_BASE_URL and API_KEY via --dart-define.',
+      );
+    }
     cancelToken.throwIfCancelled();
 
     final Uri url = Uri.parse('${Api.baseUrl}/translation');

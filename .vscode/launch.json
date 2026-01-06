@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Flutter Debug",
+            "request": "launch",
+            "type": "dart",
+            "args": [
+                "--dart-define=API_BASE_URL=https://smplus.co.in/api/v1",
+                "--dart-define=API_KEY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyIiwiaWF0IjoxNzY3MjEyMzMzLCJleHAiOjE3NzQ5ODgzMzMsIm5iZiI6MTc2NzIxMjMzMywianRpIjoiMk1QZ2R0bHI5OGZieGY5dSIsImlzcyI6Imh0dHBzOi8vc21wbHVzLmNvLmluL3VzZXJzL3Rva2Vucy8yIiwidGlkIjoiYTMxZmQ5NzUtNDU3ZC00YzY4LWE2OGItNGM1MTFiZTI0NTJhIiwidHlwZSI6ImRldl9hcGkiLCJkZXZfaWQiOjIsInYiOjF9.wLmD_XjQcFd9aYhuNcwI9YRtm0wZr1IWi6y9xf0g8KE",
+                "--dart-define=PIXABAY_KEY=7728716-2d9054381871f3f39700f8c1c"
+            ]
+        }
+    ]
+}
