@@ -21,6 +21,12 @@ jobs:
           channel: stable
           version: latest
 
+      - name: Clean previous builds
+        run: |
+          flutter clean
+          rm -rf build
+          rm -rf $HOME/.gradle/caches/
+
       # 3️⃣ Verify Flutter
       - name: Flutter doctor
         run: flutter doctor -v
@@ -40,7 +46,7 @@ jobs:
       # 7️⃣ Build signed APK (keystore step optional)
       - name: Build signed APK
         run: |
-          flutter build apk --release \
+          flutter build apk --release --no-shrink \
           --dart-define=API_BASE_URL=${{ secrets.API_BASE_URL }} \
           --dart-define=API_KEY=${{ secrets.API_KEY }} \
           --dart-define=PIXABAY_KEY=${{ secrets.PIXABAY_KEY }}
