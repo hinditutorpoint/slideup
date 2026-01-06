@@ -3,7 +3,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
@@ -37,8 +38,18 @@ class ThumbnailService {
     return path.join(_thumbnailDir.path, '$hash.$extension');
   }
 
-  /// Generate video thumbnail
-  Future<String?> generateVideoThumbnail(String videoPath) async {
+  // ============================================================
+  // VIDEO THUMBNAIL METHODS (Using FFmpeg)
+  // ============================================================
+
+  /// Generate video thumbnail using FFmpeg
+  Future<String?> generateVideoThumbnail(
+    String videoPath, {
+    int width = 256,
+    int height = 256,
+    int quality = 75,
+    double timePosition = 1.0, // seconds
+  }) async {
     await initialize();
 
     try {
@@ -58,29 +69,348 @@ class ThumbnailService {
         return thumbnailPath;
       }
 
-      debugPrint('🎬 Generating video thumbnail for: $videoPath');
+      debugPrint('🎬 Generating video thumbnail with FFmpeg for: $videoPath');
 
-      final thumbnail = await VideoThumbnail.thumbnailFile(
-        video: videoPath,
-        thumbnailPath: thumbnailPath,
-        imageFormat: ImageFormat.JPEG,
-        maxWidth: 256,
-        maxHeight: 256,
-        quality: 75,
-      );
+      // FFmpeg command to extract thumbnail
+      final ffmpegQuality = ((100 - quality) * 31 / 100).round().clamp(2, 31);
 
-      if (thumbnail != null) {
-        _thumbnailCache[videoPath] = thumbnail;
-        debugPrint('✅ Video thumbnail generated: $thumbnail');
-        return thumbnail;
+      final command =
+          '-ss $timePosition '
+          '-i "$videoPath" '
+          '-vframes 1 '
+          '-vf "scale=$width:$height:force_original_aspect_ratio=decrease,pad=$width:$height:(ow-iw)/2:(oh-ih)/2:white" '
+          '-q:v $ffmpegQuality '
+          '-y "$thumbnailPath"';
+
+      debugPrint('📹 FFmpeg command: ffmpeg $command');
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        if (await File(thumbnailPath).exists()) {
+          _thumbnailCache[videoPath] = thumbnailPath;
+          debugPrint('✅ Video thumbnail generated: $thumbnailPath');
+          return thumbnailPath;
+        }
+      } else {
+        final logs = await session.getAllLogsAsString();
+        debugPrint('❌ FFmpeg failed with code: $returnCode');
+        debugPrint('📋 FFmpeg logs: $logs');
+
+        // Try alternative approach - thumbnail from first frame
+        return await _generateThumbnailFallback(
+          videoPath,
+          thumbnailPath,
+          width,
+          height,
+        );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('❌ Error generating video thumbnail: $e');
+      debugPrint('📚 Stack trace: $stackTrace');
     }
     return null;
   }
 
-  /// Generate PDF thumbnail using Syncfusion v28.2.7
+  /// Fallback method if first approach fails
+  Future<String?> _generateThumbnailFallback(
+    String videoPath,
+    String thumbnailPath,
+    int width,
+    int height,
+  ) async {
+    try {
+      debugPrint('🔄 Trying fallback thumbnail generation...');
+
+      // Try without seeking (from beginning)
+      final command =
+          '-i "$videoPath" '
+          '-vframes 1 '
+          '-vf "scale=$width:$height:force_original_aspect_ratio=decrease" '
+          '-y "$thumbnailPath"';
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode) &&
+          await File(thumbnailPath).exists()) {
+        _thumbnailCache[videoPath] = thumbnailPath;
+        debugPrint('✅ Video thumbnail generated (fallback): $thumbnailPath');
+        return thumbnailPath;
+      }
+    } catch (e) {
+      debugPrint('❌ Fallback also failed: $e');
+    }
+    return null;
+  }
+
+  /// Generate video thumbnail at specific time
+  Future<String?> generateVideoThumbnailAtTime(
+    String videoPath, {
+    required Duration time,
+    int width = 256,
+    int height = 256,
+    int quality = 75,
+  }) async {
+    await initialize();
+
+    try {
+      final timeStr = _formatDuration(time);
+      final thumbnailPath = _generateThumbnailPath(
+        '${videoPath}_$timeStr',
+        'jpg',
+      );
+
+      // Check if thumbnail already exists
+      if (await File(thumbnailPath).exists()) {
+        return thumbnailPath;
+      }
+
+      debugPrint('🎬 Generating thumbnail at $timeStr for: $videoPath');
+
+      final ffmpegQuality = ((100 - quality) * 31 / 100).round().clamp(2, 31);
+
+      final command =
+          '-ss $timeStr '
+          '-i "$videoPath" '
+          '-vframes 1 '
+          '-vf "scale=$width:$height:force_original_aspect_ratio=decrease" '
+          '-q:v $ffmpegQuality '
+          '-y "$thumbnailPath"';
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode) &&
+          await File(thumbnailPath).exists()) {
+        debugPrint('✅ Thumbnail at $timeStr generated: $thumbnailPath');
+        return thumbnailPath;
+      }
+    } catch (e) {
+      debugPrint('❌ Error generating thumbnail at time: $e');
+    }
+    return null;
+  }
+
+  /// Generate multiple thumbnails from video (for preview)
+  Future<List<String>> generateVideoThumbnailStrip(
+    String videoPath, {
+    int count = 10,
+    int width = 128,
+    int height = 72,
+  }) async {
+    await initialize();
+
+    final thumbnails = <String>[];
+
+    try {
+      // Get video duration first
+      final duration = await getVideoDuration(videoPath);
+      if (duration == null || duration.inSeconds <= 0) {
+        debugPrint('❌ Could not get video duration');
+        return thumbnails;
+      }
+
+      final interval = duration.inMilliseconds / (count + 1);
+
+      debugPrint(
+        '📹 Generating $count thumbnails for video (duration: ${duration.inSeconds}s)',
+      );
+
+      for (int i = 1; i <= count; i++) {
+        final time = Duration(milliseconds: (interval * i).round());
+        final thumbnail = await generateVideoThumbnailAtTime(
+          videoPath,
+          time: time,
+          width: width,
+          height: height,
+        );
+        if (thumbnail != null) {
+          thumbnails.add(thumbnail);
+        }
+      }
+
+      debugPrint('✅ Generated ${thumbnails.length}/$count thumbnails');
+    } catch (e) {
+      debugPrint('❌ Error generating thumbnail strip: $e');
+    }
+
+    return thumbnails;
+  }
+
+  /// Get video duration using FFmpeg
+  Future<Duration?> getVideoDuration(String videoPath) async {
+    try {
+      final command = '-i "$videoPath" -hide_banner';
+
+      final session = await FFmpegKit.execute(command);
+      final logs = await session.getAllLogsAsString();
+
+      // Parse duration from logs
+      final durationRegex = RegExp(
+        r'Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})',
+      );
+      final match = durationRegex.firstMatch(logs ?? '');
+
+      if (match != null) {
+        final hours = int.parse(match.group(1)!);
+        final minutes = int.parse(match.group(2)!);
+        final seconds = int.parse(match.group(3)!);
+        final centiseconds = int.parse(match.group(4)!);
+
+        return Duration(
+          hours: hours,
+          minutes: minutes,
+          seconds: seconds,
+          milliseconds: centiseconds * 10,
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error getting video duration: $e');
+    }
+    return null;
+  }
+
+  /// Get video info using FFmpeg
+  Future<Map<String, dynamic>?> getVideoInfo(String videoPath) async {
+    try {
+      final command = '-i "$videoPath" -hide_banner';
+
+      final session = await FFmpegKit.execute(command);
+      final logs = await session.getAllLogsAsString() ?? '';
+
+      final info = <String, dynamic>{};
+
+      // Parse duration
+      final durationMatch = RegExp(
+        r'Duration: (\d{2}:\d{2}:\d{2}\.\d{2})',
+      ).firstMatch(logs);
+      if (durationMatch != null) {
+        info['duration'] = durationMatch.group(1);
+      }
+
+      // Parse video stream info
+      final videoMatch = RegExp(
+        r'Stream #\d+:\d+.*Video: (\w+).*, (\d+)x(\d+)',
+      ).firstMatch(logs);
+      if (videoMatch != null) {
+        info['codec'] = videoMatch.group(1);
+        info['width'] = int.tryParse(videoMatch.group(2) ?? '');
+        info['height'] = int.tryParse(videoMatch.group(3) ?? '');
+      }
+
+      // Parse fps
+      final fpsMatch = RegExp(r'(\d+(?:\.\d+)?)\s*fps').firstMatch(logs);
+      if (fpsMatch != null) {
+        info['fps'] = double.tryParse(fpsMatch.group(1) ?? '');
+      }
+
+      // Parse bitrate
+      final bitrateMatch = RegExp(r'bitrate:\s*(\d+)\s*kb/s').firstMatch(logs);
+      if (bitrateMatch != null) {
+        info['bitrate'] = int.tryParse(bitrateMatch.group(1) ?? '');
+      }
+
+      // Parse audio info
+      final audioMatch = RegExp(
+        r'Stream #\d+:\d+.*Audio: (\w+)',
+      ).firstMatch(logs);
+      if (audioMatch != null) {
+        info['audioCodec'] = audioMatch.group(1);
+      }
+
+      return info;
+    } catch (e) {
+      debugPrint('❌ Error getting video info: $e');
+      return null;
+    }
+  }
+
+  /// Generate animated GIF from video
+  Future<String?> generateVideoGif(
+    String videoPath, {
+    Duration startTime = Duration.zero,
+    Duration duration = const Duration(seconds: 3),
+    int width = 320,
+    int fps = 10,
+  }) async {
+    await initialize();
+
+    try {
+      final gifPath = _generateThumbnailPath(
+        '${videoPath}_gif_${startTime.inSeconds}',
+        'gif',
+      );
+
+      if (await File(gifPath).exists()) {
+        return gifPath;
+      }
+
+      debugPrint('🎞️ Generating GIF from video...');
+
+      final startStr = _formatDuration(startTime);
+      final durationStr = duration.inSeconds.toString();
+
+      // Generate palette first for better quality
+      final palettePath = path.join(_thumbnailDir.path, 'palette.png');
+
+      final paletteCommand =
+          '-ss $startStr '
+          '-t $durationStr '
+          '-i "$videoPath" '
+          '-vf "fps=$fps,scale=$width:-1:flags=lanczos,palettegen" '
+          '-y "$palettePath"';
+
+      var session = await FFmpegKit.execute(paletteCommand);
+      var returnCode = await session.getReturnCode();
+
+      if (!ReturnCode.isSuccess(returnCode)) {
+        debugPrint('❌ Failed to generate palette');
+        return null;
+      }
+
+      // Generate GIF using palette
+      final gifCommand =
+          '-ss $startStr '
+          '-t $durationStr '
+          '-i "$videoPath" '
+          '-i "$palettePath" '
+          '-lavfi "fps=$fps,scale=$width:-1:flags=lanczos[x];[x][1:v]paletteuse" '
+          '-y "$gifPath"';
+
+      session = await FFmpegKit.execute(gifCommand);
+      returnCode = await session.getReturnCode();
+
+      // Clean up palette
+      try {
+        await File(palettePath).delete();
+      } catch (_) {}
+
+      if (ReturnCode.isSuccess(returnCode) && await File(gifPath).exists()) {
+        debugPrint('✅ GIF generated: $gifPath');
+        return gifPath;
+      }
+    } catch (e) {
+      debugPrint('❌ Error generating GIF: $e');
+    }
+    return null;
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    final milliseconds = (duration.inMilliseconds.remainder(1000) / 10).round();
+    return '$hours:$minutes:$seconds.${twoDigits(milliseconds)}';
+  }
+
+  // ============================================================
+  // PDF THUMBNAIL METHODS
+  // ============================================================
+
+  /// Generate PDF thumbnail using Syncfusion
   Future<String?> generatePdfThumbnail(String pdfPath) async {
     await initialize();
 
@@ -360,77 +690,6 @@ class ThumbnailService {
     return thumbnails;
   }
 
-  /// Generate image thumbnail (resize if needed)
-  Future<String?> generateImageThumbnail(String imagePath) async {
-    await initialize();
-
-    try {
-      final thumbnailPath = _generateThumbnailPath(imagePath, 'jpg');
-
-      // Check cache first
-      if (_thumbnailCache.containsKey(imagePath)) {
-        final cachedPath = _thumbnailCache[imagePath]!;
-        if (await File(cachedPath).exists()) {
-          return cachedPath;
-        }
-      }
-
-      // Check if thumbnail already exists
-      if (await File(thumbnailPath).exists()) {
-        _thumbnailCache[imagePath] = thumbnailPath;
-        return thumbnailPath;
-      }
-
-      // For now, return original path
-      // In production, you might want to create actual resized thumbnails
-      _thumbnailCache[imagePath] = imagePath;
-      return imagePath;
-    } catch (e) {
-      debugPrint('❌ Error processing image thumbnail: $e');
-      return null;
-    }
-  }
-
-  /// Get thumbnail for any supported file type
-  Future<String?> getThumbnail(String filePath) async {
-    final extension = path.extension(filePath).toLowerCase();
-
-    // Video extensions
-    if ([
-      '.mp4',
-      '.mkv',
-      '.avi',
-      '.mov',
-      '.wmv',
-      '.flv',
-      '.webm',
-      '.m4v',
-      '.3gp',
-      '.ts',
-    ].contains(extension)) {
-      return await generateVideoThumbnail(filePath);
-    }
-
-    // PDF extension
-    if (extension == '.pdf') {
-      return await generatePdfThumbnail(filePath);
-    }
-
-    // Image extensions
-    if ([
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.gif',
-      '.bmp',
-      '.webp',
-    ].contains(extension)) {
-      return await generateImageThumbnail(filePath);
-    }
-
-    return null;
-  }
-
   /// Check if PDF is password protected
   Future<bool> isPdfPasswordProtected(String pdfPath) async {
     try {
@@ -502,7 +761,7 @@ class ThumbnailService {
       final imageBytes = await _renderPdfPageToImage(
         page,
         pageIndex + 1,
-        Size(256, 256),
+        Size(width, height),
       );
 
       // Save thumbnail
@@ -522,6 +781,107 @@ class ThumbnailService {
     } catch (e) {
       debugPrint('❌ Error generating protected PDF thumbnail: $e');
     }
+    return null;
+  }
+
+  // ============================================================
+  // IMAGE THUMBNAIL METHODS
+  // ============================================================
+
+  /// Generate image thumbnail using FFmpeg (resize)
+  Future<String?> generateImageThumbnail(
+    String imagePath, {
+    int width = 256,
+    int height = 256,
+  }) async {
+    await initialize();
+
+    try {
+      final thumbnailPath = _generateThumbnailPath(imagePath, 'jpg');
+
+      // Check cache first
+      if (_thumbnailCache.containsKey(imagePath)) {
+        final cachedPath = _thumbnailCache[imagePath]!;
+        if (await File(cachedPath).exists()) {
+          return cachedPath;
+        }
+      }
+
+      // Check if thumbnail already exists
+      if (await File(thumbnailPath).exists()) {
+        _thumbnailCache[imagePath] = thumbnailPath;
+        return thumbnailPath;
+      }
+
+      debugPrint('🖼️ Generating image thumbnail for: $imagePath');
+
+      // Use FFmpeg to resize image
+      final command =
+          '-i "$imagePath" '
+          '-vf "scale=$width:$height:force_original_aspect_ratio=decrease" '
+          '-q:v 2 '
+          '-y "$thumbnailPath"';
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode) &&
+          await File(thumbnailPath).exists()) {
+        _thumbnailCache[imagePath] = thumbnailPath;
+        debugPrint('✅ Image thumbnail generated: $thumbnailPath');
+        return thumbnailPath;
+      }
+
+      // Fallback to original if FFmpeg fails
+      _thumbnailCache[imagePath] = imagePath;
+      return imagePath;
+    } catch (e) {
+      debugPrint('❌ Error generating image thumbnail: $e');
+      return imagePath;
+    }
+  }
+
+  // ============================================================
+  // GENERAL METHODS
+  // ============================================================
+
+  /// Get thumbnail for any supported file type
+  Future<String?> getThumbnail(String filePath) async {
+    final extension = path.extension(filePath).toLowerCase();
+
+    // Video extensions
+    if ([
+      '.mp4',
+      '.mkv',
+      '.avi',
+      '.mov',
+      '.wmv',
+      '.flv',
+      '.webm',
+      '.m4v',
+      '.3gp',
+      '.ts',
+    ].contains(extension)) {
+      return await generateVideoThumbnail(filePath);
+    }
+
+    // PDF extension
+    if (extension == '.pdf') {
+      return await generatePdfThumbnail(filePath);
+    }
+
+    // Image extensions
+    if ([
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.bmp',
+      '.webp',
+    ].contains(extension)) {
+      return await generateImageThumbnail(filePath);
+    }
+
     return null;
   }
 

@@ -5,9 +5,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:mime/mime.dart';
 import 'package:uuid/uuid.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/media_file.dart';
+import 'thumbnail_service.dart';
 
 class FileScannerService {
   static final FileScannerService instance = FileScannerService._init();
@@ -414,13 +414,8 @@ class FileScannerService {
 
   Future<String?> _generateVideoThumbnail(String videoPath) async {
     try {
-      final thumbnailPath = await VideoThumbnail.thumbnailFile(
-        video: videoPath,
-        thumbnailPath: (await getTemporaryDirectory()).path,
-        imageFormat: ImageFormat.PNG,
-        maxWidth: 256,
-        quality: 75,
-      );
+      final thumbnailPath = await ThumbnailService.instance
+          .generateVideoThumbnail(videoPath);
       return thumbnailPath;
     } catch (e) {
       debugPrint('Error generating thumbnail: $e');

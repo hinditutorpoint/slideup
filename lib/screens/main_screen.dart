@@ -1218,6 +1218,8 @@ class _MainScreenState extends ConsumerState<MainScreen>
       builder: (_) => const PlayUrlDialog(),
     );
 
+    debugPrint('Result: $result');
+
     if (result != null && mounted) {
       final playlist = [result];
 

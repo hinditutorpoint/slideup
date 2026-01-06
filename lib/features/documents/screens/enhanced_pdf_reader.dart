@@ -327,7 +327,6 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
 
     // Lazy load bytes once
     _thumbDocBytes ??= await _pdfFile!.readAsBytes();
-
     // Open renderer once for this document
     await _sfThumbs.open(bytes: _thumbDocBytes!, documentId: _docId);
 

@@ -3,6 +3,9 @@ import '../models/media_file.dart';
 import '../models/url_history.dart';
 import '../services/database_service.dart';
 
+//import '../features/video_player/video_player_launcher.dart';
+//import '../helpers/audio_playback_helper.dart';
+
 class PlayUrlDialog extends StatefulWidget {
   const PlayUrlDialog({super.key});
 
@@ -155,6 +158,20 @@ class _PlayUrlDialogState extends State<PlayUrlDialog>
 
       if (!mounted) return;
       Navigator.pop(context, mediaFile);
+      /* if (mediaType == MediaType.video) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VideoPlayerLauncher.screen(
+              file: mediaFile,
+              files: [],
+              index: 0,
+            ),
+          ),
+        );
+      } else if (mediaType == MediaType.audio) {
+        AudioPlaybackHelper.playAudio(ref);
+      } */
     } catch (e) {
       setState(() => _loading = false);
       _showError('Error: $e');
