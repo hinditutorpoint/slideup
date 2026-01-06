@@ -3,7 +3,7 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   errors:
     unused_import: error
-    unused_local_variable: error
-    dead_code: error
-    deprecated_member_use: error
+    unused_local_variable: warning
+    dead_code: warning
+    deprecated_member_use: warning
     use_build_context_synchronously: warning

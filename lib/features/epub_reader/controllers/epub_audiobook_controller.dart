@@ -362,7 +362,7 @@ class EpubAudiobookController {
   int _currentChapterIndex = 0;
 
   Completer<bool>? _playbackCompleter;
-  bool _isPlaybackActive = false;
+  //bool _isPlaybackActive = false;
 
   final Map<int, ChapterStatus> _chapterStatuses = {};
   final Set<int> _readyChapters = {};
@@ -660,38 +660,35 @@ class EpubAudiobookController {
 
       _audioHandler = await AudioService.init(
         builder: () => AudiobookAudioHandler(
+          // ✅ These callbacks control the ACTUAL player via TtsController
           onPlay: () async {
-            if (!_pauseRequested) return;
-            resume();
+            debugPrint('[AudioService] → Play');
+            resume(); // This calls TtsController.play()
           },
           onPause: () async {
-            if (_pauseRequested) return;
-            pause();
+            debugPrint('[AudioService] → Pause');
+            pause(); // This calls TtsController.pause()
           },
           onStop: () async {
-            final ctx = _contextRef?.target;
-            if (ctx != null && ctx.mounted) {
-              await stop(ctx);
-            } else {
-              forceStop();
-            }
+            debugPrint('[AudioService] → Stop');
+            await stop();
           },
           onSkipToNext: () async {
-            final ctx = _contextRef?.target;
-            if (ctx != null && ctx.mounted) {
-              await nextChapter(ctx);
-            }
+            debugPrint('[AudioService] → Next');
+            await _handleSkipToNext();
           },
           onSkipToPrevious: () async {
-            final ctx = _contextRef?.target;
-            if (ctx != null && ctx.mounted) {
-              await previousChapter(ctx);
-            }
+            debugPrint('[AudioService] → Previous');
+            await _handleSkipToPrevious();
+          },
+          onSeek: (position) async {
+            debugPrint('[AudioService] → Seek: $position');
+            await TtsController.instance.seek(position);
           },
         ),
         config: const AudioServiceConfig(
           androidNotificationChannelId: 'com.slideup.mediaplayer',
-          androidNotificationChannelName: 'Media Player',
+          androidNotificationChannelName: 'Audiobook Player',
           androidShowNotificationBadge: true,
           androidNotificationIcon: 'drawable/ic_notification',
           androidStopForegroundOnPause: false,
@@ -699,13 +696,75 @@ class EpubAudiobookController {
       );
 
       _isAudioServiceInitialized = true;
-      TtsController.instance.registerAudioHandler(_audioHandler!);
-      // Update initial media info
-      await _updateMediaInfo();
 
+      // ✅ Register handler with TtsController so it syncs state
+      TtsController.instance.registerAudioHandler(_audioHandler!);
+
+      await _updateMediaInfo();
       debugPrint('[EpubAudiobook] ✅ Audio service initialized');
     } catch (e, stack) {
-      debugPrint('[EpubAudiobook] Audio service init error: $e\n$stack');
+      debugPrint('[EpubAudiobook] Audio service error: $e\n$stack');
+      _isAudioServiceInitialized = false;
+    }
+  }
+
+  Future<void> _handleSkipToNext() async {
+    try {
+      debugPrint('[AudioService] Skip to next');
+      _skipToNextRequested = true;
+      _pauseRequested = false;
+      _completePlaybackSafe(false);
+
+      TtsController.instance.forceStop();
+
+      if (_currentChapterIndex < book.chapterCount - 1) {
+        _currentChapterIndex++;
+        _safeChapterChanged(_currentChapterIndex);
+
+        _updateStatus(
+          _status.copyWith(
+            currentChapter: _currentChapterIndex,
+            currentChapterTitle: _getChapterTitle(_currentChapterIndex),
+            playbackProgress: 0.0,
+            state: AudiobookState.preparing,
+          ),
+          immediate: true,
+        );
+
+        await _updateMediaInfo();
+      }
+    } catch (e) {
+      debugPrint('[AudioService] Skip next error: $e');
+    }
+  }
+
+  Future<void> _handleSkipToPrevious() async {
+    try {
+      debugPrint('[AudioService] Skip to previous');
+      _skipToNextRequested = true;
+      _pauseRequested = false;
+      _completePlaybackSafe(false);
+
+      TtsController.instance.forceStop();
+
+      if (_currentChapterIndex > 0) {
+        _currentChapterIndex--;
+        _safeChapterChanged(_currentChapterIndex);
+
+        _updateStatus(
+          _status.copyWith(
+            currentChapter: _currentChapterIndex,
+            currentChapterTitle: _getChapterTitle(_currentChapterIndex),
+            playbackProgress: 0.0,
+            state: AudiobookState.preparing,
+          ),
+          immediate: true,
+        );
+
+        await _updateMediaInfo();
+      }
+    } catch (e) {
+      debugPrint('[AudioService] Skip previous error: $e');
     }
   }
 
@@ -713,56 +772,41 @@ class EpubAudiobookController {
   Future<void> _updateMediaInfo() async {
     if (_audioHandler == null) return;
 
-    try {
-      final chapterTitle =
-          _getChapterTitle(_currentChapterIndex) ??
-          'Chapter ${_currentChapterIndex + 1}';
+    final title =
+        _getChapterTitle(_currentChapterIndex) ??
+        'Chapter ${_currentChapterIndex + 1}';
 
-      await _audioHandler!.updateMediaInfo(
-        title: chapterTitle,
-        album: book.title,
-        artist: book.author,
-        // artUri: Uri.parse('asset:///assets/book_cover.png'), // Optional
-      );
-    } catch (e) {
-      debugPrint('[EpubAudiobook] Update media info error: $e');
-    }
+    await _audioHandler!.updateMediaInfo(
+      title: title,
+      album: book.title,
+      artist: book.author,
+    );
   }
 
-  Future<void> stop(BuildContext context) async {
+  Future<void> stop([BuildContext? context]) async {
     try {
-      debugPrint('[EpubAudiobook] Stop requested');
       _stopRequested = true;
       _pauseRequested = false;
-      _isPlaybackActive = false;
+      //_isPlaybackActive = false;
 
       _completePlaybackSafe(false);
       _cancelSleepTimer();
 
-      if (context.mounted) {
-        await TtsController.instance.stop(context);
-      } else {
-        TtsController.instance.forceStop();
-      }
+      TtsController.instance.forceStop(); // ✅ Stops actual player
 
-      // ✅ STOP AUDIO SERVICE
       if (_audioHandler != null) {
-        await _audioHandler!.stop();
+        _audioHandler!.setIdle();
+        await _audioHandler!.stop(); // ✅ Removes notification
       }
 
       _stopBackgroundGeneration();
 
       _updateStatus(
-        _status.copyWith(
-          state: AudiobookState.idle,
-          playbackProgress: 0.0,
-          currentChapterStatus: null,
-          nextChapterStatus: null,
-        ),
+        _status.copyWith(state: AudiobookState.idle, playbackProgress: 0.0),
         immediate: true,
       );
     } catch (e) {
-      debugPrint('[EpubAudiobook] Stop error: $e');
+      debugPrint('[EpubAudiobook] Next error: $e');
     }
   }
 
@@ -770,7 +814,7 @@ class EpubAudiobookController {
     try {
       _stopRequested = true;
       _pauseRequested = false;
-      _isPlaybackActive = false;
+      //_isPlaybackActive = false;
       _completePlaybackSafe(false);
       _cancelSleepTimer();
       TtsController.instance.forceStop();
@@ -959,7 +1003,7 @@ class EpubAudiobookController {
   // MAIN READING LOOP
   // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _readLoop(BuildContext context) async {
+  Future<void> _readLoop(BuildContext? context) async {
     debugPrint('[EpubAudiobook] Read loop started');
 
     int consecutiveFailures = 0;
@@ -1024,15 +1068,23 @@ class EpubAudiobookController {
         if (title != null && title.trim().isNotEmpty) {
           text = "$title.\n\n$text";
         }
-
-        // Generate and Play
-        if (!context.mounted) return;
-        final success = await _generateAndPlayChapter(
-          text: text,
-          language: lang,
-          context: context,
-          chapterIndex: chapterToPlay,
-        );
+        bool success = false;
+        // ✅ Get context or use cached reference
+        if (!context!.mounted) {
+          success = await _generateAndPlayChapter(
+            text: text,
+            language: lang,
+            context: _contextRef?.target,
+            chapterIndex: chapterToPlay,
+          );
+        } else {
+          success = await _generateAndPlayChapter(
+            text: text,
+            language: lang,
+            context: context,
+            chapterIndex: chapterToPlay,
+          );
+        }
 
         if (_stopRequested || _isDisposed) break;
 
@@ -1040,7 +1092,6 @@ class EpubAudiobookController {
           consecutiveFailures = 0;
           _skipToNextRequested = false;
 
-          // ✅ UPDATE MEDIA INFO FOR NEXT CHAPTER
           await _updateMediaInfo();
 
           if (_settings.autoAdvance) {
@@ -1104,19 +1155,19 @@ class EpubAudiobookController {
 
     debugPrint('[EpubAudiobook] Read loop ended');
     _stopRequested = false;
-    _isPlaybackActive = false;
+    //_isPlaybackActive = false;
   }
 
   Future<bool> _generateAndPlayChapter({
     required String text,
     required String? language,
-    required BuildContext context,
+    required BuildContext? context,
     required int chapterIndex,
   }) async {
     if (_isDisposed || _stopRequested || text.isEmpty) return false;
 
     _playbackCompleter = Completer<bool>();
-    _isPlaybackActive = true;
+    //_isPlaybackActive = true;
 
     try {
       debugPrint('[EpubAudiobook] ===== CHAPTER $chapterIndex: START =====');
@@ -1295,14 +1346,17 @@ class EpubAudiobookController {
         immediate: true,
       );
 
-      final ctx = context.mounted ? context : _contextRef?.target;
-      if (ctx == null || !ctx.mounted) {
-        _completePlaybackSafe(false);
-        return false;
-      }
+      final playContext = context ?? _contextRef?.target;
 
-      // Play and WAIT
-      await _playAudioEntry(entry, ctx);
+      if (playContext == null || !playContext.mounted) {
+        debugPrint(
+          '[EpubAudiobook] No valid context, attempting background playback',
+        );
+        // Try to play without UI context (background mode)
+        await _playAudioEntryBackground(entry);
+      } else {
+        await _playAudioEntry(entry, playContext);
+      }
 
       debugPrint(
         '[EpubAudiobook] Chapter $chapterIndex: Waiting for playback completion...',
@@ -1325,7 +1379,62 @@ class EpubAudiobookController {
       _completePlaybackSafe(false);
       return false;
     } finally {
-      _isPlaybackActive = false;
+      //_isPlaybackActive = false;
+    }
+  }
+
+  // ✅ New method for background playback
+  Future<void> _playAudioEntryBackground(dynamic entry) async {
+    try {
+      if (entry.filePath == null) {
+        _completePlaybackSafe(false);
+        return;
+      }
+
+      // ✅ Always use background-safe method
+      final success = await TtsController.instance.playCachedEntryBackground(
+        entry: entry,
+        showUi: false,
+        onProgress: (progress) {
+          if (!_isDisposed && !_stopRequested) {
+            _updateStatus(_status.copyWith(playbackProgress: progress));
+          }
+        },
+        onStateChanged: (state) {
+          if (_isDisposed || _stopRequested) return;
+
+          switch (state) {
+            case TtsPlaybackState.playing:
+              _updateStatus(_status.copyWith(state: AudiobookState.playing));
+              break;
+            case TtsPlaybackState.paused:
+              if (_pauseRequested) {
+                _updateStatus(_status.copyWith(state: AudiobookState.paused));
+              }
+              break;
+            case TtsPlaybackState.loading:
+            case TtsPlaybackState.generating:
+              _updateStatus(_status.copyWith(state: AudiobookState.generating));
+              break;
+            default:
+              break;
+          }
+        },
+        onCompleted: () {
+          _completePlaybackSafe(true);
+        },
+        onError: (err) {
+          debugPrint('[EpubAudiobook] Playback error: $err');
+          _completePlaybackSafe(false);
+        },
+      );
+
+      if (!success) {
+        _completePlaybackSafe(false);
+      }
+    } catch (e) {
+      debugPrint('[EpubAudiobook] _playAudioEntry error: $e');
+      _completePlaybackSafe(false);
     }
   }
 
@@ -1468,15 +1577,17 @@ class EpubAudiobookController {
     }
   }
 
-  Future<void> previousChapter(BuildContext context) async {
+  Future<void> previousChapter(BuildContext? context) async {
     try {
       if (_currentChapterIndex > 0) {
         _skipToNextRequested = true;
         _pauseRequested = false;
         _completePlaybackSafe(false);
 
-        if (context.mounted) {
+        if (context != null && context.mounted) {
           await TtsController.instance.stop(context);
+        } else {
+          TtsController.instance.forceStop();
         }
 
         _currentChapterIndex--;
@@ -1491,21 +1602,25 @@ class EpubAudiobookController {
           ),
           immediate: true,
         );
+
+        await _updateMediaInfo();
       }
     } catch (e) {
       debugPrint('[EpubAudiobook] Previous error: $e');
     }
   }
 
-  Future<void> jumpToChapter(int chapterIndex, BuildContext context) async {
+  Future<void> jumpToChapter(int chapterIndex, BuildContext? context) async {
     try {
       if (chapterIndex >= 0 && chapterIndex < book.chapterCount) {
         _skipToNextRequested = true;
         _pauseRequested = false;
         _completePlaybackSafe(false);
 
-        if (context.mounted) {
+        if (context != null && context.mounted) {
           await TtsController.instance.stop(context);
+        } else {
+          TtsController.instance.forceStop();
         }
 
         _currentChapterIndex = chapterIndex;
@@ -1520,6 +1635,8 @@ class EpubAudiobookController {
           ),
           immediate: true,
         );
+
+        await _updateMediaInfo();
       }
     } catch (e) {
       debugPrint('[EpubAudiobook] Jump error: $e');
@@ -1720,6 +1837,7 @@ class EpubAudiobookController {
     _cancelSleepTimer();
 
     // ✅ DISPOSE AUDIO HANDLER
+    TtsController.instance.unregisterAudioHandler();
     _audioHandler?.dispose();
     _audioHandler = null;
     _isAudioServiceInitialized = false;

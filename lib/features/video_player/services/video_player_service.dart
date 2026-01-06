@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/video_player_state.dart';
 import '../models/player_settings.dart';
@@ -32,6 +36,8 @@ class VideoPlayerService {
 
   Timer? _hideControlsTimer;
   Timer? _positionSaveTimer;
+  Timer? _thumbnailDebounceTimer;
+  Timer? _seekExecutionTimer;
 
   bool _isDisposed = false;
   bool _isDisposing = false;
@@ -309,6 +315,234 @@ class VideoPlayerService {
     }
   }
 
+  void updateState(VideoPlayerState newState) {
+    _updateState(newState);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ THUMBNAIL GENERATION (FFmpeg)
+  // ═══════════════════════════════════════════════════════
+
+  Future<Uint8List?> generateThumbnailAtPosition(Duration position) async {
+    if (_isDisposed) return null;
+
+    try {
+      final currentUrl = _getUrlForIndex(_state.currentIndex);
+      if (currentUrl.isEmpty) {
+        debugPrint('⚠️ No current URL for thumbnail');
+        return null;
+      }
+
+      if (position < Duration.zero || position > _state.duration) {
+        debugPrint('⚠️ Invalid thumbnail position: $position');
+        return null;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final outputPath = '${tempDir.path}/thumb_$timestamp.jpg';
+
+      final timeInSeconds = position.inSeconds;
+      final command =
+          '-ss $timeInSeconds -i "$currentUrl" -vframes 1 -vf scale=320:-1 -q:v 2 "$outputPath" -y';
+
+      debugPrint('🎬 Generating thumbnail at ${position.inSeconds}s');
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        final file = File(outputPath);
+        if (await file.exists()) {
+          final bytes = await file.readAsBytes();
+
+          Future.delayed(const Duration(seconds: 2), () async {
+            try {
+              if (await file.exists()) {
+                await file.delete();
+              }
+            } catch (e) {
+              debugPrint('⚠️ Thumbnail cleanup error: $e');
+            }
+          });
+
+          debugPrint('✅ Thumbnail generated successfully');
+          return bytes;
+        }
+      } else {
+        final output = await session.getOutput();
+        debugPrint('❌ FFmpeg failed: $returnCode');
+        if (output != null && output.isNotEmpty) {
+          debugPrint('FFmpeg output: $output');
+        }
+      }
+
+      return null;
+    } catch (e, stackTrace) {
+      debugPrint('❌ Thumbnail generation error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  void _debouncedThumbnailGeneration(Duration position) {
+    _thumbnailDebounceTimer?.cancel();
+    _thumbnailDebounceTimer = Timer(
+      const Duration(milliseconds: 200),
+      () async {
+        if (_isDisposed || !_state.isSeekingHorizontally) return;
+
+        final thumbnail = await generateThumbnailAtPosition(position);
+
+        if (!_isDisposed && _state.isSeekingHorizontally) {
+          _updateState(_state.copyWith(seekPreviewThumbnail: thumbnail));
+        }
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ YOUTUBE-STYLE INCREMENTAL SEEKING
+  // ═══════════════════════════════════════════════════════
+
+  void startHorizontalSeek() {
+    if (_isDisposed) return;
+
+    debugPrint('🎬 Starting horizontal seek');
+
+    _updateState(
+      _state.copyWith(
+        isSeekingHorizontally: true,
+        accumulatedSeekSeconds: 0,
+        showSeekPreview: true,
+        seekPreviewThumbnail: null,
+        seekPreviewPosition: _state.position,
+      ),
+    );
+  }
+
+  void updateHorizontalSeek(double delta) {
+    if (_isDisposed || !_state.isSeekingHorizontally) return;
+
+    try {
+      final seekIncrement = (delta / 10).round();
+
+      if (seekIncrement == 0) return;
+
+      final newAccumulated = _state.accumulatedSeekSeconds + seekIncrement;
+
+      final currentPos = _state.position;
+      final targetPos = currentPos + Duration(seconds: newAccumulated);
+      final clampedPos = Duration(
+        milliseconds: targetPos.inMilliseconds.clamp(
+          0,
+          _state.duration.inMilliseconds,
+        ),
+      );
+
+      _updateState(
+        _state.copyWith(
+          accumulatedSeekSeconds: newAccumulated,
+          seekPreviewPosition: clampedPos,
+          seekDirection: newAccumulated > 0
+              ? SeekDirection.forward
+              : SeekDirection.backward,
+          seekSeconds: newAccumulated.abs(),
+        ),
+      );
+
+      debugPrint(
+        '🎬 Seek accumulated: ${newAccumulated > 0 ? '+' : ''}${newAccumulated}s → ${clampedPos.inSeconds}s',
+      );
+
+      _debouncedThumbnailGeneration(clampedPos);
+    } catch (e) {
+      debugPrint('⚠️ Update horizontal seek error: $e');
+    }
+  }
+
+  Future<void> endHorizontalSeek() async {
+    if (_isDisposed || !_state.isSeekingHorizontally) return;
+
+    try {
+      final seekAmount = _state.accumulatedSeekSeconds;
+
+      debugPrint(
+        '🎬 Ending horizontal seek: ${seekAmount > 0 ? '+' : ''}${seekAmount}s',
+      );
+
+      if (seekAmount != 0) {
+        final targetPosition = _state.seekPreviewPosition;
+
+        _updateState(
+          _state.copyWith(
+            showSeekIndicator: true,
+            seekDirection: seekAmount > 0
+                ? SeekDirection.forward
+                : SeekDirection.backward,
+            seekSeconds: seekAmount.abs(),
+          ),
+        );
+
+        await seek(targetPosition!);
+
+        debugPrint(
+          '✅ Seeked ${seekAmount > 0 ? '+' : ''}${seekAmount}s to ${targetPosition.inSeconds}s',
+        );
+      }
+
+      _updateState(
+        _state.copyWith(
+          isSeekingHorizontally: false,
+          accumulatedSeekSeconds: 0,
+        ),
+      );
+
+      _hideSeekIndicatorsAfterDelay();
+    } catch (e) {
+      debugPrint('❌ End horizontal seek error: $e');
+
+      _updateState(
+        _state.copyWith(
+          isSeekingHorizontally: false,
+          accumulatedSeekSeconds: 0,
+          showSeekPreview: false,
+        ),
+      );
+    }
+  }
+
+  void hideSeekPreview() {
+    if (_isDisposed) return;
+
+    _thumbnailDebounceTimer?.cancel();
+    _seekExecutionTimer?.cancel();
+
+    _updateState(
+      _state.copyWith(
+        showSeekPreview: false,
+        seekPreviewThumbnail: null,
+        isSeekingHorizontally: false,
+        accumulatedSeekSeconds: 0,
+      ),
+    );
+  }
+
+  void _hideSeekIndicatorsAfterDelay() {
+    _seekExecutionTimer?.cancel();
+    _seekExecutionTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_isDisposed) return;
+
+      _updateState(
+        _state.copyWith(
+          showSeekIndicator: false,
+          showSeekPreview: false,
+          seekPreviewThumbnail: null,
+        ),
+      );
+    });
+  }
+
   // ═══════════════════════════════════════════════════════
   // ✅ MEDIA CONTROL
   // ═══════════════════════════════════════════════════════
@@ -469,13 +703,22 @@ class VideoPlayerService {
     debugPrint('🛑 Stopping player...');
 
     try {
-      // ✅ Stop the player
-      await _player!.stop();
+      // ✅ SAVE POSITION BEFORE STOPPING
+      if (_settings.rememberPosition && _currentFileId != null) {
+        try {
+          await SettingsStorageService.savePlaybackPosition(
+            _currentFileId!,
+            _state.position,
+          );
+          debugPrint('✅ Position saved: ${_state.position.inSeconds}s');
+        } catch (e) {
+          debugPrint('⚠️ Failed to save position: $e');
+        }
+      }
 
-      // ✅ Also pause to ensure no more frames
+      await _player!.stop();
       await _player!.pause();
 
-      // ✅ Update state
       _updateState(
         _state.copyWith(isPlaying: false, isLoading: false, isBuffering: false),
       );
@@ -510,26 +753,29 @@ class VideoPlayerService {
       final newPosition = _state.position + Duration(seconds: seconds);
       await seek(newPosition);
 
-      _updateState(
-        _state.copyWith(
-          seekDirection: seconds > 0
-              ? SeekDirection.forward
-              : SeekDirection.backward,
-          seekSeconds: seconds.abs(),
-          showSeekIndicator: true,
-        ),
-      );
+      // ✅ Only show indicator for double-tap seeks
+      if (!_state.isSeekingHorizontally) {
+        _updateState(
+          _state.copyWith(
+            seekDirection: seconds > 0
+                ? SeekDirection.forward
+                : SeekDirection.backward,
+            seekSeconds: seconds.abs(),
+            showSeekIndicator: true,
+          ),
+        );
 
-      Future.delayed(const Duration(milliseconds: 800), () {
-        if (!_isDisposed) {
-          _updateState(
-            _state.copyWith(
-              showSeekIndicator: false,
-              seekDirection: SeekDirection.none,
-            ),
-          );
-        }
-      });
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (!_isDisposed && !_state.isSeekingHorizontally) {
+            _updateState(
+              _state.copyWith(
+                showSeekIndicator: false,
+                seekDirection: SeekDirection.none,
+              ),
+            );
+          }
+        });
+      }
     } catch (e) {
       debugPrint('❌ seekRelative error: $e');
     }
@@ -700,6 +946,91 @@ class VideoPlayerService {
       _updateState(_state.copyWith(showSpeedIndicator: false));
     } catch (e) {
       debugPrint('❌ disable2xSpeed error: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ VIDEO FIT & FLIP
+  // ═══════════════════════════════════════════════════════
+
+  void setVideoFit(VideoFit fit) {
+    if (_isDisposed) return;
+
+    try {
+      _updateState(_state.copyWith(videoFit: fit));
+      debugPrint('✅ Video fit set to: $fit');
+    } catch (e) {
+      debugPrint('❌ setVideoFit error: $e');
+    }
+  }
+
+  void cycleVideoFit() {
+    if (_isDisposed) return;
+
+    try {
+      final current = _state.videoFit;
+      VideoFit next;
+
+      switch (current) {
+        case VideoFit.contain:
+          next = VideoFit.cover;
+          break;
+        case VideoFit.cover:
+          next = VideoFit.fill;
+          break;
+        case VideoFit.fill:
+          next = VideoFit.fitWidth;
+          break;
+        case VideoFit.fitWidth:
+          next = VideoFit.fitHeight;
+          break;
+        case VideoFit.fitHeight:
+          next = VideoFit.contain;
+          break;
+      }
+
+      setVideoFit(next);
+    } catch (e) {
+      debugPrint('❌ cycleVideoFit error: $e');
+    }
+  }
+
+  void toggleFlipHorizontal() {
+    if (_isDisposed) return;
+
+    try {
+      _updateState(
+        _state.copyWith(isFlippedHorizontally: !_state.isFlippedHorizontally),
+      );
+    } catch (e) {
+      debugPrint('❌ toggleFlipHorizontal error: $e');
+    }
+  }
+
+  void toggleFlipVertical() {
+    if (_isDisposed) return;
+
+    try {
+      _updateState(
+        _state.copyWith(isFlippedVertically: !_state.isFlippedVertically),
+      );
+    } catch (e) {
+      debugPrint('❌ toggleFlipVertical error: $e');
+    }
+  }
+
+  void resetFlip() {
+    if (_isDisposed) return;
+
+    try {
+      _updateState(
+        _state.copyWith(
+          isFlippedHorizontally: false,
+          isFlippedVertically: false,
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ resetFlip error: $e');
     }
   }
 
@@ -1123,6 +1454,10 @@ class VideoPlayerService {
       _hideControlsTimer = null;
       _positionSaveTimer?.cancel();
       _positionSaveTimer = null;
+      _thumbnailDebounceTimer?.cancel();
+      _thumbnailDebounceTimer = null;
+      _seekExecutionTimer?.cancel();
+      _seekExecutionTimer = null;
     } catch (e) {
       debugPrint('⚠️ Error cancelling timers: $e');
     }

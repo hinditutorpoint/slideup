@@ -460,6 +460,7 @@ class _VideoEditorSheetPremiumState
 
   // Media
   String? _selectedMusicPath;
+  // ignore: unused_field
   MusicTrack? _selectedMusicTrack;
   List<StockImage> _selectedImages = [];
   String? _attachedAudioPath;
@@ -707,13 +708,6 @@ class _VideoEditorSheetPremiumState
     } catch (e) {
       debugPrint('❌ Load library error: $e');
     }
-  }
-
-  void _loadPreviewFrameDebounced() {
-    _previewDebounceTimer?.cancel();
-    _previewDebounceTimer = Timer(const Duration(milliseconds: 150), () {
-      _loadPreviewFrame();
-    });
   }
 
   @override

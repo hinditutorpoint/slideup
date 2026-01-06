@@ -75,8 +75,7 @@ dependencies:
   flutter_displaymode: ^0.7.0
   screen_brightness: ^2.1.7
   volume_controller: ^3.4.1
-  wakelock_plus: ^1.4.0
-  floating: ^6.0.0 
+  wakelock_plus: ^1.4.0 
 
   #icons
   cupertino_icons: ^1.0.8
@@ -96,6 +95,7 @@ dependencies:
   sherpa_onnx: ^1.12.20
   audio_session: ^0.2.2
   syncfusion_pdfviewer_platform_interface: ^28.2.12
+  simple_pip_mode: ^1.1.0
 
 dev_dependencies:
   flutter_test:

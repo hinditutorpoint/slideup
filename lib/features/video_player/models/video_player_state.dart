@@ -19,6 +19,14 @@ enum SeekDirection { forward, backward, none }
 
 enum ControlsMode { mini, normal, expanded }
 
+enum VideoFit {
+  contain, // Default - fit inside
+  cover, // Fill and crop
+  fill, // Stretch to fill
+  fitWidth, // Fit width
+  fitHeight, // Fit height
+}
+
 @immutable
 class VideoPlayerState {
   final bool isInitialized;
@@ -46,7 +54,6 @@ class VideoPlayerState {
   final int currentIndex;
   final int playlistLength;
 
-  // ✅ ADD: Current media info
   final String currentTitle;
   final String currentUrl;
   final String? currentFileId;
@@ -68,7 +75,15 @@ class VideoPlayerState {
   final Duration? seekPreviewPosition;
   final Uint8List? seekPreviewThumbnail;
 
+  final bool showSeekPreview;
+  final int accumulatedSeekSeconds;
+  final bool isSeekingHorizontally;
+
   final bool isCompleted;
+
+  final VideoFit videoFit;
+  final bool isFlippedHorizontally;
+  final bool isFlippedVertically;
 
   const VideoPlayerState({
     this.isInitialized = false,
@@ -91,7 +106,6 @@ class VideoPlayerState {
     this.controlsMode = ControlsMode.normal,
     this.currentIndex = 0,
     this.playlistLength = 0,
-    // ✅ ADD defaults
     this.currentTitle = '',
     this.currentUrl = '',
     this.currentFileId,
@@ -109,7 +123,15 @@ class VideoPlayerState {
     this.showSpeedIndicator = false,
     this.seekPreviewPosition,
     this.seekPreviewThumbnail,
+
+    this.showSeekPreview = false,
+    this.accumulatedSeekSeconds = 0,
+    this.isSeekingHorizontally = false,
     this.isCompleted = false,
+
+    this.videoFit = VideoFit.contain,
+    this.isFlippedHorizontally = false,
+    this.isFlippedVertically = false,
   });
 
   VideoPlayerState copyWith({
@@ -134,7 +156,6 @@ class VideoPlayerState {
     ControlsMode? controlsMode,
     int? currentIndex,
     int? playlistLength,
-    // ✅ ADD parameters
     String? currentTitle,
     String? currentUrl,
     String? currentFileId,
@@ -157,7 +178,15 @@ class VideoPlayerState {
     Duration? seekPreviewPosition,
     Uint8List? seekPreviewThumbnail,
     bool clearSeekPreview = false,
+
+    bool? showSeekPreview,
+    int? accumulatedSeekSeconds,
+    bool? isSeekingHorizontally,
     bool? isCompleted,
+
+    VideoFit? videoFit,
+    bool? isFlippedHorizontally,
+    bool? isFlippedVertically,
   }) {
     return VideoPlayerState(
       isInitialized: isInitialized ?? this.isInitialized,
@@ -180,7 +209,6 @@ class VideoPlayerState {
       controlsMode: controlsMode ?? this.controlsMode,
       currentIndex: currentIndex ?? this.currentIndex,
       playlistLength: playlistLength ?? this.playlistLength,
-      // ✅ ADD to copyWith
       currentTitle: currentTitle ?? this.currentTitle,
       currentUrl: currentUrl ?? this.currentUrl,
       currentFileId: clearCurrentFileId
@@ -211,7 +239,18 @@ class VideoPlayerState {
       seekPreviewThumbnail: clearSeekPreview
           ? null
           : (seekPreviewThumbnail ?? this.seekPreviewThumbnail),
+
+      showSeekPreview: showSeekPreview ?? this.showSeekPreview,
+      accumulatedSeekSeconds:
+          accumulatedSeekSeconds ?? this.accumulatedSeekSeconds,
+      isSeekingHorizontally:
+          isSeekingHorizontally ?? this.isSeekingHorizontally,
       isCompleted: isCompleted ?? this.isCompleted,
+
+      videoFit: videoFit ?? this.videoFit,
+      isFlippedHorizontally:
+          isFlippedHorizontally ?? this.isFlippedHorizontally,
+      isFlippedVertically: isFlippedVertically ?? this.isFlippedVertically,
     );
   }
 
@@ -227,7 +266,6 @@ class VideoPlayerState {
       ? bufferedPosition.inMilliseconds / duration.inMilliseconds
       : 0.0;
 
-  // ✅ ADD: Helper for display title
   String get displayTitle =>
       currentTitle.isNotEmpty ? currentTitle : 'Video Player';
 

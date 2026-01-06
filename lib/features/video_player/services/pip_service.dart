@@ -1,127 +1,136 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:floating/floating.dart';
+import 'package:simple_pip_mode/simple_pip.dart';
+import 'package:simple_pip_mode/aspect_ratio.dart' as sar;
 
-enum PiPState { inactive, entering, active, exiting }
+enum PiPState {
+  inactive,
+  customActive, // Foreground (In-App)
+  nativeActive, // Background (System)
+}
+
+// ─── Custom PiP Models ──────────────────────────────────────
 
 class PiPPosition {
   final double x;
   final double y;
-
   const PiPPosition({required this.x, required this.y});
 
-  PiPPosition copyWith({double? x, double? y}) {
-    return PiPPosition(x: x ?? this.x, y: y ?? this.y);
-  }
+  PiPPosition copyWith({double? x, double? y}) =>
+      PiPPosition(x: x ?? this.x, y: y ?? this.y);
 }
 
 class PiPSize {
   final double width;
   final double height;
-
   const PiPSize({required this.width, required this.height});
 
-  static const mini = PiPSize(width: 150, height: 100);
-  static const small = PiPSize(width: 200, height: 130);
-  static const medium = PiPSize(width: 280, height: 180);
-  static const large = PiPSize(width: 360, height: 240);
+  static const mini = PiPSize(width: 150, height: 84); // ✅ Adjusted
+  static const small = PiPSize(width: 200, height: 112);
+  static const medium = PiPSize(width: 280, height: 158);
+  static const large = PiPSize(width: 360, height: 202);
 
-  PiPSize copyWith({double? width, double? height}) {
-    return PiPSize(width: width ?? this.width, height: height ?? this.height);
-  }
+  PiPSize copyWith({double? width, double? height}) =>
+      PiPSize(width: width ?? this.width, height: height ?? this.height);
 }
 
-class PiPService {
-  final Floating _floating = Floating();
+// ─── Service Implementation ─────────────────────────────────
 
+class PiPService {
+  static final PiPService _instance = PiPService._internal();
+  factory PiPService() => _instance;
+
+  late final SimplePip _simplePip;
   final _stateController = StreamController<PiPState>.broadcast();
   Stream<PiPState> get stateStream => _stateController.stream;
 
+  // Custom PiP State
   PiPState _state = PiPState.inactive;
-  PiPState get state => _state;
-
   PiPPosition _position = const PiPPosition(x: 20, y: 100);
-  PiPPosition get position => _position;
-
   PiPSize _size = PiPSize.small;
+
+  PiPService._internal() {
+    // ✅ Initialize SimplePip with Callbacks based on your source code
+    _simplePip = SimplePip(
+      onPipEntered: () {
+        debugPrint("📺 Native PiP Entered");
+        _updateState(PiPState.nativeActive);
+      },
+      onPipExited: () {
+        debugPrint("📺 Native PiP Exited");
+        // Only reset if we were in native mode (preserve custom pip)
+        if (_state == PiPState.nativeActive) {
+          _updateState(PiPState.inactive);
+        }
+      },
+    );
+  }
+
+  // Getters
+  PiPState get state => _state;
+  PiPPosition get position => _position;
   PiPSize get size => _size;
 
-  bool _isDragging = false;
-  bool _isResizing = false;
-
-  bool _isDisposed = false;
-
   // ═══════════════════════════════════════════════════════
-  // ✅ PiP AVAILABILITY
+  // ✅ NATIVE PiP (Matching your Source Code)
   // ═══════════════════════════════════════════════════════
 
-  Future<bool> isPiPAvailable() async {
+  Future<bool> isNativeApiAvailable() async {
     try {
-      return await _floating.isPipAvailable;
-    } catch (e) {
-      debugPrint('⚠️ PiP availability check failed: $e');
+      // Using the static getter from your code
+      return await SimplePip.isPipAvailable;
+    } catch (_) {
       return false;
     }
   }
 
-  Future<bool> isPiPActive() async {
+  /// ✅ AUTO-ENTER (Android 12+)
+  Future<void> enableAutoNativePiP({int aspectX = 16, int aspectY = 9}) async {
     try {
-      return await _floating.isPipAvailable;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ NATIVE PiP (Android)
-  // ═══════════════════════════════════════════════════════
-
-  Future<bool> enableNativePiP({
-    Rational aspectRatio = const Rational.landscape(),
-    Rectangle<int>? sourceRectHint,
-  }) async {
-    try {
-      _updateState(PiPState.entering);
-      final args = ImmediatePiP(
-        aspectRatio: aspectRatio,
-        sourceRectHint: sourceRectHint,
-      );
-      final status = await _floating.enable(args);
-
-      if (status == PiPStatus.enabled) {
-        _updateState(PiPState.active);
-        return true;
-      } else {
-        _updateState(PiPState.inactive);
-        return false;
+      if (await SimplePip.isPipAvailable) {
+        // Using setAutoPipMode with AspectRatio class
+        sar.AspectRatio aspectRatio = (aspectX, aspectY);
+        await _simplePip.setAutoPipMode(
+          aspectRatio: aspectRatio,
+          seamlessResize: false, // Defaulting to false for stability
+          autoEnter: true,
+        );
       }
     } catch (e) {
-      debugPrint('❌ Failed to enable native PiP: $e');
-      _updateState(PiPState.inactive);
-      return false;
+      debugPrint('❌ Auto-PiP Error: $e');
     }
   }
 
-  Future<void> disableNativePiP() async {
+  /// ✅ DISABLE AUTO-ENTER
+  Future<void> disableAutoNativePiP() async {
     try {
-      _updateState(PiPState.exiting);
-      // Native PiP exits when user taps expand
-      _updateState(PiPState.inactive);
+      // Passing autoEnter: false to disable it
+      await _simplePip.setAutoPipMode(autoEnter: false);
     } catch (e) {
-      debugPrint('⚠️ Error disabling native PiP: $e');
+      debugPrint('❌ Disable Auto-PiP Error: $e');
     }
   }
 
-  Stream<PiPStatus> get pipStatusStream =>
-      _floating.pipStatus as Stream<PiPStatus>;
+  /// ✅ MANUAL ENTER (Fallback)
+  Future<void> enterNativePipNow({int aspectX = 16, int aspectY = 9}) async {
+    try {
+      sar.AspectRatio aspectRatio = (aspectX, aspectY);
+      await _simplePip.enterPipMode(
+        aspectRatio: aspectRatio,
+        autoEnter: false, // Manual entry doesn't need autoEnter flag usually
+      );
+    } catch (e) {
+      debugPrint('❌ Manual Enter PiP Error: $e');
+    }
+  }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ CUSTOM PiP (In-App Floating Window)
+  // ✅ CUSTOM PiP (Foreground)
   // ═══════════════════════════════════════════════════════
 
   void enableCustomPiP() {
-    _updateState(PiPState.active);
+    disableAutoNativePiP(); // Prevent conflict
+    _updateState(PiPState.customActive);
   }
 
   void disableCustomPiP() {
@@ -130,21 +139,9 @@ class PiPService {
     _size = PiPSize.small;
   }
 
-  void toggleCustomPiP() {
-    if (_state == PiPState.active) {
-      disableCustomPiP();
-    } else {
-      enableCustomPiP();
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ POSITION & SIZE
-  // ═══════════════════════════════════════════════════════
-
-  void setPosition(PiPPosition newPosition) {
-    _position = newPosition;
-  }
+  // Position Logic
+  void setPosition(PiPPosition p) => _position = p;
+  void setSize(PiPSize s) => _size = s;
 
   void updatePosition(double dx, double dy, {required Size screenSize}) {
     final newX = (_position.x + dx).clamp(0.0, screenSize.width - _size.width);
@@ -156,100 +153,58 @@ class PiPService {
   }
 
   void snapToCorner(Size screenSize) {
+    // Simple corner snap logic
     final centerX = _position.x + _size.width / 2;
+    final targetX = centerX < screenSize.width / 2
+        ? 16.0
+        : screenSize.width - _size.width - 16.0;
+
     final centerY = _position.y + _size.height / 2;
-
-    final padding = 16.0;
-
-    double targetX;
     double targetY;
 
-    // Horizontal snap
-    if (centerX < screenSize.width / 2) {
-      targetX = padding;
-    } else {
-      targetX = screenSize.width - _size.width - padding;
-    }
-
-    // Vertical snap
     if (centerY < screenSize.height / 3) {
-      targetY = padding;
+      targetY = 16.0;
     } else if (centerY > screenSize.height * 2 / 3) {
-      targetY = screenSize.height - _size.height - padding;
+      targetY = screenSize.height - _size.height - 16.0;
     } else {
-      targetY = (screenSize.height - _size.height) / 2;
+      targetY = _position.y;
     }
 
     _position = PiPPosition(x: targetX, y: targetY);
   }
 
-  void setSize(PiPSize newSize) {
-    _size = newSize;
-  }
-
   void cycleSize() {
-    if (_size.width <= PiPSize.mini.width) {
-      _size = PiPSize.small;
-    } else if (_size.width <= PiPSize.small.width) {
+    if (_size.width < 250) {
       _size = PiPSize.medium;
-    } else if (_size.width <= PiPSize.medium.width) {
-      _size = PiPSize.large;
     } else {
-      _size = PiPSize.mini;
+      _size = PiPSize.small;
     }
   }
 
   void resizeByDelta(double delta) {
     final scale = 1 + delta / 100;
-    final newWidth = (_size.width * scale).clamp(
-      PiPSize.mini.width,
-      PiPSize.large.width,
-    );
-    final newHeight = newWidth * (9 / 16); // Maintain 16:9 aspect ratio
-    _size = PiPSize(width: newWidth, height: newHeight);
+    final newWidth = (_size.width * scale).clamp(150.0, 360.0);
+    final newHeight = newWidth * (9 / 16);
+
+    // Ensure minimum height doesn't cause overflow
+    final constrainedHeight = newHeight.clamp(84.0, 360.0 * (9 / 16));
+    final constrainedWidth = constrainedHeight * (16 / 9);
+
+    _size = PiPSize(width: constrainedWidth, height: constrainedHeight);
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ DRAG & RESIZE STATE
-  // ═══════════════════════════════════════════════════════
-
-  void startDrag() {
-    _isDragging = true;
-  }
-
-  void endDrag(Size screenSize) {
-    _isDragging = false;
-    snapToCorner(screenSize);
-  }
-
-  void startResize() {
-    _isResizing = true;
-  }
-
-  void endResize() {
-    _isResizing = false;
-  }
-
-  bool get isDragging => _isDragging;
-  bool get isResizing => _isResizing;
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ STATE
+  // ✅ STATE UPDATES
   // ═══════════════════════════════════════════════════════
 
   void _updateState(PiPState newState) {
-    if (_isDisposed) return;
     _state = newState;
-    _stateController.add(_state);
+    if (!_stateController.isClosed) {
+      _stateController.add(_state);
+    }
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ DISPOSE
-  // ═══════════════════════════════════════════════════════
-
   void dispose() {
-    if (_isDisposed) return;
-    _isDisposed = true;
     _stateController.close();
   }
 }

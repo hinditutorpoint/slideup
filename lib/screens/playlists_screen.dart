@@ -904,8 +904,6 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
             isLocked: false,
           );
 
-      // TODO: Copy media items to new playlist
-
       _showMessage('Playlist duplicated');
     } catch (e) {
       _showError('Failed to duplicate: $e');

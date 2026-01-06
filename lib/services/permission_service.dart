@@ -427,7 +427,7 @@ class PermissionService {
   }
 
   /// Check a single permission
-  Future<bool> _checkSinglePermission(Permission permission) async {
+  /* Future<bool> _checkSinglePermission(Permission permission) async {
     try {
       final status = await permission.status;
       return status.isGranted;
@@ -435,7 +435,7 @@ class PermissionService {
       debugPrint('Error checking permission: $e');
       return false;
     }
-  }
+  } */
 
   /// Check multiple permissions
   Future<bool> _checkMultiplePermissions(List<Permission> permissions) async {

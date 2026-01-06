@@ -6,8 +6,11 @@ import '../models/video_player_state.dart';
 import '../models/player_media.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/pip_provider.dart';
+import '../providers/chromecast_provider.dart';
+import '../services/chromecast_service.dart';
 import 'settings_sheet_widget.dart';
 import 'playlist_sheet_widget.dart';
+import 'chromecast_dialog_widget.dart';
 
 class ControlsOverlayWidget extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -39,7 +42,6 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
     super.dispose();
   }
 
-  // Keep controls visible when interacting
   void _keepControlsVisible() {
     try {
       ref.read(videoPlayerProvider.notifier).showControls();
@@ -56,7 +58,6 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
           ? playerState.currentTitle
           : widget.playlist.currentMedia?.title ?? 'Loading...';
       final currentTitle = title;
-      //final playlistInfo = ref.watch(playlistInfoProvider);
 
       return AnimatedOpacity(
         opacity: playerState.showControls ? 1.0 : 0.0,
@@ -137,11 +138,12 @@ class _TopBar extends ConsumerWidget {
       final playerState = ref.watch(videoPlayerProvider);
 
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Row(
           children: [
-            _ControlIconButton(
+            _ControlButton(
               icon: Icons.arrow_back,
+              size: 24,
               onTap: () {
                 onInteraction();
                 _handleBack(ref, playerState);
@@ -151,46 +153,55 @@ class _TopBar extends ConsumerWidget {
               child: GestureDetector(
                 onTap: onInteraction,
                 behavior: HitTestBehavior.opaque,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (playlist.hasMultiple)
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        '${playerState.currentIndex + 1} of ${playlist.length}',
-                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                  ],
+                      if (playlist.hasMultiple)
+                        Text(
+                          '${playerState.currentIndex + 1} of ${playlist.length}',
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
             if (showPiPButton)
-              _ControlIconButton(
+              _ControlButton(
                 icon: Icons.picture_in_picture_alt,
+                size: 24,
                 onTap: () {
                   onInteraction();
                   _enterPiP(ref);
                 },
               ),
-            _ControlIconButton(
+            _ControlButton(
               icon: Icons.lock_outline,
+              size: 24,
               onTap: () {
                 onInteraction();
                 _lockControls(ref);
               },
             ),
-            _ControlIconButton(
+            _ControlButton(
               icon: Icons.settings,
+              size: 24,
               onTap: () {
                 onInteraction();
                 _showSettings(context);
@@ -275,7 +286,7 @@ class _CenterPlayButton extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (hasPlaylist) ...[
-            _ControlIconButton(
+            _CenterControlButton(
               icon: Icons.skip_previous,
               size: 36,
               onTap: () {
@@ -283,31 +294,18 @@ class _CenterPlayButton extends ConsumerWidget {
                 _playPrevious(ref);
               },
             ),
-            const SizedBox(width: 32),
+            const SizedBox(width: 40),
           ],
-          GestureDetector(
+          _PlayPauseButton(
+            icon: _getMainIcon(isCompleted),
             onTap: () {
               onInteraction();
               _handleMainButton(ref, isCompleted);
             },
-            child: Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.2),
-                border: Border.all(color: Colors.white54, width: 2),
-              ),
-              child: Icon(
-                _getMainIcon(isCompleted),
-                color: Colors.white,
-                size: 40,
-              ),
-            ),
           ),
           if (showReplayButton) ...[
-            const SizedBox(width: 20),
-            _ControlIconButton(
+            const SizedBox(width: 24),
+            _CenterControlButton(
               icon: Icons.replay,
               size: 32,
               onTap: () {
@@ -317,8 +315,8 @@ class _CenterPlayButton extends ConsumerWidget {
             ),
           ],
           if (hasPlaylist) ...[
-            const SizedBox(width: 32),
-            _ControlIconButton(
+            const SizedBox(width: 40),
+            _CenterControlButton(
               icon: Icons.skip_next,
               size: 36,
               onTap: () {
@@ -338,10 +336,10 @@ class _CenterPlayButton extends ConsumerWidget {
   IconData _getMainIcon(bool isCompleted) {
     try {
       if (isCompleted && hasPlaylist) return Icons.replay;
-      if (playerState.isPlaying) return Icons.pause;
-      return Icons.play_arrow;
+      if (playerState.isPlaying) return Icons.pause_rounded;
+      return Icons.play_arrow_rounded;
     } catch (e) {
-      return Icons.play_arrow;
+      return Icons.play_arrow_rounded;
     }
   }
 
@@ -385,7 +383,73 @@ class _CenterPlayButton extends ConsumerWidget {
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ BOTTOM BAR
+// ✅ PLAY/PAUSE BUTTON (Large center button)
+// ═══════════════════════════════════════════════════════
+
+class _PlayPauseButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _PlayPauseButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(40),
+        splashColor: Colors.white24,
+        highlightColor: Colors.white10,
+        child: Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withValues(alpha: 0.3),
+          ),
+          child: Icon(icon, color: Colors.white, size: 48),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ CENTER CONTROL BUTTON (Skip buttons)
+// ═══════════════════════════════════════════════════════
+
+class _CenterControlButton extends StatelessWidget {
+  final IconData icon;
+  final double size;
+  final VoidCallback onTap;
+
+  const _CenterControlButton({
+    required this.icon,
+    required this.size,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        splashColor: Colors.white24,
+        highlightColor: Colors.white10,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, color: Colors.white, size: size),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ BOTTOM BAR - FIXED OVERFLOW + PROFESSIONAL DESIGN
 // ═══════════════════════════════════════════════════════
 
 class _BottomBar extends ConsumerWidget {
@@ -403,67 +467,114 @@ class _BottomBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     try {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Progress bar
             _ProgressBar(
               playerState: playerState,
               ref: ref,
               onInteraction: onInteraction,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
+            // Controls row
             SizedBox(
-              height: 36,
+              height: 48,
               child: Row(
                 children: [
-                  // Time
-                  GestureDetector(
-                    onTap: onInteraction,
+                  // Time display
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Text(
                       '${_formatDuration(playerState.position)} / ${_formatDuration(playerState.duration)}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
                   ),
 
-                  const Spacer(),
+                  const SizedBox(width: 4),
 
-                  // Speed
-                  _SpeedButton(
-                    speed: playerState.speed,
-                    onInteraction: onInteraction,
-                  ),
-                  const SizedBox(width: 16),
+                  // Scrollable controls
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minWidth: constraints.maxWidth,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Speed
+                                _SpeedButton(
+                                  speed: playerState.speed,
+                                  onInteraction: onInteraction,
+                                ),
 
-                  // Playlist
-                  if (playlist.hasMultiple) ...[
-                    _ControlIconButton(
-                      icon: Icons.playlist_play,
-                      onTap: () {
-                        onInteraction();
-                        _showPlaylist(context);
+                                // Video Fit
+                                _VideoFitButton(
+                                  videoFit: playerState.videoFit,
+                                  onInteraction: onInteraction,
+                                ),
+
+                                // Flip
+                                _FlipButton(
+                                  isFlippedH: playerState.isFlippedHorizontally,
+                                  isFlippedV: playerState.isFlippedVertically,
+                                  onInteraction: onInteraction,
+                                ),
+
+                                // Mute
+                                _MuteButton(
+                                  isMuted: playerState.isMuted,
+                                  volume: playerState.volume,
+                                  onInteraction: onInteraction,
+                                ),
+
+                                _ChromecastButton(onInteraction: onInteraction),
+
+                                // Playlist
+                                if (playlist.hasMultiple)
+                                  _ControlButton(
+                                    icon: Icons.playlist_play,
+                                    size: 24,
+                                    onTap: () {
+                                      onInteraction();
+                                      _showPlaylist(context);
+                                    },
+                                  ),
+
+                                // Fullscreen
+                                _ControlButton(
+                                  icon:
+                                      playerState.mode == PlayerMode.fullscreen
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen,
+                                  size: 24,
+                                  onTap: () {
+                                    onInteraction();
+                                    _toggleFullscreen(ref);
+                                  },
+                                ),
+
+                                // Track chips
+                                _TrackChips(
+                                  playerState: playerState,
+                                  onInteraction: onInteraction,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
                       },
-                    ),
-                    const SizedBox(width: 12),
-                  ],
-
-                  // Fullscreen
-                  _ControlIconButton(
-                    icon: playerState.mode == PlayerMode.fullscreen
-                        ? Icons.fullscreen_exit
-                        : Icons.fullscreen,
-                    onTap: () {
-                      onInteraction();
-                      _toggleFullscreen(ref);
-                    },
-                  ),
-
-                  // Track chips
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: _TrackChips(
-                      playerState: playerState,
-                      onInteraction: onInteraction,
                     ),
                   ),
                 ],
@@ -515,29 +626,34 @@ class _BottomBar extends ConsumerWidget {
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ CONTROL ICON BUTTON (No background, just icon)
+// ✅ CONTROL BUTTON - Professional with Ripple
 // ═══════════════════════════════════════════════════════
 
-class _ControlIconButton extends StatelessWidget {
+class _ControlButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final double size;
 
-  const _ControlIconButton({
+  const _ControlButton({
     required this.icon,
     required this.onTap,
-    this.size = 24,
+    required this.size,
   });
 
   @override
   Widget build(BuildContext context) {
     try {
-      return GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(icon, color: Colors.white, size: size),
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(icon, color: Colors.white, size: size),
+          ),
         ),
       );
     } catch (e) {
@@ -547,7 +663,301 @@ class _ControlIconButton extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ TRACK CHIPS
+// ✅ SPEED BUTTON - Professional Design
+// ═══════════════════════════════════════════════════════
+
+class _SpeedButton extends ConsumerWidget {
+  final double speed;
+  final VoidCallback onInteraction;
+
+  const _SpeedButton({required this.speed, required this.onInteraction});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final isNormal = (speed - 1.0).abs() < 0.01;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            _showSpeedDialog(context, ref);
+          },
+          borderRadius: BorderRadius.circular(4),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            child: Text(
+              '${speed}x',
+              style: TextStyle(
+                color: isNormal ? Colors.white : Colors.amber,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  void _showSpeedDialog(BuildContext context, WidgetRef ref) {
+    try {
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (ctx) => _SpeedDialog(
+          currentSpeed: speed,
+          onSpeedSelected: (s) {
+            Navigator.of(ctx).pop();
+            try {
+              ref.read(videoPlayerProvider.notifier).setSpeed(s);
+            } catch (e) {
+              debugPrint('⚠️ Set speed error: $e');
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Show speed dialog error: $e');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ VIDEO FIT BUTTON - Professional Design
+// ═══════════════════════════════════════════════════════
+
+class _VideoFitButton extends ConsumerWidget {
+  final VideoFit videoFit;
+  final VoidCallback onInteraction;
+
+  const _VideoFitButton({required this.videoFit, required this.onInteraction});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final icon = _getFitIcon();
+      final isDefault = videoFit == VideoFit.contain;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            ref.read(videoPlayerProvider.notifier).cycleVideoFit();
+          },
+          onLongPress: () {
+            onInteraction();
+            _showFitDialog(context, ref);
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              icon,
+              color: isDefault ? Colors.white : Colors.lightBlueAccent,
+              size: 24,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  IconData _getFitIcon() {
+    switch (videoFit) {
+      case VideoFit.contain:
+        return Icons.fit_screen_outlined;
+      case VideoFit.cover:
+        return Icons.crop_free;
+      case VideoFit.fill:
+        return Icons.aspect_ratio;
+      case VideoFit.fitWidth:
+        return Icons.width_full;
+      case VideoFit.fitHeight:
+        return Icons.height;
+    }
+  }
+
+  void _showFitDialog(BuildContext context, WidgetRef ref) {
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (ctx) => _FitDialog(
+          currentFit: videoFit,
+          onFitSelected: (fit) {
+            Navigator.of(ctx).pop();
+            try {
+              notifier.setVideoFit(fit);
+            } catch (e) {
+              debugPrint('⚠️ Set fit error: $e');
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Show fit dialog error: $e');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ FLIP BUTTON - Professional Design
+// ═══════════════════════════════════════════════════════
+
+class _FlipButton extends ConsumerWidget {
+  final bool isFlippedH;
+  final bool isFlippedV;
+  final VoidCallback onInteraction;
+
+  const _FlipButton({
+    required this.isFlippedH,
+    required this.isFlippedV,
+    required this.onInteraction,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final hasFlip = isFlippedH || isFlippedV;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            _showFlipDialog(context, ref);
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              Icons.flip_outlined,
+              color: hasFlip ? Colors.orangeAccent : Colors.white,
+              size: 24,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  void _showFlipDialog(BuildContext context, WidgetRef ref) {
+    try {
+      final hasFlip = isFlippedH || isFlippedV;
+      final notifier = ref.read(videoPlayerProvider.notifier);
+
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (ctx) => _FlipDialog(
+          isFlippedH: isFlippedH,
+          isFlippedV: isFlippedV,
+          hasFlip: hasFlip,
+          onFlipHorizontal: () {
+            try {
+              notifier.toggleFlipHorizontal();
+            } catch (e) {
+              debugPrint('⚠️ Flip horizontal error: $e');
+            }
+          },
+          onFlipVertical: () {
+            try {
+              notifier.toggleFlipVertical();
+            } catch (e) {
+              debugPrint('⚠️ Flip vertical error: $e');
+            }
+          },
+          onReset: () {
+            try {
+              notifier.resetFlip();
+              Navigator.of(ctx).pop();
+            } catch (e) {
+              debugPrint('⚠️ Reset flip error: $e');
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Show flip dialog error: $e');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ MUTE BUTTON - Professional Design
+// ═══════════════════════════════════════════════════════
+
+class _MuteButton extends ConsumerWidget {
+  final bool isMuted;
+  final double volume;
+  final VoidCallback onInteraction;
+
+  const _MuteButton({
+    required this.isMuted,
+    required this.volume,
+    required this.onInteraction,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final icon = _getMuteIcon();
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            ref.read(videoPlayerProvider.notifier).toggleMute();
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              icon,
+              color: isMuted ? Colors.redAccent : Colors.white,
+              size: 24,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  IconData _getMuteIcon() {
+    if (isMuted || volume == 0) {
+      return Icons.volume_off_outlined;
+    } else if (volume < 0.5) {
+      return Icons.volume_down_outlined;
+    } else {
+      return Icons.volume_up_outlined;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ TRACK CHIPS - Professional Design
 // ═══════════════════════════════════════════════════════
 
 class _TrackChips extends ConsumerWidget {
@@ -577,46 +987,38 @@ class _TrackChips extends ConsumerWidget {
         return const SizedBox.shrink();
       }
 
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (hasAudio) ...[
-              _TrackChip(
-                icon: Icons.audiotrack,
-                label: _getAudioLabel(),
-                onTap: () {
-                  onInteraction();
-                  _showAudioDialog(context, ref, audioTracks);
-                },
-              ),
-              if (hasSubtitle || hasVideo) const SizedBox(width: 8),
-            ],
-            if (hasSubtitle) ...[
-              _TrackChip(
-                icon: Icons.subtitles,
-                label: _getSubtitleLabel(),
-                isActive: _hasActiveSubtitle(),
-                onTap: () {
-                  onInteraction();
-                  _showSubtitleDialog(context, ref, subtitleTracks);
-                },
-              ),
-              if (hasVideo) const SizedBox(width: 8),
-            ],
-            if (hasVideo)
-              _TrackChip(
-                icon: Icons.hd,
-                label: _getVideoLabel(),
-                onTap: () {
-                  onInteraction();
-                  _showVideoDialog(context, ref, videoTracks);
-                },
-              ),
-          ],
-        ),
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasAudio)
+            _TrackChip(
+              icon: Icons.audiotrack_outlined,
+              label: _getAudioLabel(),
+              onTap: () {
+                onInteraction();
+                _showAudioDialog(context, ref, audioTracks);
+              },
+            ),
+          if (hasSubtitle)
+            _TrackChip(
+              icon: Icons.subtitles_outlined,
+              label: _getSubtitleLabel(),
+              isActive: _hasActiveSubtitle(),
+              onTap: () {
+                onInteraction();
+                _showSubtitleDialog(context, ref, subtitleTracks);
+              },
+            ),
+          if (hasVideo)
+            _TrackChip(
+              icon: Icons.hd_outlined,
+              label: _getVideoLabel(),
+              onTap: () {
+                onInteraction();
+                _showVideoDialog(context, ref, videoTracks);
+              },
+            ),
+        ],
       );
     } catch (e) {
       debugPrint('❌ _TrackChips build error: $e');
@@ -629,7 +1031,7 @@ class _TrackChips extends ConsumerWidget {
       final t = playerState.currentAudioTrack;
       if (t == null) return 'Audio';
       if (t.title != null && t.title!.isNotEmpty) {
-        return t.title!.length > 6 ? t.title!.substring(0, 6) : t.title!;
+        return t.title!.length > 5 ? '${t.title!.substring(0, 5)}…' : t.title!;
       }
       if (t.language != null) return t.language!.toUpperCase();
       return 'Audio';
@@ -643,7 +1045,7 @@ class _TrackChips extends ConsumerWidget {
       final t = playerState.currentSubtitleTrack;
       if (t == null || t.id == 'no') return 'CC';
       if (t.title != null && t.title!.isNotEmpty) {
-        return t.title!.length > 6 ? t.title!.substring(0, 6) : t.title!;
+        return t.title!.length > 5 ? '${t.title!.substring(0, 5)}…' : t.title!;
       }
       if (t.language != null) return t.language!.toUpperCase();
       return 'CC';
@@ -658,9 +1060,9 @@ class _TrackChips extends ConsumerWidget {
       if (t == null) return 'Auto';
       if (t.h != null) {
         if (t.h! >= 2160) return '4K';
-        if (t.h! >= 1080) return '1080p';
-        if (t.h! >= 720) return '720p';
-        if (t.h! >= 480) return '480p';
+        if (t.h! >= 1080) return 'FHD';
+        if (t.h! >= 720) return 'HD';
+        if (t.h! >= 480) return 'SD';
         return '${t.h}p';
       }
       return 'Auto';
@@ -686,7 +1088,7 @@ class _TrackChips extends ConsumerWidget {
     try {
       showDialog(
         context: context,
-        barrierColor: Colors.black26,
+        barrierColor: Colors.black54,
         builder: (ctx) => _TrackDialog(
           title: 'Audio Track',
           children: tracks.map((t) {
@@ -717,7 +1119,7 @@ class _TrackChips extends ConsumerWidget {
       final currentId = playerState.currentSubtitleTrack?.id;
       showDialog(
         context: context,
-        barrierColor: Colors.black26,
+        barrierColor: Colors.black54,
         builder: (ctx) => _TrackDialog(
           title: 'Subtitles',
           children: [
@@ -758,7 +1160,7 @@ class _TrackChips extends ConsumerWidget {
         ..sort((a, b) => (b.h ?? 0).compareTo(a.h ?? 0));
       showDialog(
         context: context,
-        barrierColor: Colors.black26,
+        barrierColor: Colors.black54,
         builder: (ctx) => _TrackDialog(
           title: 'Video Quality',
           children: sorted.map((t) {
@@ -766,13 +1168,13 @@ class _TrackChips extends ConsumerWidget {
             String title = 'Track ${t.id}';
             if (t.h != null) {
               if (t.h! >= 2160) {
-                title = '4K';
+                title = '4K Ultra HD';
               } else if (t.h! >= 1080) {
-                title = '1080p';
+                title = '1080p Full HD';
               } else if (t.h! >= 720) {
-                title = '720p';
+                title = '720p HD';
               } else if (t.h! >= 480) {
-                title = '480p';
+                title = '480p SD';
               } else {
                 title = '${t.h}p';
               }
@@ -852,7 +1254,7 @@ class _TrackChips extends ConsumerWidget {
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ TRACK CHIP
+// ✅ TRACK CHIP - Professional Design
 // ═══════════════════════════════════════════════════════
 
 class _TrackChip extends StatelessWidget {
@@ -871,71 +1273,33 @@ class _TrackChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     try {
-      return GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isActive
-                ? Colors.white.withValues(alpha: 0.15)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: Colors.white38),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: Colors.white, size: 14),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      return const SizedBox.shrink();
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-// ✅ SPEED BUTTON
-// ═══════════════════════════════════════════════════════
-
-class _SpeedButton extends ConsumerWidget {
-  final double speed;
-  final VoidCallback onInteraction;
-
-  const _SpeedButton({required this.speed, required this.onInteraction});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    try {
-      final isNormal = (speed - 1.0).abs() < 0.01;
-
-      return GestureDetector(
-        onTap: () {
-          onInteraction();
-          _showSpeedDialog(context, ref);
-        },
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: isNormal ? Colors.transparent : Colors.red,
-            borderRadius: BorderRadius.circular(4),
-            border: isNormal ? Border.all(color: Colors.white54) : null,
-          ),
-          child: Text(
-            '${speed}x',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  color: isActive ? Colors.white : Colors.white54,
+                  size: 16,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: isActive ? Colors.white : Colors.white54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -944,274 +1308,10 @@ class _SpeedButton extends ConsumerWidget {
       return const SizedBox.shrink();
     }
   }
-
-  void _showSpeedDialog(BuildContext context, WidgetRef ref) {
-    try {
-      showDialog(
-        context: context,
-        barrierColor: Colors.black26,
-        builder: (ctx) => _SpeedDialog(
-          currentSpeed: speed,
-          onSpeedSelected: (s) {
-            Navigator.of(ctx).pop();
-            try {
-              ref.read(videoPlayerProvider.notifier).setSpeed(s);
-            } catch (e) {
-              debugPrint('⚠️ Set speed error: $e');
-            }
-          },
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ Show speed dialog error: $e');
-    }
-  }
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ SPEED DIALOG
-// ═══════════════════════════════════════════════════════
-
-class _SpeedDialog extends StatelessWidget {
-  final double currentSpeed;
-  final void Function(double) onSpeedSelected;
-
-  const _SpeedDialog({
-    required this.currentSpeed,
-    required this.onSpeedSelected,
-  });
-
-  static const List<double> speeds = [
-    0.25,
-    0.5,
-    0.75,
-    1.0,
-    1.25,
-    1.5,
-    1.75,
-    2.0,
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    try {
-      return Dialog(
-        backgroundColor: Colors.black.withValues(alpha: 0.9),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 100),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-              child: Row(
-                children: [
-                  const Text(
-                    'Speed',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.of(context).pop(),
-                    child: const Icon(
-                      Icons.close,
-                      color: Colors.white54,
-                      size: 20,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(color: Colors.white24, height: 1),
-            ...speeds.map((s) {
-              final isSelected = (currentSpeed - s).abs() < 0.01;
-              return GestureDetector(
-                onTap: () => onSpeedSelected(s),
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  color: isSelected
-                      ? Colors.white.withValues(alpha: 0.1)
-                      : Colors.transparent,
-                  child: Row(
-                    children: [
-                      Icon(
-                        isSelected ? Icons.check_circle : Icons.circle_outlined,
-                        color: isSelected ? Colors.blue : Colors.white38,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        s == 1.0 ? 'Normal' : '${s}x',
-                        style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.white70,
-                          fontSize: 14,
-                          fontWeight: isSelected
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-            const SizedBox(height: 8),
-          ],
-        ),
-      );
-    } catch (e) {
-      return const SizedBox.shrink();
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-// ✅ TRACK DIALOG
-// ═══════════════════════════════════════════════════════
-
-class _TrackDialog extends StatelessWidget {
-  final String title;
-  final List<Widget> children;
-
-  const _TrackDialog({required this.title, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    try {
-      return Dialog(
-        backgroundColor: Colors.black.withValues(alpha: 0.9),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 80),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 280, maxHeight: 380),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                child: Row(
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => Navigator.of(context).pop(),
-                      child: const Icon(
-                        Icons.close,
-                        color: Colors.white54,
-                        size: 20,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: Colors.white24, height: 1),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: children,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      return const SizedBox.shrink();
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-// ✅ TRACK TILE
-// ═══════════════════════════════════════════════════════
-
-class _TrackTile extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _TrackTile({
-    required this.title,
-    this.subtitle,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    try {
-      return GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: selected
-              ? Colors.white.withValues(alpha: 0.1)
-              : Colors.transparent,
-          child: Row(
-            children: [
-              Icon(
-                selected ? Icons.check_circle : Icons.circle_outlined,
-                color: selected ? Colors.blue : Colors.white38,
-                size: 18,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: selected ? Colors.white : Colors.white70,
-                        fontSize: 14,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
-                    ),
-                    if (subtitle != null)
-                      Text(
-                        subtitle!,
-                        style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      return const SizedBox.shrink();
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-// ✅ PROGRESS BAR
+// ✅ PROGRESS BAR - Professional Design
 // ═══════════════════════════════════════════════════════
 
 class _ProgressBar extends StatefulWidget {
@@ -1249,8 +1349,10 @@ class _ProgressBarState extends State<_ProgressBar> {
       return SliderTheme(
         data: SliderTheme.of(context).copyWith(
           trackHeight: 3,
-          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-          overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+          thumbShape: RoundSliderThumbShape(
+            enabledThumbRadius: _dragging ? 8 : 6,
+          ),
+          overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
           activeTrackColor: Colors.red,
           inactiveTrackColor: Colors.white24,
           thumbColor: Colors.red,
@@ -1258,6 +1360,7 @@ class _ProgressBarState extends State<_ProgressBar> {
         ),
         child: Stack(
           children: [
+            // Buffered progress
             SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 3,
@@ -1267,6 +1370,7 @@ class _ProgressBarState extends State<_ProgressBar> {
               ),
               child: Slider(value: buffered, max: max, onChanged: null),
             ),
+            // Main slider
             Slider(
               value: current,
               max: max,
@@ -1298,6 +1402,443 @@ class _ProgressBarState extends State<_ProgressBar> {
     } catch (e) {
       debugPrint('❌ _ProgressBar build error: $e');
       return const SizedBox(height: 20);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ DIALOGS - Professional Design
+// ═══════════════════════════════════════════════════════
+
+class _SpeedDialog extends StatelessWidget {
+  final double currentSpeed;
+  final void Function(double) onSpeedSelected;
+
+  const _SpeedDialog({
+    required this.currentSpeed,
+    required this.onSpeedSelected,
+  });
+
+  static const List<double> speeds = [
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.0,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      return Dialog(
+        backgroundColor: const Color(0xE6212121),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 80),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DialogHeader(title: 'Playback Speed'),
+            ...speeds.map((s) {
+              final isSelected = (currentSpeed - s).abs() < 0.01;
+              return _DialogOption(
+                title: s == 1.0 ? 'Normal' : '${s}x',
+                selected: isSelected,
+                onTap: () => onSpeedSelected(s),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+}
+
+class _FitDialog extends StatelessWidget {
+  final VideoFit currentFit;
+  final void Function(VideoFit) onFitSelected;
+
+  const _FitDialog({required this.currentFit, required this.onFitSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xE6212121),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 80),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _DialogHeader(title: 'Video Fit'),
+          ...VideoFit.values.map((fit) {
+            final isSelected = currentFit == fit;
+            return _DialogOption(
+              title: _getFitName(fit),
+              selected: isSelected,
+              onTap: () => onFitSelected(fit),
+            );
+          }),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  String _getFitName(VideoFit fit) {
+    switch (fit) {
+      case VideoFit.contain:
+        return 'Contain';
+      case VideoFit.cover:
+        return 'Cover';
+      case VideoFit.fill:
+        return 'Fill';
+      case VideoFit.fitWidth:
+        return 'Fit Width';
+      case VideoFit.fitHeight:
+        return 'Fit Height';
+    }
+  }
+}
+
+class _FlipDialog extends StatelessWidget {
+  final bool isFlippedH;
+  final bool isFlippedV;
+  final bool hasFlip;
+  final VoidCallback onFlipHorizontal;
+  final VoidCallback onFlipVertical;
+  final VoidCallback onReset;
+
+  const _FlipDialog({
+    required this.isFlippedH,
+    required this.isFlippedV,
+    required this.hasFlip,
+    required this.onFlipHorizontal,
+    required this.onFlipVertical,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xE6212121),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 100),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _DialogHeader(title: 'Flip Video'),
+          _DialogOption(
+            title: 'Flip Horizontal',
+            selected: isFlippedH,
+            icon: Icons.flip,
+            onTap: onFlipHorizontal,
+          ),
+          _DialogOption(
+            title: 'Flip Vertical',
+            selected: isFlippedV,
+            icon: Icons.flip,
+            iconRotation: 1.5708,
+            onTap: onFlipVertical,
+          ),
+          if (hasFlip)
+            _DialogOption(
+              title: 'Reset',
+              selected: false,
+              icon: Icons.refresh,
+              onTap: onReset,
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackDialog extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _TrackDialog({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      return Dialog(
+        backgroundColor: const Color(0xE6212121),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 60),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320, maxHeight: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _DialogHeader(title: title),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: children,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ DIALOG COMPONENTS
+// ═══════════════════════════════════════════════════════
+
+class _DialogHeader extends StatelessWidget {
+  final String title;
+
+  const _DialogHeader({required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+          child: Row(
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.of(context).pop(),
+                  borderRadius: BorderRadius.circular(20),
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.close, color: Colors.white54, size: 22),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(color: Colors.white12, height: 1),
+      ],
+    );
+  }
+}
+
+class _DialogOption extends StatelessWidget {
+  final String title;
+  final bool selected;
+  final IconData? icon;
+  final double iconRotation;
+  final VoidCallback onTap;
+
+  const _DialogOption({
+    required this.title,
+    required this.selected,
+    this.icon,
+    this.iconRotation = 0,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        splashColor: Colors.white12,
+        highlightColor: Colors.white10,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: selected ? Colors.lightBlueAccent : Colors.white38,
+                size: 20,
+              ),
+              const SizedBox(width: 14),
+              if (icon != null) ...[
+                Transform.rotate(
+                  angle: iconRotation,
+                  child: Icon(icon, color: Colors.white70, size: 20),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 15,
+                    fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TrackTile extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TrackTile({
+    required this.title,
+    this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          splashColor: Colors.white12,
+          highlightColor: Colors.white10,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            child: Row(
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: selected ? Colors.lightBlueAccent : Colors.white38,
+                  size: 20,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.white70,
+                          fontSize: 15,
+                          fontWeight: selected
+                              ? FontWeight.w500
+                              : FontWeight.normal,
+                        ),
+                      ),
+                      if (subtitle != null)
+                        Text(
+                          subtitle!,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+}
+
+class _ChromecastButton extends ConsumerWidget {
+  final VoidCallback onInteraction;
+
+  const _ChromecastButton({required this.onInteraction});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final castState = ref.watch(chromecastStateProvider).asData?.value;
+      final isCasting = castState == CastState.connected;
+      final isConnecting = castState == CastState.connecting;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            _showChromecastDialog(context, ref);
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Stack(
+              children: [
+                Icon(
+                  isCasting ? Icons.cast_connected : Icons.cast,
+                  color: isCasting
+                      ? Colors.lightBlueAccent
+                      : (isConnecting ? Colors.amber : Colors.white),
+                  size: 24,
+                ),
+                if (isConnecting)
+                  Positioned.fill(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.amber.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  void _showChromecastDialog(BuildContext context, WidgetRef ref) {
+    try {
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (ctx) => const ChromecastDialogWidget(),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Show chromecast dialog error: $e');
     }
   }
 }

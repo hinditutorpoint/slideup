@@ -58,6 +58,9 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
   StreamSubscription? _stateSubscription;
   PlayerPlaylist? _currentPlaylist;
 
+  Timer? _thumbnailDebounceTimer;
+  Timer? _seekExecutionTimer;
+
   // Access service via getter
   VideoPlayerService get _service => ref.read(videoPlayerServiceProvider);
 
@@ -68,6 +71,8 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
 
     ref.onDispose(() {
       debugPrint('🧹 Disposing VideoPlayerNotifier...');
+      _thumbnailDebounceTimer?.cancel();
+      _seekExecutionTimer?.cancel();
       _stateSubscription?.cancel();
       _stateSubscription = null;
       _currentPlaylist = null;
@@ -170,6 +175,62 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
     } catch (e) {
       debugPrint('❌ Safe disposal error: $e');
       debugPrint('❌ Stack trace: ${StackTrace.current}');
+    }
+  }
+
+  /// Save current playback position
+  Future<void> savePosition() async {
+    if (isDisposed) return;
+    try {
+      final position = state.position;
+      final fileId = state.currentFileId;
+
+      if (fileId != null && position.inSeconds > 0) {
+        await SettingsStorageService.savePlaybackPosition(fileId, position);
+        debugPrint('✅ Position saved: ${position.inSeconds}s');
+      }
+    } catch (e) {
+      debugPrint('❌ Save position error: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ YOUTUBE-STYLE SEEKING
+  // ═══════════════════════════════════════════════════════
+
+  void startHorizontalSeek() {
+    if (isDisposed) return;
+    try {
+      service.startHorizontalSeek();
+    } catch (e) {
+      debugPrint('❌ Start horizontal seek error: $e');
+    }
+  }
+
+  void updateHorizontalSeek(double delta) {
+    if (isDisposed) return;
+    try {
+      service.updateHorizontalSeek(delta);
+    } catch (e) {
+      debugPrint('❌ Update horizontal seek error: $e');
+    }
+  }
+
+  Future<void> endHorizontalSeek() async {
+    if (isDisposed) return;
+    try {
+      await service.endHorizontalSeek();
+    } catch (e) {
+      debugPrint('❌ End horizontal seek error: $e');
+    }
+  }
+
+  void hideSeekPreview() {
+    if (isDisposed) return;
+    try {
+      service.hideSeekPreview();
+    } catch (e) {
+      debugPrint('❌ Hide seek preview error: $e');
     }
   }
 
@@ -408,6 +469,55 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
       await service.disable2xSpeed();
     } catch (e) {
       debugPrint('❌ Disable 2x speed error: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ VIDEO FIT & FLIP
+  // ═══════════════════════════════════════════════════════
+
+  void setVideoFit(VideoFit fit) {
+    if (isDisposed) return;
+    try {
+      service.setVideoFit(fit);
+    } catch (e) {
+      debugPrint('❌ Set video fit error: $e');
+    }
+  }
+
+  void cycleVideoFit() {
+    if (isDisposed) return;
+    try {
+      service.cycleVideoFit();
+    } catch (e) {
+      debugPrint('❌ Cycle video fit error: $e');
+    }
+  }
+
+  void toggleFlipHorizontal() {
+    if (isDisposed) return;
+    try {
+      service.toggleFlipHorizontal();
+    } catch (e) {
+      debugPrint('❌ Toggle flip horizontal error: $e');
+    }
+  }
+
+  void toggleFlipVertical() {
+    if (isDisposed) return;
+    try {
+      service.toggleFlipVertical();
+    } catch (e) {
+      debugPrint('❌ Toggle flip vertical error: $e');
+    }
+  }
+
+  void resetFlip() {
+    if (isDisposed) return;
+    try {
+      service.resetFlip();
+    } catch (e) {
+      debugPrint('❌ Reset flip error: $e');
     }
   }
 

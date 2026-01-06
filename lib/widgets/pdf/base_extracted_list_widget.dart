@@ -94,11 +94,11 @@ abstract class BaseExtractedListWidgetState<
 
   Widget buildItemListTile(T item, int index);
 
-  Future<void> _shareItem(T item);
+  //Future<void> _shareItem(T item);
 
-  Future<void> _deleteItem(T item, int index);
+  //Future<void> _deleteItem(T item, int index);
 
-  void _showItemProperties(T item);
+  //void _showItemProperties(T item);
 
   int getItemPageNumber(T item);
 
@@ -569,97 +569,6 @@ abstract class BaseExtractedListWidgetState<
     );
   }
 
-  void _showItemOptions(T item, int index) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Page ${getItemPageNumber(item)}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            if (widget.onPageSelected != null)
-              ListTile(
-                leading: const Icon(Icons.visibility),
-                title: const Text('Go to Page'),
-                onTap: () {
-                  Navigator.pop(context);
-                  widget.onPageSelected!(getItemPageNumber(item));
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('Share'),
-              onTap: () {
-                Navigator.pop(context);
-                _shareItem(item);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('Properties'),
-              onTap: () {
-                Navigator.pop(context);
-                _showItemProperties(item);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete', style: TextStyle(color: Colors.red)),
-              onTap: () {
-                Navigator.pop(context);
-                _confirmDelete(item, index);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmDelete(T item, int index) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Item?'),
-        content: const Text('This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _deleteItem(item, index);
-    }
-  }
-
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -694,11 +603,5 @@ abstract class BaseExtractedListWidgetState<
 
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year}';
-  }
-
-  String _formatFileSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }

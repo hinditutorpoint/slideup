@@ -22,7 +22,7 @@ class AudioPlayerHandler extends BaseAudioHandler
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
 
     _player.sequenceStateStream.listen((sequenceState) {
-      if (sequenceState == null) return;
+      //if (sequenceState == null) return;
 
       final currentItem = sequenceState.currentSource?.tag as MediaItem?;
       if (currentItem != null) {
@@ -149,7 +149,7 @@ class AudioPlayerHandler extends BaseAudioHandler
       final currentIndex = _player.currentIndex ?? 0;
       final insertIndex = currentIndex + 1;
 
-      final currentSources = List<AudioSource>.from(_player.sequence ?? []);
+      final currentSources = List<AudioSource>.from(_player.sequence);
 
       currentSources.insert(insertIndex, source);
 
@@ -171,8 +171,7 @@ class AudioPlayerHandler extends BaseAudioHandler
       final source = _createAudioSource(file);
       final item = _createMediaItem(file);
 
-      final sources = List<AudioSource>.from(_player.sequence ?? [])
-        ..add(source);
+      final sources = List<AudioSource>.from(_player.sequence)..add(source);
 
       queue.value.add(item);
       queue.add(List<MediaItem>.from(queue.value));
@@ -189,7 +188,7 @@ class AudioPlayerHandler extends BaseAudioHandler
 
   Future<void> removeFromQueue(int index) async {
     try {
-      final sources = List<AudioSource>.from(_player.sequence ?? []);
+      final sources = List<AudioSource>.from(_player.sequence);
 
       if (index < 0 || index >= sources.length) return;
 

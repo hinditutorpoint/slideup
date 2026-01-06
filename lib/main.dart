@@ -12,6 +12,7 @@ import 'features/speaker_player/services/background_chapter_generator.dart';
 import 'features/epub_reader/services/worker_dispatcher.dart';
 
 import 'package:slideup/widgets/audio_player_overlay.dart';
+import 'features/video_player/widgets/pip_overlay.dart';
 import 'screens/splash_screen.dart';
 import 'screens/intent_receiver_screen.dart';
 import 'widgets/audio_player_wrapper.dart';
@@ -282,8 +283,10 @@ class _SlideupMediaPlayerAppState extends ConsumerState<SlideupMediaPlayerApp> {
               data: MediaQuery.of(
                 context,
               ).copyWith(textScaler: TextScaler.noScaling),
-              child: AudioPlayerOverlay(
-                child: child ?? const SizedBox.shrink(),
+              child: PiPOverlay(
+                child: AudioPlayerOverlay(
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             );
           },

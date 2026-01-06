@@ -1,23 +1,17 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:flutter/foundation.dart';
 
-class AudiobookAudioHandler extends BaseAudioHandler
-    with QueueHandler, SeekHandler {
-  final AudioPlayer _player = AudioPlayer();
-
-  // Callbacks to controller
+/// Audio handler that forwards commands to the actual player
+/// Does NOT have its own AudioPlayer - just manages notification/controls
+class AudiobookAudioHandler extends BaseAudioHandler with SeekHandler {
+  // Callbacks to controller (the actual player)
   final Future<void> Function()? onPlay;
   final Future<void> Function()? onPause;
   final Future<void> Function()? onStop;
   final Future<void> Function()? onSkipToNext;
   final Future<void> Function()? onSkipToPrevious;
   final Future<void> Function(Duration position)? onSeek;
-
-  StreamSubscription<PlayerState>? _playerStateSubscription;
-  StreamSubscription<Duration>? _positionSubscription;
-  StreamSubscription<Duration?>? _durationSubscription;
 
   AudiobookAudioHandler({
     this.onPlay,
@@ -27,32 +21,23 @@ class AudiobookAudioHandler extends BaseAudioHandler
     this.onSkipToPrevious,
     this.onSeek,
   }) {
-    _init();
+    // Initialize with idle state
+    _setState(AudioProcessingState.idle, playing: false);
+    debugPrint('[AudioHandler] Initialized (no internal player)');
   }
 
-  void _init() {
-    // Listen to player state changes
-    _playerStateSubscription = _player.playerStateStream.listen((state) {
-      _updatePlaybackState(state);
-    });
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STATE MANAGEMENT - Called by TtsController/EpubAudiobookController
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    // Listen to position changes
-    _positionSubscription = _player.positionStream.listen((position) {
-      playbackState.add(playbackState.value.copyWith(updatePosition: position));
-    });
-
-    // Listen to duration changes
-    _durationSubscription = _player.durationStream.listen((duration) {
-      if (duration != null && mediaItem.value != null) {
-        mediaItem.add(mediaItem.value!.copyWith(duration: duration));
-      }
-    });
-  }
-
-  void _updatePlaybackState(PlayerState state) {
-    final playing = state.playing;
-    final processingState = state.processingState;
-
+  /// Update the playback state (call this from your actual player)
+  void updatePlaybackState({
+    required bool playing,
+    required AudioProcessingState processingState,
+    Duration position = Duration.zero,
+    Duration bufferedPosition = Duration.zero,
+    double speed = 1.0,
+  }) {
     playbackState.add(
       playbackState.value.copyWith(
         controls: [
@@ -67,35 +52,63 @@ class AudiobookAudioHandler extends BaseAudioHandler
           MediaAction.seekBackward,
         },
         androidCompactActionIndices: const [0, 1, 2],
-        processingState: _mapProcessingState(processingState),
+        processingState: processingState,
         playing: playing,
-        updatePosition: _player.position,
-        bufferedPosition: _player.bufferedPosition,
-        speed: _player.speed,
-        queueIndex: 0,
+        updatePosition: position,
+        bufferedPosition: bufferedPosition,
+        speed: speed,
       ),
     );
   }
 
-  AudioProcessingState _mapProcessingState(ProcessingState state) {
-    switch (state) {
-      case ProcessingState.idle:
-        return AudioProcessingState.idle;
-      case ProcessingState.loading:
-        return AudioProcessingState.loading;
-      case ProcessingState.buffering:
-        return AudioProcessingState.buffering;
-      case ProcessingState.ready:
-        return AudioProcessingState.ready;
-      case ProcessingState.completed:
-        return AudioProcessingState.completed;
+  /// Shorthand to set state
+  void _setState(AudioProcessingState state, {required bool playing}) {
+    updatePlaybackState(playing: playing, processingState: state);
+  }
+
+  /// Set playing state
+  void setPlaying() => _setState(AudioProcessingState.ready, playing: true);
+
+  /// Set paused state
+  void setPaused() => _setState(AudioProcessingState.ready, playing: false);
+
+  /// Set loading state
+  void setLoading() => _setState(AudioProcessingState.loading, playing: false);
+
+  /// Set completed state
+  void setCompleted() =>
+      _setState(AudioProcessingState.completed, playing: false);
+
+  /// Set idle state
+  void setIdle() => _setState(AudioProcessingState.idle, playing: false);
+
+  /// Update position (call periodically from your player)
+  void updatePosition(
+    Duration position, {
+    Duration? bufferedPosition,
+    Duration? duration,
+  }) {
+    playbackState.add(
+      playbackState.value.copyWith(
+        updatePosition: position,
+        bufferedPosition: bufferedPosition ?? position,
+      ),
+    );
+
+    // Update duration in media item if provided
+    if (duration != null && mediaItem.value != null) {
+      mediaItem.add(mediaItem.value!.copyWith(duration: duration));
     }
   }
 
-  /// Update media item (book/chapter info)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEDIA INFO
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Update media item (book/chapter info for notification)
   Future<void> updateMediaInfo({
     required String title,
-    required String album,
+    String? album,
     String? artist,
     Duration? duration,
     Uri? artUri,
@@ -103,7 +116,7 @@ class AudiobookAudioHandler extends BaseAudioHandler
     mediaItem.add(
       MediaItem(
         id: 'audiobook_${DateTime.now().millisecondsSinceEpoch}',
-        album: album,
+        album: album ?? 'Audiobook',
         title: title,
         artist: artist,
         duration: duration,
@@ -112,94 +125,53 @@ class AudiobookAudioHandler extends BaseAudioHandler
     );
   }
 
-  /// Set audio source
-  Future<void> setAudioSource(String filePath) async {
-    try {
-      await _player.setFilePath(filePath);
-    } catch (e) {
-      debugPrint('[AudioHandler] Set audio source error: $e');
-    }
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NOTIFICATION BUTTON HANDLERS - Forward to actual player
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Play
   @override
   Future<void> play() async {
-    try {
-      await onPlay?.call();
-      await _player.play();
-    } catch (e) {
-      debugPrint('[AudioHandler] Play error: $e');
-    }
+    debugPrint('[AudioHandler] Play button pressed');
+    await onPlay?.call();
   }
 
-  /// Pause
   @override
   Future<void> pause() async {
-    try {
-      await onPause?.call();
-      await _player.pause();
-    } catch (e) {
-      debugPrint('[AudioHandler] Pause error: $e');
-    }
+    debugPrint('[AudioHandler] Pause button pressed');
+    await onPause?.call();
   }
 
-  /// Stop
   @override
   Future<void> stop() async {
-    try {
-      await onStop?.call();
-      await _player.stop();
-      await super.stop();
-    } catch (e) {
-      debugPrint('[AudioHandler] Stop error: $e');
-    }
+    debugPrint('[AudioHandler] Stop button pressed');
+    await onStop?.call();
+    await super.stop();
   }
 
-  /// Skip to next
   @override
   Future<void> skipToNext() async {
-    try {
-      await onSkipToNext?.call();
-    } catch (e) {
-      debugPrint('[AudioHandler] Skip next error: $e');
-    }
+    debugPrint('[AudioHandler] Skip next pressed');
+    await onSkipToNext?.call();
   }
 
-  /// Skip to previous
   @override
   Future<void> skipToPrevious() async {
-    try {
-      await onSkipToPrevious?.call();
-    } catch (e) {
-      debugPrint('[AudioHandler] Skip previous error: $e');
-    }
+    debugPrint('[AudioHandler] Skip previous pressed');
+    await onSkipToPrevious?.call();
   }
 
-  /// Seek
   @override
   Future<void> seek(Duration position) async {
-    try {
-      await onSeek?.call(position);
-      await _player.seek(position);
-    } catch (e) {
-      debugPrint('[AudioHandler] Seek error: $e');
-    }
+    debugPrint('[AudioHandler] Seek to: $position');
+    await onSeek?.call(position);
   }
 
-  /// Set speed
-  Future<void> setSpeed(double speed) async {
-    try {
-      await _player.setSpeed(speed);
-    } catch (e) {
-      debugPrint('[AudioHandler] Set speed error: $e');
-    }
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CLEANUP
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Dispose
   Future<void> dispose() async {
-    await _playerStateSubscription?.cancel();
-    await _positionSubscription?.cancel();
-    await _durationSubscription?.cancel();
-    await _player.dispose();
+    // Nothing to dispose - no internal player
+    debugPrint('[AudioHandler] Disposed');
   }
 }

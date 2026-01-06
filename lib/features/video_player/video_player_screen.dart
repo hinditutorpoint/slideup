@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +7,7 @@ import 'models/video_player_state.dart';
 import 'providers/video_player_provider.dart';
 import 'providers/pip_provider.dart';
 import 'widgets/video_player_widget.dart';
-import 'widgets/pip_widget.dart';
+import 'widgets/native_pip_widget.dart';
 
 class VideoPlayerScreen extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -26,21 +25,21 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
   ConsumerState<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
-    with WidgetsBindingObserver {
+class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   bool _isInitialized = false;
   String? _initError;
-
-  // ✅ Exit state management
   bool _isExiting = false;
   bool _hasNavigated = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _initialize();
   }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ INITIALIZATION
+  // ═══════════════════════════════════════════════════════
 
   Future<void> _initialize() async {
     try {
@@ -83,82 +82,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     }
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Don't handle lifecycle if exiting or error
-    if (_isExiting || _initError != null) return;
-    _handleLifecycleChange(state);
-  }
-
-  void _handleLifecycleChange(AppLifecycleState state) {
-    if (!mounted || _isExiting) return;
-
-    try {
-      final playerState = ref.read(videoPlayerProvider);
-
-      switch (state) {
-        case AppLifecycleState.paused:
-        case AppLifecycleState.inactive:
-          if (playerState.mode != PlayerMode.pip &&
-              playerState.mode != PlayerMode.background) {
-            _handleBackgroundTransition();
-          }
-          break;
-        case AppLifecycleState.resumed:
-          _handleForegroundTransition();
-          break;
-        default:
-          break;
-      }
-    } catch (e) {
-      debugPrint('⚠️ Lifecycle change error: $e');
-    }
-  }
-
-  Future<void> _handleBackgroundTransition() async {
-    if (_isExiting) return;
-
-    try {
-      final playerNotifier = ref.read(videoPlayerProvider.notifier);
-      final pipNotifier = ref.read(pipProvider.notifier);
-      final playerState = ref.read(videoPlayerProvider);
-
-      if (!playerState.isPlaying) return;
-
-      final isPiPAvailable = await pipNotifier.isPiPAvailable();
-
-      if (isPiPAvailable) {
-        await pipNotifier.enableNativePiP();
-        playerNotifier.enterPiPMode();
-      } else {
-        playerNotifier.enterBackgroundMode();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Background transition error: $e');
-      try {
-        ref.read(videoPlayerProvider.notifier).pause();
-      } catch (_) {}
-    }
-  }
-
-  void _handleForegroundTransition() {
-    if (_isExiting) return;
-
-    try {
-      final playerState = ref.read(videoPlayerProvider);
-
-      if (playerState.mode == PlayerMode.pip ||
-          playerState.mode == PlayerMode.background) {
-        ref.read(videoPlayerProvider.notifier).exitPiPMode();
-        ref.read(pipProvider.notifier).disablePiP();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Foreground transition error: $e');
-    }
-  }
-
   // ═══════════════════════════════════════════════════════
-  // ✅ FIXED: Safe exit with proper state management
+  // ✅ EXIT & CLEANUP
   // ═══════════════════════════════════════════════════════
 
   Future<void> _safeExit() async {
@@ -170,13 +95,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     _isExiting = true;
     debugPrint('🔙 Starting safe exit...');
 
-    // ✅ Step 1: Stop player FIRST (but don't wait too long)
     await _stopPlayerWithTimeout();
-
-    // ✅ Step 2: Reset UI
     await _resetSystemUI();
 
-    // ✅ Step 3: Navigate
     if (mounted && !_hasNavigated) {
       _hasNavigated = true;
       debugPrint('🔙 Navigating back...');
@@ -184,12 +105,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     }
   }
 
-  /// Stop player with timeout to prevent blocking
   Future<void> _stopPlayerWithTimeout() async {
     try {
+      // Disable auto-pip before stopping
+      await ref.read(pipProvider.notifier).updateAutoPiP(isPlaying: false);
+
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (!notifier.isDisposed) {
-        // ✅ Use timeout to prevent hanging
         await notifier.stop().timeout(
           const Duration(milliseconds: 500),
           onTimeout: () {
@@ -203,7 +125,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     }
   }
 
-  /// Simple back for error/loading screens
   void _simpleBack() {
     if (_hasNavigated) return;
     _hasNavigated = true;
@@ -214,10 +135,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     if (mounted) {
       Navigator.of(context).pop();
     }
-  }
-
-  void _handleError(String? error) {
-    debugPrint('❌ Video player error: $error');
   }
 
   Future<void> _resetSystemUI() async {
@@ -237,11 +154,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   @override
   void dispose() {
     debugPrint('🧹 Disposing VideoPlayerScreen...');
-    WidgetsBinding.instance.removeObserver(this);
-
-    // ✅ Stop player in dispose (service will handle cleanup)
     _stopPlayerSafely();
-
     super.dispose();
   }
 
@@ -251,15 +164,16 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
       debugPrint('🧹 Stopping player safely...');
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (!notifier.isDisposed) {
-        debugPrint('🧹 Releasing player...');
-        await notifier.safeDisposeService();
-        debugPrint('🧹 Player released successfully');
-      } else {
-        debugPrint('🧹 Player already disposed');
+        await notifier.releasePlayer();
+        debugPrint('✅ Player released successfully');
       }
     } catch (e) {
       debugPrint('⚠️ Stop in dispose error: $e');
     }
+  }
+
+  void _handleError(String? error) {
+    debugPrint('❌ Video player error: $error');
   }
 
   // ═══════════════════════════════════════════════════════
@@ -268,27 +182,55 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    // ✅ If already navigating, show black screen
     if (_isExiting || _hasNavigated) {
       return const Scaffold(backgroundColor: Colors.black);
     }
 
-    // Show error screen first
     if (_initError != null) {
       return _buildErrorScreen(_initError!);
-    }
-
-    // Only watch providers if no error and not exiting
-    final pipState = ref.watch(pipProvider);
-
-    if (pipState.isActive) {
-      return _buildPiPOverlay();
     }
 
     if (!_isInitialized) {
       return _buildLoadingScreen();
     }
 
+    final pipState = ref.watch(pipProvider);
+
+    // ✅ Sync Auto-PiP with player state
+    ref.listen<VideoPlayerState>(videoPlayerProvider, (prev, next) {
+      if (prev?.isPlaying != next.isPlaying) {
+        if (!pipState.isCustomActive) {
+          ref
+              .read(pipProvider.notifier)
+              .updateAutoPiP(isPlaying: next.isPlaying);
+        }
+      }
+    });
+
+    // ✅ Pop screen when custom PiP is enabled
+    ref.listen<PiPStateData>(pipProvider, (prev, next) {
+      if (next.isCustomActive && !(prev?.isCustomActive ?? false)) {
+        if (mounted && !_isExiting && !_hasNavigated) {
+          debugPrint('📺 Custom PiP enabled - popping screen');
+          Navigator.of(context).pop();
+        }
+      }
+    });
+
+    // Native PiP (background)
+    if (pipState.isNativeActive) {
+      return const NativePiPWidget();
+    }
+
+    // Normal player
+    return _buildMainPlayer();
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ UI BUILDERS
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildMainPlayer() {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -300,22 +242,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
         autoPlay: widget.autoPlay,
         onBack: _safeExit,
         onError: _handleError,
-      ),
-    );
-  }
-
-  Widget _buildPiPOverlay() {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: PiPWidget(
-        onClose: () {
-          ref.read(pipProvider.notifier).disablePiP();
-          _safeExit();
-        },
-        onExpand: () {
-          ref.read(pipProvider.notifier).disablePiP();
-          ref.read(videoPlayerProvider.notifier).exitPiPMode();
-        },
       ),
     );
   }

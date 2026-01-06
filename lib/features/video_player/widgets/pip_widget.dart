@@ -23,21 +23,19 @@ class _PiPWidgetState extends ConsumerState<PiPWidget>
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
 
-  Offset? _dragStartOffset;
   Offset? _initialPosition;
+  Offset? _dragStartOffset;
   bool _showControls = true;
-  bool _isResizing = false;
-  double _resizeStartScale = 1.0;
 
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 250),
     );
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack),
     );
     _animationController.forward();
   }
@@ -54,545 +52,572 @@ class _PiPWidgetState extends ConsumerState<PiPWidget>
     final playerState = ref.watch(videoPlayerProvider);
     final screenSize = MediaQuery.of(context).size;
 
-    return Stack(
-      children: [
-        // Semi-transparent background (optional)
-        // GestureDetector(
-        //   onTap: widget.onExpand,
-        //   child: Container(color: Colors.black26),
-        // ),
-
-        // PiP Window
-        AnimatedPositioned(
-          duration: pipState.isDragging
-              ? Duration.zero
-              : const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          left: pipState.position.x,
-          top: pipState.position.y,
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: GestureDetector(
-              //here throw error
-              onTap: _toggleControls,
-              //onPanStart: _handleDragStart,
-              //onPanUpdate: (details) => _handleDragUpdate(details, screenSize),
-              //onPanEnd: (details) => _handleDragEnd(screenSize),
-              onLongPress: _handleLongPress,
-              onLongPressEnd: (_) => _handleLongPressEnd(screenSize),
-              onScaleStart: _handleScaleStart,
-              onScaleUpdate: _handleScaleUpdate,
-              onScaleEnd: (_) => _handleScaleEnd(screenSize),
-              child: _buildPiPWindow(pipState, playerState),
-            ),
-          ),
+    return AnimatedPositioned(
+      duration: pipState.isDragging || pipState.isResizing
+          ? Duration.zero
+          : const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+      left: pipState.position.x,
+      top: pipState.position.y,
+      child: ScaleTransition(
+        scale: _scaleAnimation,
+        child: GestureDetector(
+          onTap: _toggleControls,
+          onLongPress: _handleLongPress,
+          onPanStart: (details) => _handleDragStart(details, pipState),
+          onPanUpdate: _handleDragUpdate,
+          onPanEnd: (details) => _handleDragEnd(screenSize),
+          child: _buildWindowContent(pipState, playerState, screenSize),
         ),
+      ),
+    );
+  }
+
+  Widget _buildWindowContent(
+    PiPStateData pipState,
+    VideoPlayerState playerState,
+    Size screenSize,
+  ) {
+    final isCompact = pipState.size.width < 220;
+
+    return Container(
+      width: pipState.size.width,
+      height: pipState.size.height,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.6),
+            blurRadius: 20,
+            spreadRadius: 2,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(color: Colors.white.withValues(alpha: 0.05), blurRadius: 1),
+        ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.1),
+          width: 1,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          children: [
+            Positioned.fill(child: _buildVideoPlayer()),
+            if (_showControls)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.6),
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.7),
+                      ],
+                      stops: const [0.0, 0.25, 0.7, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            if (_showControls)
+              Positioned.fill(
+                child: _buildControls(pipState, playerState, isCompact),
+              ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: _buildResizeHandle(pipState, screenSize),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayer() {
+    try {
+      return Video(
+        controller: ref.read(videoPlayerProvider.notifier).videoController,
+        controls: NoVideoControls,
+        fit: BoxFit.cover,
+      );
+    } catch (e) {
+      debugPrint('⚠️ PiP video error: $e');
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: Icon(Icons.error_outline, color: Colors.red, size: 32),
+        ),
+      );
+    }
+  }
+
+  Widget _buildControls(
+    PiPStateData pipState,
+    VideoPlayerState playerState,
+    bool isCompact,
+  ) {
+    final height = pipState.size.height;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildTopBar(),
+        const Spacer(),
+        _buildCenterControls(playerState, isCompact),
+        const Spacer(),
+        if (height > 100)
+          _buildProgressBar(playerState)
+        else
+          SizedBox(height: pipState.size.width < 180 ? 4 : 8),
       ],
     );
   }
 
-  Widget _buildPiPWindow(PiPStateData pipState, VideoPlayerState playerState) {
-    final size = pipState.size;
-    final controlsMode = _getControlsMode(size);
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: size.width,
-      height: size.height,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 20,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          children: [
-            // Video
-            _buildVideo(),
-
-            // Controls overlay
-            if (_showControls)
-              _buildControlsOverlay(controlsMode, playerState, pipState),
-
-            // Resize handle
-            if (_showControls)
-              Positioned(right: 0, bottom: 0, child: _buildResizeHandle()),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVideo() {
-    try {
-      final notifier = ref.read(videoPlayerProvider.notifier);
-
-      return SizedBox.expand(
-        child: Video(
-          controller: notifier.videoController,
-          controls: NoVideoControls,
-          fit: BoxFit.contain,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ PiP video build error: $e');
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: Icon(Icons.error_outline, color: Colors.red),
-        ),
-      );
-    }
-  }
-
-  Widget _buildControlsOverlay(
-    _ControlsMode mode,
-    VideoPlayerState playerState,
-    PiPStateData pipState,
-  ) {
-    return AnimatedOpacity(
-      opacity: _showControls ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 200),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.5),
-              Colors.transparent,
-              Colors.black.withValues(alpha: 0.5),
-            ],
-          ),
-        ),
-        child: Column(
-          children: [
-            // Top bar
-            _buildTopBar(),
-
-            const Spacer(),
-
-            // Center/Bottom controls based on mode
-            _buildCenterControls(mode, playerState),
-
-            if (mode == _ControlsMode.expanded) _buildProgressBar(playerState),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildTopBar() {
+    final pipState = ref.watch(pipProvider);
+    final width = pipState.size.width;
+    final isVerySmall = width < 180;
+
     return Padding(
-      padding: const EdgeInsets.all(4),
+      padding: EdgeInsets.fromLTRB(
+        isVerySmall ? 4 : 8,
+        isVerySmall ? 4 : 6,
+        isVerySmall ? 4 : 8,
+        0,
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Expand button
-          _MiniIconButton(
-            icon: Icons.open_in_full,
+          if (!isVerySmall)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.drag_indicator,
+                    color: Colors.white.withValues(alpha: 0.7),
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'PiP',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const Spacer(),
+          _TopBarButton(
+            icon: Icons.open_in_full_rounded,
             onTap: _handleExpand,
-            tooltip: 'Expand',
+            size: isVerySmall ? 12 : 16,
           ),
-          // Close button
-          _MiniIconButton(
-            icon: Icons.close,
+          SizedBox(width: isVerySmall ? 2 : 4),
+          _TopBarButton(
+            icon: Icons.close_rounded,
             onTap: _handleClose,
-            tooltip: 'Close',
+            isDestructive: true,
+            size: isVerySmall ? 12 : 16,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCenterControls(
-    _ControlsMode mode,
-    VideoPlayerState playerState,
-  ) {
-    switch (mode) {
-      case _ControlsMode.mini:
-        // Only play/pause
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: _MiniIconButton(
-            icon: playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-            size: 32,
+  Widget _buildCenterControls(VideoPlayerState playerState, bool isCompact) {
+    final pipState = ref.watch(pipProvider);
+    final width = pipState.size.width;
+    final height = pipState.size.height;
+
+    final minDimension = width < height ? width : height;
+    final buttonSize = (minDimension * 0.25).clamp(20.0, 36.0);
+    final skipSize = (minDimension * 0.18).clamp(16.0, 28.0);
+    final spacing = (width * 0.04).clamp(6.0, 16.0);
+    final showSkipButtons = width > 180;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: width < 180 ? 4 : 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showSkipButtons && playerState.canPlayPrevious) ...[
+            _ControlButton(
+              icon: Icons.skip_previous_rounded,
+              size: skipSize,
+              onTap: _handlePrevious,
+            ),
+            SizedBox(width: spacing),
+          ],
+          _PlayPauseButton(
+            isPlaying: playerState.isPlaying,
             onTap: _handlePlayPause,
+            size: buttonSize,
           ),
-        );
-
-      case _ControlsMode.small:
-        // Play/pause + next/previous
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (playerState.canPlayPrevious)
-                _MiniIconButton(
-                  icon: Icons.skip_previous,
-                  onTap: _handlePrevious,
-                ),
-              const SizedBox(width: 8),
-              _MiniIconButton(
-                icon: playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                size: 36,
-                onTap: _handlePlayPause,
-              ),
-              const SizedBox(width: 8),
-              if (playerState.canPlayNext)
-                _MiniIconButton(icon: Icons.skip_next, onTap: _handleNext),
-            ],
-          ),
-        );
-
-      case _ControlsMode.expanded:
-        // Full controls
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (playerState.canPlayPrevious)
-                _MiniIconButton(
-                  icon: Icons.skip_previous,
-                  onTap: _handlePrevious,
-                ),
-              _MiniIconButton(
-                icon: Icons.replay_10,
-                onTap: () => _handleSeek(-10),
-              ),
-              const SizedBox(width: 8),
-              _MiniIconButton(
-                icon: playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                size: 40,
-                onTap: _handlePlayPause,
-              ),
-              const SizedBox(width: 8),
-              _MiniIconButton(
-                icon: Icons.forward_10,
-                onTap: () => _handleSeek(10),
-              ),
-              if (playerState.canPlayNext)
-                _MiniIconButton(icon: Icons.skip_next, onTap: _handleNext),
-            ],
-          ),
-        );
-    }
+          if (showSkipButtons && playerState.canPlayNext) ...[
+            SizedBox(width: spacing),
+            _ControlButton(
+              icon: Icons.skip_next_rounded,
+              size: skipSize,
+              onTap: _handleNext,
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildProgressBar(VideoPlayerState playerState) {
-    final progress = playerState.progress.clamp(0.0, 1.0);
+    final pipState = ref.watch(pipProvider);
+    final width = pipState.size.width;
+    final height = pipState.size.height;
+
+    if (height < 100) return const SizedBox.shrink();
+
+    final isVerySmall = width < 180;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(2),
-        child: LinearProgressIndicator(
-          value: progress,
-          backgroundColor: Colors.white24,
-          valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
-          minHeight: 3,
-        ),
+      padding: EdgeInsets.fromLTRB(
+        isVerySmall ? 6 : 12,
+        0,
+        isVerySmall ? 28 : 40,
+        isVerySmall ? 6 : 10,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (width > 160)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatDuration(playerState.position),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.8),
+                    fontSize: isVerySmall ? 9 : 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  _formatDuration(playerState.duration),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: isVerySmall ? 9 : 10,
+                  ),
+                ),
+              ],
+            ),
+          if (width > 160) const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(1.5),
+            child: SizedBox(
+              height: isVerySmall ? 2 : 3,
+              child: LinearProgressIndicator(
+                value: playerState.progress.clamp(0.0, 1.0),
+                backgroundColor: Colors.white.withValues(alpha: 0.2),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildResizeHandle() {
+  Widget _buildResizeHandle(PiPStateData pipState, Size screenSize) {
+    final width = pipState.size.width;
+    final handleSize = width < 180 ? 24.0 : 32.0;
+    final iconSize = width < 180 ? 10.0 : 14.0;
+
     return GestureDetector(
-      onPanStart: (_) => _handleResizeStart(),
-      onPanUpdate: _handleResizeUpdate,
-      onPanEnd: (_) => _handleResizeEnd(),
+      onPanStart: _handleResizeStart,
+      onPanUpdate: (details) => _handleResizeUpdate(details, screenSize),
+      onPanEnd: _handleResizeEnd,
       child: Container(
-        width: 24,
-        height: 24,
+        width: handleSize,
+        height: handleSize,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.3),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(8),
-            bottomRight: Radius.circular(12),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.transparent,
+              Colors.white.withValues(alpha: width < 180 ? 0.08 : 0.1),
+            ],
+          ),
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(handleSize * 0.5),
+            bottomRight: const Radius.circular(16),
           ),
         ),
-        child: const Icon(Icons.open_in_full, color: Colors.white70, size: 14),
+        child: Stack(
+          children: [
+            Positioned(
+              right: handleSize * 0.125,
+              bottom: handleSize * 0.125,
+              child: Icon(
+                Icons.open_in_full_rounded,
+                size: iconSize,
+                color: Colors.white.withValues(alpha: 0.5),
+              ),
+            ),
+            if (width >= 180) ...[
+              Positioned(
+                right: handleSize * 0.1875,
+                bottom: handleSize * 0.3125,
+                child: Container(
+                  width: handleSize * 0.25,
+                  height: 1.5,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: handleSize * 0.3125,
+                bottom: handleSize * 0.1875,
+                child: Container(
+                  width: 1.5,
+                  height: handleSize * 0.25,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ CONTROLS MODE
-  // ═══════════════════════════════════════════════════════
-
-  _ControlsMode _getControlsMode(PiPSize size) {
-    if (size.width <= PiPSize.mini.width + 20) {
-      return _ControlsMode.mini;
-    } else if (size.width <= PiPSize.small.width + 30) {
-      return _ControlsMode.small;
-    } else {
-      return _ControlsMode.expanded;
-    }
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ GESTURE HANDLERS
-  // ═══════════════════════════════════════════════════════
-
   void _toggleControls() {
+    HapticFeedback.selectionClick();
     setState(() {
       _showControls = !_showControls;
     });
-    HapticFeedback.selectionClick();
-  }
-
-  void _handleDragStart(DragStartDetails details) {
-    try {
-      _dragStartOffset = details.globalPosition;
-      final pipState = ref.read(pipProvider);
-      _initialPosition = Offset(pipState.position.x, pipState.position.y);
-      ref.read(pipProvider.notifier).startDrag();
-    } catch (e) {
-      debugPrint('⚠️ Drag start error: $e');
-    }
-  }
-
-  void _handleDragUpdate(DragUpdateDetails details, Size screenSize) {
-    try {
-      if (_dragStartOffset == null || _initialPosition == null) return;
-
-      final delta = details.globalPosition - _dragStartOffset!;
-      final newX = (_initialPosition!.dx + delta.dx);
-      final newY = (_initialPosition!.dy + delta.dy);
-
-      ref.read(pipProvider.notifier).setPosition(PiPPosition(x: newX, y: newY));
-    } catch (e) {
-      debugPrint('⚠️ Drag update error: $e');
-    }
-  }
-
-  void _handleDragEnd(Size screenSize) {
-    try {
-      ref.read(pipProvider.notifier).endDrag(screenSize);
-      _dragStartOffset = null;
-      _initialPosition = null;
-      HapticFeedback.lightImpact();
-    } catch (e) {
-      debugPrint('⚠️ Drag end error: $e');
-    }
   }
 
   void _handleLongPress() {
-    try {
-      HapticFeedback.heavyImpact();
-      ref.read(pipProvider.notifier).cycleSize();
-    } catch (e) {
-      debugPrint('⚠️ Long press error: $e');
-    }
+    HapticFeedback.mediumImpact();
+    ref.read(pipProvider.notifier).cycleSize();
   }
 
-  void _handleLongPressEnd(Size screenSize) {
-    try {
-      ref.read(pipProvider.notifier).snapToCorner(screenSize);
-    } catch (e) {
-      debugPrint('⚠️ Long press end error: $e');
-    }
+  void _handleDragStart(DragStartDetails details, PiPStateData pipState) {
+    _dragStartOffset = details.globalPosition;
+    _initialPosition = Offset(pipState.position.x, pipState.position.y);
+    ref.read(pipProvider.notifier).startDrag();
   }
 
-  void _handleScaleStart(ScaleStartDetails details) {
-    try {
-      final pipState = ref.read(pipProvider);
-      _initialPosition = Offset(pipState.position.x, pipState.position.y);
-      _dragStartOffset = details.focalPoint;
-      _resizeStartScale = 1.0;
+  void _handleDragUpdate(DragUpdateDetails details) {
+    if (_dragStartOffset == null || _initialPosition == null) return;
 
-      // Detect if it's a pinch (2+ fingers) or drag (1 finger)
-      if (details.pointerCount > 1) {
-        _isResizing = true;
-      } else {
-        _isResizing = false;
-        ref.read(pipProvider.notifier).startDrag();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Scale start error: $e');
-    }
+    final delta = details.globalPosition - _dragStartOffset!;
+    ref
+        .read(pipProvider.notifier)
+        .setPosition(
+          PiPPosition(
+            x: _initialPosition!.dx + delta.dx,
+            y: _initialPosition!.dy + delta.dy,
+          ),
+        );
   }
 
-  void _handleScaleUpdate(ScaleUpdateDetails details) {
-    try {
-      if (_isResizing) {
-        // Pinch to resize
-        if (details.scale != 1.0) {
-          final scaleDelta = (details.scale - _resizeStartScale) * 100;
-          ref.read(pipProvider.notifier).resizeByDelta(scaleDelta);
-          _resizeStartScale = details.scale;
-        }
-      } else {
-        // Single finger drag
-        if (_dragStartOffset == null || _initialPosition == null) return;
-
-        final delta = details.focalPoint - _dragStartOffset!;
-        final newX = _initialPosition!.dx + delta.dx;
-        final newY = _initialPosition!.dy + delta.dy;
-
-        ref
-            .read(pipProvider.notifier)
-            .setPosition(PiPPosition(x: newX, y: newY));
-      }
-    } catch (e) {
-      debugPrint('⚠️ Scale update error: $e');
-    }
+  void _handleDragEnd(Size screenSize) {
+    HapticFeedback.lightImpact();
+    ref.read(pipProvider.notifier).endDrag(screenSize);
+    _dragStartOffset = null;
+    _initialPosition = null;
   }
 
-  void _handleScaleEnd(Size screenSize) {
-    try {
-      if (_isResizing) {
-        ref.read(pipProvider.notifier).endResize();
-      } else {
-        ref.read(pipProvider.notifier).endDrag(screenSize);
-        HapticFeedback.lightImpact();
-      }
-
-      _dragStartOffset = null;
-      _initialPosition = null;
-      _isResizing = false;
-    } catch (e) {
-      debugPrint('⚠️ Scale end error: $e');
-    }
+  void _handleResizeStart(DragStartDetails details) {
+    HapticFeedback.selectionClick();
+    ref.read(pipProvider.notifier).startResize();
   }
 
-  void _handleResizeStart() {
-    try {
-      ref.read(pipProvider.notifier).startResize();
-      HapticFeedback.selectionClick();
-    } catch (e) {
-      debugPrint('⚠️ Resize start error: $e');
-    }
+  void _handleResizeUpdate(DragUpdateDetails details, Size screenSize) {
+    final pipState = ref.read(pipProvider);
+    final delta = details.delta.dx + details.delta.dy;
+    final newWidth = (pipState.size.width + delta).clamp(
+      150.0,
+      screenSize.width - 40,
+    );
+    final newHeight = newWidth * (9 / 16);
+    final maxHeight = screenSize.height - pipState.position.y - 40;
+    final constrainedHeight = newHeight.clamp(84.0, maxHeight);
+    final constrainedWidth = constrainedHeight * (16 / 9);
+
+    ref
+        .read(pipProvider.notifier)
+        .setSize(PiPSize(width: constrainedWidth, height: constrainedHeight));
   }
 
-  void _handleResizeUpdate(DragUpdateDetails details) {
-    try {
-      final delta = details.delta.dx + details.delta.dy;
-      ref.read(pipProvider.notifier).resizeByDelta(delta);
-    } catch (e) {
-      debugPrint('⚠️ Resize update error: $e');
-    }
+  void _handleResizeEnd(DragEndDetails details) {
+    HapticFeedback.lightImpact();
+    ref.read(pipProvider.notifier).endResize();
   }
-
-  void _handleResizeEnd() {
-    try {
-      ref.read(pipProvider.notifier).endResize();
-    } catch (e) {
-      debugPrint('⚠️ Resize end error: $e');
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ PLAYBACK HANDLERS
-  // ═══════════════════════════════════════════════════════
 
   void _handlePlayPause() {
-    try {
-      ref.read(videoPlayerProvider.notifier).playOrPause();
-      HapticFeedback.selectionClick();
-    } catch (e) {
-      debugPrint('⚠️ Play/pause error: $e');
-    }
+    HapticFeedback.selectionClick();
+    ref.read(videoPlayerProvider.notifier).playOrPause();
   }
 
   void _handlePrevious() {
-    try {
-      ref.read(videoPlayerProvider.notifier).playPrevious();
-      HapticFeedback.mediumImpact();
-    } catch (e) {
-      debugPrint('⚠️ Previous error: $e');
-    }
+    HapticFeedback.mediumImpact();
+    ref.read(videoPlayerProvider.notifier).playPrevious();
   }
 
   void _handleNext() {
-    try {
-      ref.read(videoPlayerProvider.notifier).playNext();
-      HapticFeedback.mediumImpact();
-    } catch (e) {
-      debugPrint('⚠️ Next error: $e');
-    }
+    HapticFeedback.mediumImpact();
+    ref.read(videoPlayerProvider.notifier).playNext();
   }
 
-  void _handleSeek(int seconds) {
+  void _handleExpand() async {
+    HapticFeedback.mediumImpact();
     try {
-      ref.read(videoPlayerProvider.notifier).seekRelative(seconds);
-      HapticFeedback.lightImpact();
-    } catch (e) {
-      debugPrint('⚠️ Seek error: $e');
-    }
+      await ref.read(videoPlayerProvider.notifier).savePosition();
+    } catch (_) {}
+    await _animationController.reverse();
+    widget.onExpand?.call();
   }
 
-  void _handleExpand() {
+  void _handleClose() async {
+    HapticFeedback.mediumImpact();
     try {
-      _animationController.reverse().then((_) {
-        ref.read(pipProvider.notifier).disablePiP();
-        ref.read(videoPlayerProvider.notifier).exitPiPMode();
-        widget.onExpand?.call();
-      });
-    } catch (e) {
-      debugPrint('⚠️ Expand error: $e');
-    }
-  }
-
-  void _handleClose() {
-    try {
-      _animationController.reverse().then((_) {
-        ref.read(videoPlayerProvider.notifier).stop();
-        ref.read(pipProvider.notifier).disablePiP();
-        widget.onClose?.call();
-      });
-    } catch (e) {
-      debugPrint('⚠️ Close error: $e');
-    }
+      await ref.read(videoPlayerProvider.notifier).savePosition();
+    } catch (_) {}
+    await _animationController.reverse();
+    widget.onClose?.call();
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ HELPER WIDGETS
-// ═══════════════════════════════════════════════════════
-
-enum _ControlsMode { mini, small, expanded }
-
-class _MiniIconButton extends StatelessWidget {
+class _TopBarButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
+  final bool isDestructive;
   final double size;
-  final String? tooltip;
 
-  const _MiniIconButton({
+  const _TopBarButton({
     required this.icon,
-    this.onTap,
-    this.size = 24,
-    this.tooltip,
+    required this.onTap,
+    this.isDestructive = false,
+    this.size = 16,
   });
 
   @override
   Widget build(BuildContext context) {
-    final button = GestureDetector(
+    final padding = size < 14 ? 4.0 : 6.0;
+    return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: EdgeInsets.all(size * 0.2),
+        padding: EdgeInsets.all(padding),
         decoration: BoxDecoration(
-          color: Colors.black38,
+          color: isDestructive
+              ? Colors.red.withValues(alpha: 0.2)
+              : Colors.white.withValues(alpha: 0.15),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          icon,
+          color: isDestructive
+              ? Colors.red.shade300
+              : Colors.white.withValues(alpha: 0.9),
+          size: size,
+        ),
+      ),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final double size;
+  final VoidCallback onTap;
+
+  const _ControlButton({
+    required this.icon,
+    required this.size,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final padding = size < 20 ? 4.0 : (size * 0.25).clamp(5.0, 8.0);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(padding),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.15),
           shape: BoxShape.circle,
         ),
         child: Icon(icon, color: Colors.white, size: size),
       ),
     );
+  }
+}
 
-    if (tooltip != null) {
-      return Tooltip(message: tooltip!, child: button);
-    }
+class _PlayPauseButton extends StatelessWidget {
+  final bool isPlaying;
+  final VoidCallback onTap;
+  final double size;
 
-    return button;
+  const _PlayPauseButton({
+    required this.isPlaying,
+    required this.onTap,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final padding = size < 24 ? 4.0 : (size * 0.25).clamp(6.0, 10.0);
+    final borderWidth = size < 24 ? 0.5 : (size > 30 ? 1.5 : 1.0);
+    final isVerySmall = size < 24;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(padding),
+        decoration: BoxDecoration(
+          color: isVerySmall
+              ? Colors.white.withValues(alpha: 0.3)
+              : Colors.white.withValues(alpha: 0.25),
+          shape: BoxShape.circle,
+          border: isVerySmall
+              ? null
+              : Border.all(
+                  color: Colors.white.withValues(alpha: 0.3),
+                  width: borderWidth,
+                ),
+        ),
+        child: Icon(
+          isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          color: Colors.white,
+          size: size,
+        ),
+      ),
+    );
   }
 }

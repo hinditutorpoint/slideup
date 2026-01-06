@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:audio_service/audio_service.dart';
 import 'models/tts_request.dart';
 import 'models/download_model.dart';
 import 'services/tts_service.dart';
@@ -14,6 +13,7 @@ import 'repositories/tts_cache_repository.dart';
 import 'widgets/tts_overlay_manager.dart';
 import 'services/tts_queue_manager.dart';
 import 'services/language_detection_service.dart';
+import 'services/audiobook_audio_handler.dart';
 
 /// Cached audio entry info
 class CachedAudioEntry {
@@ -165,7 +165,7 @@ class TtsController {
     return await _modelService!.getActiveModelForType(SherpaModelType.tts);
   }
 
-  AudioHandler? _audioHandler;
+  AudiobookAudioHandler? _audioHandler;
 
   /// Clear current model
   void clearCurrentModel() {
@@ -176,9 +176,54 @@ class TtsController {
   }
 
   /// Register audio handler for background playback
-  void registerAudioHandler(AudioHandler handler) {
+  void registerAudioHandler(AudiobookAudioHandler handler) {
     _audioHandler = handler;
     debugPrint('[TtsController] Audio handler registered');
+
+    // ✅ Listen to actual player state and sync to handler
+    _audioPlayer.statusStream.listen((status) {
+      _syncStateToHandler(status);
+    });
+  }
+
+  /// Sync actual player state to audio handler (for notification)
+  void _syncStateToHandler(TtsStatus? status) {
+    if (_audioHandler == null) return;
+
+    try {
+      if (status == null) return;
+      switch (status.state) {
+        case TtsPlaybackState.playing:
+          _audioHandler!.setPlaying();
+          break;
+        case TtsPlaybackState.paused:
+          _audioHandler!.setPaused();
+          break;
+        case TtsPlaybackState.loading:
+        case TtsPlaybackState.generating:
+          _audioHandler!.setLoading();
+          break;
+        case TtsPlaybackState.completed:
+          _audioHandler!.setCompleted();
+          break;
+        case TtsPlaybackState.idle:
+        case TtsPlaybackState.stopped:
+        case TtsPlaybackState.initial:
+        case TtsPlaybackState.error:
+          _audioHandler!.setIdle();
+          break;
+      }
+
+      // Update position
+      if (status.position != null && status.duration != null) {
+        _audioHandler!.updatePosition(
+          status.position,
+          duration: status.duration,
+        );
+      }
+    } catch (e) {
+      debugPrint('[TtsController] Sync to handler error: $e');
+    }
   }
 
   /// Unregister audio handler
@@ -355,6 +400,145 @@ class TtsController {
     }
 
     return null;
+  }
+
+  /// Play cached audio entry in background (no BuildContext required)
+  /// Uses AudioHandler's player for proper background support
+  Future<bool> playCachedEntryBackground({
+    required dynamic entry,
+    bool showUi = false,
+    Function(double)? onProgress,
+    Function(TtsPlaybackState)? onStateChanged,
+    VoidCallback? onCompleted,
+    Function(String)? onError,
+  }) async {
+    try {
+      // Extract file path
+      String? filePath;
+      String? textPreview;
+      double speed = 1.0;
+      int speakerId = 0;
+      Duration? duration;
+
+      if (entry is CachedAudioEntry) {
+        filePath = entry.filePath;
+        textPreview = entry.textPreview;
+        speed = entry.speed;
+        speakerId = entry.speakerId;
+        duration = entry.duration;
+      } else {
+        try {
+          filePath = entry.filePath as String?;
+          textPreview = entry.textPreview as String? ?? '';
+          speed = (entry.speed as num?)?.toDouble() ?? 1.0;
+          speakerId = entry.speakerId as int? ?? 0;
+          duration = entry.duration as Duration?;
+        } catch (e) {
+          onError?.call('Invalid entry format');
+          return false;
+        }
+      }
+
+      if (filePath == null || filePath.isEmpty) {
+        onError?.call('No audio file path');
+        return false;
+      }
+
+      // Check file exists
+      final file = File(filePath);
+      if (!await file.exists()) {
+        onError?.call('Audio file not found');
+        return false;
+      }
+
+      debugPrint('[TtsController] Playing (background safe): $filePath');
+
+      // ✅ Update notification info
+      if (_audioHandler != null) {
+        await _audioHandler!.updateMediaInfo(
+          title: textPreview ?? 'Playing',
+          album: 'Audiobook',
+          duration: duration,
+        );
+        _audioHandler!.setLoading();
+      }
+
+      // Notify state
+      onStateChanged?.call(TtsPlaybackState.loading);
+
+      // Create request
+      final request = TtsRequest(
+        text: textPreview ?? '',
+        modelPath: _currentModelPath,
+        speed: speed,
+        speakerId: speakerId,
+        showUi: false,
+        onStateChanged: (state) {
+          onStateChanged?.call(state);
+          // ✅ Sync to notification
+          _syncPlaybackStateToHandler(state);
+        },
+        onProgress: (progress) {
+          onProgress?.call(progress);
+          // ✅ Update notification position
+          if (_audioHandler != null && duration != null) {
+            final position = Duration(
+              milliseconds: (duration.inMilliseconds * progress).round(),
+            );
+            _audioHandler!.updatePosition(position, duration: duration);
+          }
+        },
+        onError: (error) {
+          onError?.call(error);
+          _audioHandler?.setIdle();
+        },
+        onCompleted: () {
+          onCompleted?.call();
+          _audioHandler?.setCompleted();
+        },
+      );
+
+      // ✅ Play using TtsAudioPlayer (the actual player)
+      final success = await _audioPlayer.playFromFile(
+        filePath,
+        request: request,
+      );
+
+      if (success) {
+        _audioHandler?.setPlaying();
+      } else {
+        _audioHandler?.setIdle();
+      }
+
+      return success;
+    } catch (e, stack) {
+      debugPrint('[TtsController] playCachedEntryBackground error: $e\n$stack');
+      onError?.call(e.toString());
+      _audioHandler?.setIdle();
+      return false;
+    }
+  }
+
+  void _syncPlaybackStateToHandler(TtsPlaybackState state) {
+    if (_audioHandler == null) return;
+
+    switch (state) {
+      case TtsPlaybackState.playing:
+        _audioHandler!.setPlaying();
+        break;
+      case TtsPlaybackState.paused:
+        _audioHandler!.setPaused();
+        break;
+      case TtsPlaybackState.loading:
+      case TtsPlaybackState.generating:
+        _audioHandler!.setLoading();
+        break;
+      case TtsPlaybackState.completed:
+        _audioHandler!.setCompleted();
+        break;
+      default:
+        _audioHandler!.setIdle();
+    }
   }
 
   /// Initialize queue manager (call in init())

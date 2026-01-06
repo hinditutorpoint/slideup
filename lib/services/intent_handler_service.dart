@@ -383,7 +383,7 @@ class IntentHandlerService {
     }
   }
 
-  String? _getTag(Map<String, dynamic> meta, String key) {
+  /*   String? _getTag(Map<String, dynamic> meta, String key) {
     // 1️⃣ Try format tags
     final formatTags = meta['format']?['tags'];
     if (formatTags is Map && formatTags[key] != null) {
@@ -402,7 +402,7 @@ class IntentHandlerService {
     }
 
     return null;
-  }
+  } */
 
   /// Create a single MediaFile from path (public method)
   static Future<MediaFile?> createMediaFile(String filePath) async {

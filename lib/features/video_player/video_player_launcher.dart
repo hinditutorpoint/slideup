@@ -488,6 +488,11 @@ class VideoPlayerLauncher {
         '.3gp',
         '.ts',
         '.m3u8',
+        '.ogv',
+        '.mpg',
+        '.mpeg',
+        '.mp4v',
+        '.ogg',
       ];
       return exts.any((ext) => path.endsWith(ext));
     } catch (e) {

@@ -18,8 +18,8 @@ class PixabayApiService {
   // Get free API key from: https://pixabay.com/api/docs/
   static const String _apiKey = '7728716-2d9054381871f3f39700f8c1c';
   static const String _imageBaseUrl = 'https://pixabay.com/api/';
-  static const String _musicBaseUrl =
-      'https://pixabay.com/api/videos/'; // Note: Pixabay music is limited
+  //static const String _musicBaseUrl =
+  //'https://pixabay.com/api/videos/'; // Note: Pixabay music is limited
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final Map<String, MusicTrack> _downloadedTracks = {};

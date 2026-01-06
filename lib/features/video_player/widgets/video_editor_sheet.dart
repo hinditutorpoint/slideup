@@ -44,8 +44,8 @@ class _VideoEditorSheetState extends ConsumerState<VideoEditorSheet>
 
   // Color grading
   ColorGradeSettings _colorSettings = const ColorGradeSettings();
-  bool _showColorPreview = false;
-  Uint8List? _colorPreviewImage;
+  //bool _showColorPreview = false;
+  //Uint8List? _colorPreviewImage;
 
   // Processing
   bool _isProcessing = false;

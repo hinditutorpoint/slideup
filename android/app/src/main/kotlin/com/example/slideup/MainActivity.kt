@@ -14,7 +14,8 @@ import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugins.GeneratedPluginRegistrant   // <-- ADD THIS
+import io.flutter.plugins.GeneratedPluginRegistrant
+import cl.puntito.simple_pip_mode.PipCallbackHelper
 import java.io.File
 
 class MainActivity : AudioServiceActivity() {
@@ -31,6 +32,7 @@ class MainActivity : AudioServiceActivity() {
     private var intentSink: EventChannel.EventSink? = null
     private var initialIntentPath: String? = null
     private var pendingIntentPath: String? = null
+    private var callbackHelper = PipCallbackHelper()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         // IMPORTANT: Explicitly register all plugins, including Workmanager
@@ -44,6 +46,7 @@ class MainActivity : AudioServiceActivity() {
         setupIntentMethodChannel(flutterEngine)
         setupIntentEventChannel(flutterEngine)
         setupWallpaperChannel(flutterEngine)
+        callbackHelper.configureFlutterEngine(flutterEngine)
 
         // Process launch intent
         processLaunchIntent()
@@ -318,6 +321,7 @@ class MainActivity : AudioServiceActivity() {
     @Deprecated("Deprecated in Java")
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        callbackHelper.onPictureInPictureModeChanged(isInPictureInPictureMode)
         Log.d(TAG, if (isInPictureInPictureMode) "✅ Entered PiP" else "❌ Exited PiP")
     }
 

@@ -14,6 +14,7 @@ import 'locked_overlay_widget.dart';
 import 'brightness_volume_indicator.dart';
 import 'seek_indicator_widget.dart';
 import 'speed_indicator_widget.dart';
+import 'thumbnail_preview_widget.dart';
 
 class VideoPlayerWidget extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -266,9 +267,19 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
                 onLongPressStart: _handleLongPressStart,
                 onLongPressEnd: _handleLongPressEnd,
                 onVerticalDrag: _handleVerticalDrag,
-                onHorizontalDrag: _handleHorizontalDrag,
+                onHorizontalDragStart: _handleHorizontalDragStart,
+                onHorizontalDragUpdate: _handleHorizontalDragUpdate,
+                onHorizontalDragEnd: _handleHorizontalDragEnd,
               ),
 
+            if (playerState.showSeekPreview &&
+                playerState.isSeekingHorizontally)
+              ThumbnailPreviewWidget(
+                thumbnail: playerState.seekPreviewThumbnail,
+                targetPosition: playerState.seekPreviewPosition!,
+                seekSeconds: playerState.accumulatedSeekSeconds,
+                isVisible: true,
+              ),
             // Layer 5: Controls overlay
             if (isReady && playerState.showControls && !playerState.isLocked)
               ControlsOverlayWidget(
@@ -318,14 +329,50 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
         return Container(color: Colors.black);
       }
 
+      // ✅ Convert VideoFit to BoxFit
+      BoxFit getBoxFit() {
+        switch (playerState.videoFit) {
+          case VideoFit.contain:
+            return BoxFit.contain;
+          case VideoFit.cover:
+            return BoxFit.cover;
+          case VideoFit.fill:
+            return BoxFit.fill;
+          case VideoFit.fitWidth:
+            return BoxFit.fitWidth;
+          case VideoFit.fitHeight:
+            return BoxFit.fitHeight;
+        }
+      }
+
+      // ✅ Calculate flip transform
+      Widget videoWidget = Video(
+        controller: notifier.videoController,
+        controls: NoVideoControls,
+        fit: getBoxFit(),
+      );
+
+      // Apply flips if needed
+      if (playerState.isFlippedHorizontally ||
+          playerState.isFlippedVertically) {
+        videoWidget = Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..scale(
+              playerState.isFlippedHorizontally ? -1.0 : 1.0,
+              playerState.isFlippedVertically ? -1.0 : 1.0,
+            ),
+          child: videoWidget,
+        );
+      }
+
       return Center(
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Video(
-            controller: notifier.videoController,
-            controls: NoVideoControls,
-            fit: BoxFit.contain,
-          ),
+        child: InteractiveViewer(
+          minScale: 1.0,
+          maxScale: 4.0,
+          panEnabled: true,
+          scaleEnabled: true,
+          child: AspectRatio(aspectRatio: 16 / 9, child: videoWidget),
         ),
       );
     } catch (e) {
@@ -563,6 +610,44 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     }
   }
 
+  void _handleHorizontalDragStart() {
+    if (_isDisposed || _isExiting) return;
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return;
+
+      notifier.startHorizontalSeek();
+      debugPrint('🎬 Started horizontal seek');
+    } catch (e) {
+      debugPrint('⚠️ Handle horizontal drag start error: $e');
+    }
+  }
+
+  void _handleHorizontalDragUpdate(double delta) {
+    if (_isDisposed || _isExiting) return;
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return;
+
+      notifier.updateHorizontalSeek(delta);
+    } catch (e) {
+      debugPrint('⚠️ Handle horizontal drag update error: $e');
+    }
+  }
+
+  void _handleHorizontalDragEnd() {
+    if (_isDisposed || _isExiting) return;
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return;
+
+      notifier.endHorizontalSeek();
+      debugPrint('🎬 Ended horizontal seek');
+    } catch (e) {
+      debugPrint('⚠️ Handle horizontal drag end error: $e');
+    }
+  }
+
   void _handleVerticalDrag(double delta, bool isLeftSide) {
     if (_isDisposed || _isExiting) return;
     try {
@@ -581,7 +666,7 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     }
   }
 
-  void _handleHorizontalDrag(double delta) {
+  /* void _handleHorizontalDrag(double delta) {
     if (_isDisposed || _isExiting) return;
     try {
       final notifier = ref.read(videoPlayerProvider.notifier);
@@ -594,5 +679,5 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     } catch (e) {
       debugPrint('⚠️ Handle horizontal drag error: $e');
     }
-  }
+  } */
 }
