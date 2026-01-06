@@ -46,6 +46,13 @@ jobs:
       - name: Run Flutter tests
         run: flutter test
 
+      - name: Network debug (Maven Central)
+        run: |
+          set -x
+          curl -I https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.pom || true
+          curl -I https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.pom || true
+          env | sort | grep -i proxy || true
+
       # 7️⃣ Build signed APK (keystore step optional)
       - name: Build signed APK
         run: |
