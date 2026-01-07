@@ -13,7 +13,15 @@ import '../models/video_edit_settings.dart';
 // ✅ AI PROVIDER CONFIGURATION
 // ═══════════════════════════════════════════════════════
 
-enum AiProvider { stabilityAi, openAi, replicate, deepAi, lexica }
+enum AiProvider {
+  stabilityAi,
+  openAi,
+  replicate,
+  deepAi,
+  lexica,
+  openRouter,
+  cloudflare,
+}
 
 class AiProviderConfig {
   final AiProvider provider;
@@ -34,6 +42,8 @@ class AiProviderConfig {
     AiProvider.replicate: 'https://api.replicate.com/v1',
     AiProvider.deepAi: 'https://api.deepai.org/api',
     AiProvider.lexica: 'https://lexica.art/api/v1',
+    AiProvider.openRouter: 'https://api.openrouter.ai/v1',
+    AiProvider.cloudflare: 'https://smplus.hinditutorpoint.workers.dev',
   };
 }
 
@@ -110,6 +120,12 @@ class AiImageService {
         case AiProvider.lexica:
           images = await _searchLexica(request);
           break;
+        case AiProvider.openRouter:
+          images = await _generateWithOpenRouter(request);
+          break;
+        case AiProvider.cloudflare:
+          images = await _generateWithCloudflare(request);
+          break;
       }
 
       // Save to local storage
@@ -134,6 +150,199 @@ class AiImageService {
       rethrow;
     } finally {
       _isGenerating = false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ OPEN ROUTER
+  // ═══════════════════════════════════════════════════════
+
+  Future<List<AiGeneratedImage>> _generateWithOpenRouter(
+    AiImageRequest request,
+  ) async {
+    final url = Uri.parse(
+      '${AiProviderConfig.defaultBaseUrls[AiProvider.openRouter]}/images/generations',
+    );
+
+    final dimensions = request.dimensions;
+    final stylePrompt = _getStylePrompt(request.style);
+    final fullPrompt = stylePrompt.isNotEmpty
+        ? '${request.prompt}, $stylePrompt'
+        : request.prompt;
+
+    final body = {
+      'model': 'stabilityai/stable-diffusion-xl-base-1.0',
+      'prompt': fullPrompt,
+      'n': request.count,
+      'size': '${dimensions['width']}x${dimensions['height']}',
+    };
+
+    _updateState(
+      AiGenerationState.generating(0.3, 'Sending request to OpenRouter...'),
+    );
+
+    try {
+      final response = await _httpClient
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${_config!.apiKey}',
+              'HTTP-Referer': 'https://your-app.com',
+              'X-Title': 'Your App Name',
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(minutes: 2));
+
+      _updateState(AiGenerationState.generating(0.7, 'Processing response...'));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final imageData = data['data'] as List;
+
+        final images = <AiGeneratedImage>[];
+        for (final item in imageData) {
+          if (item['b64_json'] != null) {
+            final bytes = base64Decode(item['b64_json']);
+            images.add(
+              AiGeneratedImage.create(
+                prompt: request.prompt,
+                bytes: bytes,
+                width: dimensions['width']!,
+                height: dimensions['height']!,
+              ),
+            );
+          } else if (item['url'] != null) {
+            final imageBytes = await _downloadImage(item['url']);
+            if (imageBytes != null) {
+              images.add(
+                AiGeneratedImage.create(
+                  prompt: request.prompt,
+                  url: item['url'],
+                  bytes: imageBytes,
+                  width: dimensions['width']!,
+                  height: dimensions['height']!,
+                ),
+              );
+            }
+          }
+        }
+        return images;
+      } else {
+        final error = json.decode(response.body);
+        throw Exception(
+          'OpenRouter error: ${error['error']?['message'] ?? response.statusCode}',
+        );
+      }
+    } catch (e) {
+      if (e is TimeoutException) {
+        throw Exception('Request timed out. Please try again.');
+      }
+      rethrow;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ CLOUDFLARE WORKERS AI
+  // ═══════════════════════════════════════════════════════
+
+  Future<List<AiGeneratedImage>> _generateWithCloudflare(
+    AiImageRequest request,
+  ) async {
+    final baseUrl =
+        _config!.baseUrl ??
+        AiProviderConfig.defaultBaseUrls[AiProvider.cloudflare]!;
+    final url = Uri.parse('$baseUrl/api/generate');
+
+    final dimensions = request.dimensions;
+    final stylePrompt = _getStylePrompt(request.style);
+    final fullPrompt = stylePrompt.isNotEmpty
+        ? '${request.prompt}, $stylePrompt'
+        : request.prompt;
+
+    final body = {
+      'prompt': fullPrompt,
+      'negative_prompt': request.negativePrompt ?? 'blurry, bad quality',
+      'width': dimensions['width'],
+      'height': dimensions['height'],
+      'num_steps': 20,
+      'guidance': 7.5,
+    };
+
+    _updateState(
+      AiGenerationState.generating(0.3, 'Generating with Cloudflare AI...'),
+    );
+
+    try {
+      final response = await _httpClient
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              if (_config!.apiKey.isNotEmpty)
+                'Authorization': 'Bearer ${_config!.apiKey}',
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(minutes: 2));
+
+      _updateState(AiGenerationState.generating(0.7, 'Processing...'));
+
+      if (response.statusCode == 200) {
+        final contentType = response.headers['content-type'] ?? '';
+
+        if (contentType.contains('image/')) {
+          // Direct image response
+          return [
+            AiGeneratedImage.create(
+              prompt: request.prompt,
+              bytes: response.bodyBytes,
+              width: dimensions['width']!,
+              height: dimensions['height']!,
+            ),
+          ];
+        } else {
+          // JSON response with base64 or URL
+          final data = json.decode(response.body);
+
+          if (data['image'] != null) {
+            final bytes = base64Decode(data['image']);
+            return [
+              AiGeneratedImage.create(
+                prompt: request.prompt,
+                bytes: bytes,
+                width: dimensions['width']!,
+                height: dimensions['height']!,
+              ),
+            ];
+          } else if (data['url'] != null) {
+            final imageBytes = await _downloadImage(data['url']);
+            if (imageBytes != null) {
+              return [
+                AiGeneratedImage.create(
+                  prompt: request.prompt,
+                  url: data['url'],
+                  bytes: imageBytes,
+                  width: dimensions['width']!,
+                  height: dimensions['height']!,
+                ),
+              ];
+            }
+          }
+
+          throw Exception('Invalid response format from Cloudflare');
+        }
+      } else {
+        throw Exception(
+          'Cloudflare error: ${response.statusCode} - ${response.body}',
+        );
+      }
+    } catch (e) {
+      if (e is TimeoutException) {
+        throw Exception('Request timed out. Please try again.');
+      }
+      rethrow;
     }
   }
 

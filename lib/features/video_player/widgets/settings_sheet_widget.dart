@@ -4,6 +4,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../models/video_player_state.dart';
 import '../providers/video_player_provider.dart';
+import '../../video_editor/video_editor_screen.dart';
 
 class SettingsSheetWidget extends ConsumerWidget {
   const SettingsSheetWidget({super.key});
@@ -73,6 +74,12 @@ class SettingsSheetWidget extends ConsumerWidget {
                           onTap: () => _toggleLoop(context, ref),
                         ),
                         const SizedBox(height: 16),
+                        _SettingsItem(
+                          icon: Icons.edit,
+                          title: 'Edit Video',
+                          subtitle: 'Edit video',
+                          onTap: () => _editVideo(context, ref),
+                        ),
                       ],
                     ),
                   ),
@@ -83,6 +90,19 @@ class SettingsSheetWidget extends ConsumerWidget {
         );
       },
       errorBuilder: (context, error) => _buildErrorWidget(context, error),
+    );
+  }
+
+  void _editVideo(BuildContext context, WidgetRef ref) {
+    final playerState = ref.read(videoPlayerProvider);
+    final notifier = ref.read(videoPlayerProvider.notifier);
+    final videoPath = playerState.currentUrl;
+    notifier.pause();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VideoEditorScreen(videoPath: videoPath),
+      ),
     );
   }
 

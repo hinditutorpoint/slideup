@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -10,9 +11,11 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models/video_edit_settings.dart';
+import 'package:slideup/core/utils/safe_async.dart';
+import 'package:slideup/core/utils/isolate_helper.dart';
 
 // ═══════════════════════════════════════════════════════
 // ✅ CONSTANTS
@@ -23,6 +26,7 @@ const String kExportChannelId = 'video_export_channel';
 const String kExportChannelName = 'Video Export';
 const int kExportNotificationId = 1001;
 const int kExportCompleteNotificationId = 1002;
+const String kExportJobsBox = 'export_jobs_box';
 
 // ═══════════════════════════════════════════════════════
 // ✅ BACKGROUND CALLBACK
@@ -45,6 +49,56 @@ void callbackDispatcher() {
 }
 
 // ═══════════════════════════════════════════════════════
+// ✅ EXPORT JOB ERROR
+// ═══════════════════════════════════════════════════════
+
+enum ExportJobErrorType {
+  invalidProject,
+  processingFailed,
+  cancelled,
+  timeout,
+  storageError,
+  unknown,
+}
+
+class ExportJobError implements Exception {
+  final ExportJobErrorType type;
+  final String message;
+  final String? details;
+  final Object? originalError;
+
+  const ExportJobError({
+    required this.type,
+    required this.message,
+    this.details,
+    this.originalError,
+  });
+
+  @override
+  String toString() =>
+      'ExportJobError($type): $message${details != null ? ' - $details' : ''}';
+
+  factory ExportJobError.invalidProject(String reason) => ExportJobError(
+    type: ExportJobErrorType.invalidProject,
+    message: 'Invalid project',
+    details: reason,
+  );
+
+  factory ExportJobError.processingFailed(String operation, [Object? error]) =>
+      ExportJobError(
+        type: ExportJobErrorType.processingFailed,
+        message: 'Export failed',
+        details: operation,
+        originalError: error,
+      );
+
+  factory ExportJobError.cancelled() => const ExportJobError(
+    type: ExportJobErrorType.cancelled,
+    message: 'Export cancelled',
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // ✅ EXPORT JOB
 // ═══════════════════════════════════════════════════════
 
@@ -55,7 +109,7 @@ class ExportJob {
   final String outputPath;
   final Map<String, dynamic> settings;
   final DateTime createdAt;
-  ExportStatus status;
+  ExportJobStatus status;
   double progress;
   String? error;
 
@@ -66,7 +120,7 @@ class ExportJob {
     required this.outputPath,
     required this.settings,
     DateTime? createdAt,
-    this.status = ExportStatus.idle,
+    this.status = ExportJobStatus.pending,
     this.progress = 0.0,
     this.error,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -85,15 +139,39 @@ class ExportJob {
 
   factory ExportJob.fromJson(Map<String, dynamic> json) {
     return ExportJob(
-      id: json['id'],
-      projectId: json['projectId'],
-      inputPath: json['inputPath'],
-      outputPath: json['outputPath'],
+      id: json['id'] as String,
+      projectId: json['projectId'] as String,
+      inputPath: json['inputPath'] as String,
+      outputPath: json['outputPath'] as String,
       settings: Map<String, dynamic>.from(json['settings'] ?? {}),
-      createdAt: DateTime.parse(json['createdAt']),
-      status: ExportStatus.values[json['status'] ?? 0],
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      status: ExportJobStatus.values[json['status'] as int? ?? 0],
       progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
-      error: json['error'],
+      error: json['error'] as String?,
+    );
+  }
+
+  ExportJob copyWith({
+    String? id,
+    String? projectId,
+    String? inputPath,
+    String? outputPath,
+    Map<String, dynamic>? settings,
+    DateTime? createdAt,
+    ExportJobStatus? status,
+    double? progress,
+    String? error,
+  }) {
+    return ExportJob(
+      id: id ?? this.id,
+      projectId: projectId ?? this.projectId,
+      inputPath: inputPath ?? this.inputPath,
+      outputPath: outputPath ?? this.outputPath,
+      settings: settings ?? this.settings,
+      createdAt: createdAt ?? this.createdAt,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      error: error ?? this.error,
     );
   }
 }
@@ -114,19 +192,12 @@ class BackgroundExportService {
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.first_unlock_this_device,
-    ),
-  );
-
+  Box<String>? _jobsBox;
   bool _isInitialized = false;
   ExportJob? _currentJob;
   bool _isCancelled = false;
   int? _currentSessionId;
 
-  // Stream controllers
   final _progressController = StreamController<ExportProgress>.broadcast();
   final _jobsController = StreamController<List<ExportJob>>.broadcast();
 
@@ -136,25 +207,30 @@ class BackgroundExportService {
   ExportJob? get currentJob => _currentJob;
   bool get isExporting =>
       _currentJob != null && _currentJob!.status == ExportStatus.processing;
-
-  final String _currentJobKey = 'background_export_current_job';
+  bool get isInitialized => _isInitialized;
 
   // ═══════════════════════════════════════════════════════
   // ✅ INITIALIZATION
   // ═══════════════════════════════════════════════════════
 
-  Future<void> initialize() async {
-    if (_isInitialized) return;
+  Future<Result<void>> initialize() async {
+    if (_isInitialized) return Result.success(null);
 
-    try {
+    return SafeAsync.run(() async {
+      await _initializeHive();
       await _initializeNotifications();
-
       await Workmanager().initialize(callbackDispatcher);
 
       _isInitialized = true;
       debugPrint('✅ BackgroundExportService initialized');
+    }, operationName: 'BackgroundExportService.initialize');
+  }
+
+  Future<void> _initializeHive() async {
+    try {
+      _jobsBox = await Hive.openBox<String>(kExportJobsBox);
     } catch (e) {
-      debugPrint('❌ Initialize error: $e');
+      debugPrint('❌ Hive init error: $e');
     }
   }
 
@@ -236,12 +312,17 @@ class BackgroundExportService {
   // ✅ START EXPORT
   // ═══════════════════════════════════════════════════════
 
-  Future<String?> startExport({
+  Future<Result<String>> startExport({
     required VideoProject project,
     bool runInBackground = true,
-    Function(ExportProgress)? onProgress,
+    void Function(ExportProgress)? onProgress,
   }) async {
-    if (!_isInitialized) await initialize();
+    if (!_isInitialized) {
+      final initResult = await initialize();
+      if (initResult.isFailure) {
+        return Result.failure(initResult.error!);
+      }
+    }
 
     // Cancel any existing export
     if (_currentJob != null && _currentJob!.status == ExportStatus.processing) {
@@ -251,183 +332,183 @@ class BackgroundExportService {
 
     _isCancelled = false;
 
-    try {
-      final outputDir = await _getOutputDirectory();
-      final fileName =
-          'export_${DateTime.now().millisecondsSinceEpoch}.${project.exportPreset.extension}';
-      final outputPath = p.join(outputDir.path, fileName);
+    return SafeAsync.run(
+      () async {
+        final outputDir = await _getOutputDirectory();
+        final fileName =
+            'export_${DateTime.now().millisecondsSinceEpoch}.${project.exportPreset.extension}';
+        final outputPath = p.join(outputDir.path, fileName);
 
-      final job = ExportJob(
-        id: _uuid.v4(),
-        projectId: project.id,
-        inputPath: project.videoPath,
-        outputPath: outputPath,
-        settings: _buildExportSettings(project),
-      );
+        final job = ExportJob(
+          id: _uuid.v4(),
+          projectId: project.id,
+          inputPath: project.videoPath,
+          outputPath: outputPath,
+          settings: _buildExportSettings(project),
+        );
 
-      _currentJob = job;
-      await _saveCurrentJob(job);
+        _currentJob = job;
+        await _saveJob(job);
 
-      _updateProgress(
-        ExportProgress(
-          status: ExportStatus.preparing,
-          progress: 0.0,
-          message: 'Preparing export...',
-        ),
-      );
+        _updateProgress(
+          const ExportProgress(
+            status: ExportStatus.preparing,
+            progress: 0.0,
+            message: 'Preparing export...',
+          ),
+        );
 
-      await _showProgressNotification(0, 'Preparing export...');
+        await _showProgressNotification(0, 'Preparing export...');
 
-      final result = await _executeExport(
-        job: job,
-        project: project,
-        onProgress: (progress) {
-          onProgress?.call(progress);
-          _updateProgress(progress);
-        },
-      );
+        final result = await _executeExport(
+          job: job,
+          project: project,
+          onProgress: (progress) {
+            onProgress?.call(progress);
+            _updateProgress(progress);
+          },
+        );
 
-      return result;
-    } catch (e) {
-      debugPrint('❌ Start export error: $e');
-
-      // IMPORTANT: Clear the notification and update state on error
-      await _handleExportFailure(e.toString());
-
-      return null;
-    }
+        return result;
+      },
+      operationName: 'startExport',
+      timeout: const Duration(hours: 2),
+    );
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ EXECUTE EXPORT - FIXED ERROR HANDLING
+  // ✅ EXECUTE EXPORT
   // ═══════════════════════════════════════════════════════
 
-  Future<String?> _executeExport({
+  Future<String> _executeExport({
     required ExportJob job,
     required VideoProject project,
-    Function(ExportProgress)? onProgress,
+    void Function(ExportProgress)? onProgress,
   }) async {
     final startTime = DateTime.now();
 
-    try {
-      job.status = ExportStatus.processing;
-      await _saveCurrentJob(job);
+    job.status = ExportJobStatus.running;
+    await _saveJob(job);
 
-      final command = await _buildFFmpegCommand(project, job.outputPath);
-      debugPrint('📹 FFmpeg command: $command');
+    // Build command in isolate
+    final commandResult = await IsolateHelper.instance.compute(
+      _buildFFmpegCommandIsolate,
+      _CommandParams(project: project, outputPath: job.outputPath),
+    );
 
-      final totalDuration = project.effectiveDuration;
-      final completer = Completer<bool>();
+    final command = commandResult.getOrElse('');
+    if (command.isEmpty) {
+      throw ExportJobError.processingFailed('Failed to build FFmpeg command');
+    }
 
-      // Setup progress callback
-      FFmpegKitConfig.enableStatisticsCallback((statistics) {
+    debugPrint('📹 FFmpeg command: $command');
+
+    final totalDuration = project.effectiveDuration;
+    final completer = Completer<bool>();
+
+    // Setup progress callback
+    FFmpegKitConfig.enableStatisticsCallback((statistics) {
+      try {
+        if (_isCancelled) return;
+
+        final time = statistics.getTime();
+        if (time > 0 && totalDuration.inMilliseconds > 0) {
+          final progress = (time / totalDuration.inMilliseconds).clamp(
+            0.0,
+            0.99,
+          );
+          final elapsed = DateTime.now().difference(startTime);
+          final estimated = progress > 0.01
+              ? Duration(
+                  milliseconds: (elapsed.inMilliseconds / progress).toInt(),
+                )
+              : null;
+
+          job.progress = progress;
+
+          final exportProgress = ExportProgress(
+            status: ExportStatus.processing,
+            progress: progress,
+            message: 'Exporting... ${(progress * 100).toInt()}%',
+            elapsed: elapsed,
+            estimated: estimated,
+          );
+
+          onProgress?.call(exportProgress);
+          _showProgressNotification(
+            (progress * 100).toInt(),
+            'Exporting video... ${(progress * 100).toInt()}%',
+          );
+        }
+      } catch (e) {
+        debugPrint('❌ Statistics callback error: $e');
+      }
+    });
+
+    // Execute FFmpeg with async callback
+    final session = await FFmpegKit.executeAsync(
+      command,
+      (session) async {
         try {
-          if (_isCancelled) return;
-
-          final time = statistics.getTime();
-          if (time > 0 && totalDuration.inMilliseconds > 0) {
-            final progress = (time / totalDuration.inMilliseconds).clamp(
-              0.0,
-              0.99,
-            );
-            final elapsed = DateTime.now().difference(startTime);
-            final estimated = progress > 0.01
-                ? Duration(
-                    milliseconds: (elapsed.inMilliseconds / progress).toInt(),
-                  )
-                : null;
-
-            job.progress = progress;
-
-            final exportProgress = ExportProgress(
-              status: ExportStatus.processing,
-              progress: progress,
-              message: 'Exporting... ${(progress * 100).toInt()}%',
-              elapsed: elapsed,
-              estimated: estimated,
-            );
-
-            onProgress?.call(exportProgress);
-            _showProgressNotification(
-              (progress * 100).toInt(),
-              'Exporting video... ${(progress * 100).toInt()}%',
-            );
+          final returnCode = await session.getReturnCode();
+          if (!completer.isCompleted) {
+            completer.complete(ReturnCode.isSuccess(returnCode));
           }
         } catch (e) {
-          debugPrint('❌ Statistics callback error: $e');
-        }
-      });
-
-      // Execute FFmpeg with async callback
-      final session = await FFmpegKit.executeAsync(
-        command,
-        (session) async {
-          try {
-            final returnCode = await session.getReturnCode();
-            if (!completer.isCompleted) {
-              completer.complete(ReturnCode.isSuccess(returnCode));
-            }
-          } catch (e) {
-            if (!completer.isCompleted) {
-              completer.complete(false);
-            }
+          if (!completer.isCompleted) {
+            completer.complete(false);
           }
-        },
-        (log) {
-          if (log.getLevel() <= 16) {
-            debugPrint('FFmpeg: ${log.getMessage()}');
-          }
-        },
-        null,
-      );
-
-      _currentSessionId = session.getSessionId();
-
-      // Wait for completion with timeout
-      final success = await completer.future.timeout(
-        const Duration(minutes: 30),
-        onTimeout: () {
-          debugPrint('⚠️ Export timeout');
-          return false;
-        },
-      );
-
-      // Clear callbacks
-      FFmpegKitConfig.enableStatisticsCallback(null);
-      _currentSessionId = null;
-
-      if (_isCancelled) {
-        await _handleExportCancelled(job);
-        return null;
-      }
-
-      if (success) {
-        // Verify output file exists and has content
-        final outputFile = File(job.outputPath);
-        if (await outputFile.exists() && await outputFile.length() > 0) {
-          await _handleExportSuccess(job, onProgress, startTime);
-          return job.outputPath;
-        } else {
-          await _handleExportFailure('Output file is empty or missing');
-          return null;
         }
+      },
+      (log) {
+        if (log.getLevel() <= 16) {
+          debugPrint('FFmpeg: ${log.getMessage()}');
+        }
+      },
+      null,
+    );
+
+    _currentSessionId = session.getSessionId();
+
+    // Wait for completion with timeout
+    final success = await completer.future.timeout(
+      const Duration(hours: 1),
+      onTimeout: () {
+        debugPrint('⚠️ Export timeout');
+        return false;
+      },
+    );
+
+    // Clear callbacks
+    FFmpegKitConfig.enableStatisticsCallback(null);
+    _currentSessionId = null;
+
+    if (_isCancelled) {
+      await _handleExportCancelled(job);
+      throw ExportJobError.cancelled();
+    }
+
+    if (success) {
+      // Verify output file
+      final outputFile = File(job.outputPath);
+      if (await outputFile.exists() && await outputFile.length() > 0) {
+        await _handleExportSuccess(job, onProgress, startTime);
+        return job.outputPath;
       } else {
-        final logs = await session.getAllLogsAsString();
-        final errorMsg = _extractErrorFromLogs(logs);
-        await _handleExportFailure(errorMsg);
-        return null;
+        await _handleExportFailure('Output file is empty or missing');
+        throw ExportJobError.processingFailed('Output file validation failed');
       }
-    } catch (e) {
-      debugPrint('❌ Execute export error: $e');
-      await _handleExportFailure(e.toString());
-      return null;
+    } else {
+      final logs = await session.getAllLogsAsString();
+      final errorMsg = _extractErrorFromLogs(logs);
+      await _handleExportFailure(errorMsg);
+      throw ExportJobError.processingFailed(errorMsg);
     }
   }
 
   String _extractErrorFromLogs(String? logs) {
     if (logs == null || logs.isEmpty) return 'Unknown error';
 
-    // Look for common error patterns
     final lines = logs.split('\n');
     for (final line in lines.reversed) {
       if (line.toLowerCase().contains('error') ||
@@ -446,12 +527,12 @@ class BackgroundExportService {
 
   Future<void> _handleExportSuccess(
     ExportJob job,
-    Function(ExportProgress)? onProgress,
+    void Function(ExportProgress)? onProgress,
     DateTime startTime,
   ) async {
-    job.status = ExportStatus.completed;
+    job.status = ExportJobStatus.completed;
     job.progress = 1.0;
-    await _saveCurrentJob(job);
+    await _saveJob(job);
 
     final finalProgress = ExportProgress(
       status: ExportStatus.completed,
@@ -466,18 +547,15 @@ class BackgroundExportService {
     await _showCompletionNotification(true, outputPath: job.outputPath);
 
     _currentJob = null;
-    await _clearCurrentJob();
   }
 
   Future<void> _handleExportFailure(String error) async {
     debugPrint('❌ Export failed: $error');
 
     if (_currentJob != null) {
-      _currentJob!.status = ExportStatus.failed;
+      _currentJob!.status = ExportJobStatus.failed;
       _currentJob!.error = error;
-      await _saveCurrentJob(_currentJob!);
-
-      // Clean up partial output file
+      await _saveJob(_currentJob!);
       await _cleanupFile(_currentJob!.outputPath);
     }
 
@@ -490,19 +568,17 @@ class BackgroundExportService {
       ),
     );
 
-    // IMPORTANT: Cancel the progress notification and show failure
     await _cancelNotification();
     await _showCompletionNotification(false, error: error);
 
     _currentJob = null;
     _currentSessionId = null;
-    await _clearCurrentJob();
   }
 
   Future<void> _handleExportCancelled(ExportJob job) async {
     await _cleanupFile(job.outputPath);
-    job.status = ExportStatus.cancelled;
-    await _saveCurrentJob(job);
+    job.status = ExportJobStatus.cancelled;
+    await _saveJob(job);
 
     _updateProgress(
       const ExportProgress(
@@ -514,128 +590,16 @@ class BackgroundExportService {
     await _cancelNotification();
     _currentJob = null;
     _currentSessionId = null;
-    await _clearCurrentJob();
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ BUILD FFMPEG COMMAND - FIXED
+  // ✅ CANCEL EXPORT
   // ═══════════════════════════════════════════════════════
 
-  Future<String> _buildFFmpegCommand(
-    VideoProject project,
-    String outputPath,
-  ) async {
-    final parts = <String>['-y'];
-
-    // Input with trim
-    if (project.trimStart > Duration.zero) {
-      parts.add('-ss ${_formatDuration(project.trimStart)}');
-    }
-
-    final escapedInput = _escapePathForShell(project.videoPath);
-    parts.add('-i $escapedInput');
-
-    if (project.trimEnd < project.videoDuration) {
-      final duration = project.trimEnd - project.trimStart;
-      parts.add('-t ${_formatDuration(duration)}');
-    }
-
-    // Build video filters
-    final videoFilters = <String>[];
-
-    // Color grading
-    if (!project.colorGrade.isDefault) {
-      videoFilters.add(_buildColorFilter(project.colorGrade));
-    }
-
-    // Resolution scaling (without padding to avoid dimension issues)
-    final preset = project.exportPreset;
-    if (preset.width != null && preset.height != null) {
-      videoFilters.add(
-        'scale=${preset.width}:${preset.height}:force_original_aspect_ratio=decrease',
-      );
-    }
-
-    // Apply video filters
-    if (videoFilters.isNotEmpty) {
-      parts.add('-vf "${videoFilters.join(',')}"');
-    }
-
-    // Video encoding
-    if (preset.quality != VideoQuality.original) {
-      parts.add('-c:v libx264');
-      parts.add('-preset medium');
-      parts.add('-crf 23');
-
-      if (preset.bitrate != null) {
-        parts.add('-b:v ${preset.bitrate}k');
-      }
-      if (preset.fps != null) {
-        parts.add('-r ${preset.fps}');
-      }
-    } else {
-      parts.add('-c:v copy');
-    }
-
-    // Audio
-    if (preset.removeAudio) {
-      parts.add('-an');
-    } else {
-      parts.add('-c:a aac');
-      parts.add('-b:a ${preset.audioBitrate ?? 128}k');
-    }
-
-    // Output
-    parts.add('-movflags +faststart');
-    parts.add(_escapePathForShell(outputPath));
-
-    return parts.join(' ');
-  }
-
-  String _buildColorFilter(ColorGradeSettings settings) {
-    final filters = <String>[];
-
-    // Brightness, contrast, saturation
-    final eqParts = <String>[];
-    if (settings.brightness != 0.0) {
-      eqParts.add('brightness=${settings.brightness}');
-    }
-    if (settings.contrast != 1.0) {
-      eqParts.add('contrast=${settings.contrast}');
-    }
-    if (settings.saturation != 1.0) {
-      eqParts.add('saturation=${settings.saturation}');
-    }
-
-    if (eqParts.isNotEmpty) {
-      filters.add('eq=${eqParts.join(':')}');
-    }
-
-    // Hue
-    if (settings.hue != 0.0) {
-      filters.add('hue=h=${settings.hue}');
-    }
-
-    return filters.isEmpty ? 'null' : filters.join(',');
-  }
-
-  String _escapePathForShell(String path) {
-    if (Platform.isWindows) {
-      return '"${path.replaceAll('"', '\\"')}"';
-    } else {
-      return '"${path.replaceAll('"', '\\"').replaceAll("'", "\\'")}"';
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ CANCEL EXPORT - FIXED
-  // ═══════════════════════════════════════════════════════
-
-  Future<void> cancelExport() async {
+  Future<Result<void>> cancelExport() async {
     _isCancelled = true;
 
-    try {
-      // Cancel FFmpeg session
+    return SafeAsync.run(() async {
       if (_currentSessionId != null) {
         await FFmpegKit.cancel(_currentSessionId!);
         _currentSessionId = null;
@@ -643,14 +607,9 @@ class BackgroundExportService {
         await FFmpegKit.cancel();
       }
 
-      // Cancel background task
       if (_currentJob != null) {
         await Workmanager().cancelByUniqueName(_currentJob!.id);
-      }
-
-      // Update state
-      if (_currentJob != null) {
-        _currentJob!.status = ExportStatus.cancelled;
+        _currentJob!.status = ExportJobStatus.cancelled;
         await _cleanupFile(_currentJob!.outputPath);
       }
 
@@ -663,14 +622,11 @@ class BackgroundExportService {
 
       await _cancelNotification();
       _currentJob = null;
-      await _clearCurrentJob();
-    } catch (e) {
-      debugPrint('❌ Cancel export error: $e');
-    }
+    }, operationName: 'cancelExport');
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ NOTIFICATIONS - FIXED
+  // ✅ NOTIFICATIONS
   // ═══════════════════════════════════════════════════════
 
   Future<void> _showProgressNotification(int progress, String message) async {
@@ -720,7 +676,6 @@ class BackgroundExportService {
     String? error,
   }) async {
     try {
-      // ALWAYS cancel progress notification first
       await _notifications.cancel(kExportNotificationId);
 
       final androidDetails = AndroidNotificationDetails(
@@ -800,45 +755,67 @@ class BackgroundExportService {
     }
   }
 
-  /* Future<void> _startBackgroundTask(ExportJob job) async {
-    try {
-      await Workmanager().registerOneOffTask(
-        job.id,
-        kExportTaskName,
-        inputData: job.toJson(),
-        constraints: Constraints(
-          networkType: NetworkType.notRequired,
-          requiresBatteryNotLow: false,
-          requiresCharging: false,
-          requiresDeviceIdle: false,
-          requiresStorageNotLow: true,
-        ),
-        existingWorkPolicy: ExistingWorkPolicy.replace,
-        backoffPolicy: BackoffPolicy.linear,
-        backoffPolicyDelay: const Duration(seconds: 10),
-      );
-    } catch (e) {
-      debugPrint('❌ Start background task error: $e');
-    }
-  } */
-
   // ═══════════════════════════════════════════════════════
-  // ✅ PERSISTENCE
+  // ✅ PERSISTENCE WITH HIVE
   // ═══════════════════════════════════════════════════════
 
-  Future<void> _saveCurrentJob(ExportJob job) async {
+  Future<void> _saveJob(ExportJob job) async {
     try {
-      await _storage.write(key: _currentJobKey, value: job.toJson().toString());
+      final jsonStr = jsonEncode(job.toJson());
+      await _jobsBox?.put(job.id, jsonStr);
+      _notifyJobsChanged();
     } catch (e) {
       debugPrint('❌ Save job error: $e');
     }
   }
 
-  Future<void> _clearCurrentJob() async {
+  Future<void> deleteJob(String jobId) async {
     try {
-      await _storage.delete(key: _currentJobKey);
+      await _jobsBox?.delete(jobId);
+      _notifyJobsChanged();
     } catch (e) {
-      debugPrint('❌ Clear job error: $e');
+      debugPrint('❌ Delete job error: $e');
+    }
+  }
+
+  Future<List<ExportJob>> getAllJobs() async {
+    try {
+      final jobs = <ExportJob>[];
+      final keys = _jobsBox?.keys ?? [];
+
+      for (final key in keys) {
+        final jsonStr = _jobsBox?.get(key);
+        if (jsonStr != null) {
+          final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+          jobs.add(ExportJob.fromJson(json));
+        }
+      }
+
+      jobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return jobs;
+    } catch (e) {
+      debugPrint('❌ Get all jobs error: $e');
+      return [];
+    }
+  }
+
+  Future<ExportJob?> getJob(String jobId) async {
+    try {
+      final jsonStr = _jobsBox?.get(jobId);
+      if (jsonStr != null) {
+        final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+        return ExportJob.fromJson(json);
+      }
+    } catch (e) {
+      debugPrint('❌ Get job error: $e');
+    }
+    return null;
+  }
+
+  void _notifyJobsChanged() async {
+    final jobs = await getAllJobs();
+    if (!_jobsController.isClosed) {
+      _jobsController.add(jobs);
     }
   }
 
@@ -878,26 +855,134 @@ class BackgroundExportService {
     }
   }
 
-  String _formatDuration(Duration d) {
-    final h = d.inHours.toString().padLeft(2, '0');
-    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
-    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-    final ms = (d.inMilliseconds % 1000).toString().padLeft(3, '0');
-    return '$h:$m:$s.$ms';
-  }
-
   void _updateProgress(ExportProgress progress) {
     if (!_progressController.isClosed) {
       _progressController.add(progress);
     }
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ DISPOSE
-  // ═══════════════════════════════════════════════════════
-
   void dispose() {
     _progressController.close();
     _jobsController.close();
+    _jobsBox?.close();
   }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ ISOLATE FUNCTIONS
+// ═══════════════════════════════════════════════════════
+
+class _CommandParams {
+  final VideoProject project;
+  final String outputPath;
+
+  _CommandParams({required this.project, required this.outputPath});
+}
+
+String _buildFFmpegCommandIsolate(_CommandParams params) {
+  final project = params.project;
+  final outputPath = params.outputPath;
+
+  final parts = <String>['-y'];
+
+  // Input with trim
+  if (project.trimStart > Duration.zero) {
+    parts.add('-ss ${_formatDurationIsolate(project.trimStart)}');
+  }
+
+  final escapedInput = _escapePathForShellIsolate(project.videoPath);
+  parts.add('-i $escapedInput');
+
+  if (project.trimEnd < project.videoDuration) {
+    final duration = project.trimEnd - project.trimStart;
+    parts.add('-t ${_formatDurationIsolate(duration)}');
+  }
+
+  // Build video filters
+  final videoFilters = <String>[];
+
+  // Color grading
+  if (!project.colorGrade.isDefault) {
+    videoFilters.add(_buildColorFilterIsolate(project.colorGrade));
+  }
+
+  // Resolution scaling
+  final preset = project.exportPreset;
+  if (preset.width != null && preset.height != null) {
+    videoFilters.add(
+      'scale=${preset.width}:${preset.height}:force_original_aspect_ratio=decrease',
+    );
+  }
+
+  // Apply video filters
+  if (videoFilters.isNotEmpty) {
+    parts.add('-vf "${videoFilters.join(',')}"');
+  }
+
+  // Video encoding
+  if (preset.quality != VideoQuality.original) {
+    parts.add('-c:v libx264');
+    parts.add('-preset medium');
+    parts.add('-crf 23');
+
+    if (preset.bitrate != null) {
+      parts.add('-b:v ${preset.bitrate}k');
+    }
+    if (preset.fps != null) {
+      parts.add('-r ${preset.fps}');
+    }
+  } else {
+    parts.add('-c:v copy');
+  }
+
+  // Audio
+  if (preset.removeAudio) {
+    parts.add('-an');
+  } else {
+    parts.add('-c:a aac');
+    parts.add('-b:a ${preset.audioBitrate ?? 128}k');
+  }
+
+  // Output
+  parts.add('-movflags +faststart');
+  parts.add(_escapePathForShellIsolate(outputPath));
+
+  return parts.join(' ');
+}
+
+String _buildColorFilterIsolate(ColorGradeSettings settings) {
+  final filters = <String>[];
+
+  final eqParts = <String>[];
+  if (settings.brightness != 0.0) {
+    eqParts.add('brightness=${settings.brightness}');
+  }
+  if (settings.contrast != 1.0) {
+    eqParts.add('contrast=${settings.contrast}');
+  }
+  if (settings.saturation != 1.0) {
+    eqParts.add('saturation=${settings.saturation}');
+  }
+
+  if (eqParts.isNotEmpty) {
+    filters.add('eq=${eqParts.join(':')}');
+  }
+
+  if (settings.hue != 0.0) {
+    filters.add('hue=h=${settings.hue}');
+  }
+
+  return filters.isEmpty ? 'null' : filters.join(',');
+}
+
+String _escapePathForShellIsolate(String path) {
+  return '"${path.replaceAll('"', '\\"').replaceAll("'", "\\'")}"';
+}
+
+String _formatDurationIsolate(Duration d) {
+  final h = d.inHours.toString().padLeft(2, '0');
+  final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+  final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+  final ms = (d.inMilliseconds % 1000).toString().padLeft(3, '0');
+  return '$h:$m:$s.$ms';
 }

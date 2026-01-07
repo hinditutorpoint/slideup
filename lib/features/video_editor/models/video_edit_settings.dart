@@ -2046,6 +2046,88 @@ class AudioTimelineItem extends TimelineItem {
 }
 
 // ═══════════════════════════════════════════════════════
+// ✅ VIDEO AUDIO SETTINGS (Original Video Audio)
+// ═══════════════════════════════════════════════════════
+
+@immutable
+class VideoAudioSettings {
+  final double volume;
+  final bool isMuted;
+  final bool fadeIn;
+  final bool fadeOut;
+  final Duration fadeDuration;
+
+  const VideoAudioSettings({
+    this.volume = 1.0,
+    this.isMuted = false,
+    this.fadeIn = false,
+    this.fadeOut = false,
+    this.fadeDuration = const Duration(seconds: 2),
+  });
+
+  double get effectiveVolume => isMuted ? 0.0 : volume.clamp(0.0, 2.0);
+
+  VideoAudioSettings copyWith({
+    double? volume,
+    bool? isMuted,
+    bool? fadeIn,
+    bool? fadeOut,
+    Duration? fadeDuration,
+  }) {
+    return VideoAudioSettings(
+      volume: volume ?? this.volume,
+      isMuted: isMuted ?? this.isMuted,
+      fadeIn: fadeIn ?? this.fadeIn,
+      fadeOut: fadeOut ?? this.fadeOut,
+      fadeDuration: fadeDuration ?? this.fadeDuration,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'volume': volume,
+    'isMuted': isMuted,
+    'fadeIn': fadeIn,
+    'fadeOut': fadeOut,
+    'fadeDuration': fadeDuration.inMilliseconds,
+  };
+
+  factory VideoAudioSettings.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const VideoAudioSettings();
+
+    try {
+      return VideoAudioSettings(
+        volume: json.safeGet<double>('volume', 1.0)!,
+        isMuted: json.safeGet<bool>('isMuted', false)!,
+        fadeIn: json.safeGet<bool>('fadeIn', false)!,
+        fadeOut: json.safeGet<bool>('fadeOut', false)!,
+        fadeDuration: json.safeDuration(
+          'fadeDuration',
+          const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ VideoAudioSettings.fromJson error: $e');
+      return const VideoAudioSettings();
+    }
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is VideoAudioSettings &&
+        other.volume == volume &&
+        other.isMuted == isMuted &&
+        other.fadeIn == fadeIn &&
+        other.fadeOut == fadeOut &&
+        other.fadeDuration == fadeDuration;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(volume, isMuted, fadeIn, fadeOut, fadeDuration);
+}
+
+// ═══════════════════════════════════════════════════════
 // ✅ TEXT OVERLAY (Separate from TimelineItem)
 // ═══════════════════════════════════════════════════════
 
@@ -2455,6 +2537,8 @@ class AiGeneratedImage {
   int get hashCode => id.hashCode;
 }
 
+enum ExportJobStatus { pending, running, completed, failed, cancelled }
+
 // ═══════════════════════════════════════════════════════
 // ✅ EXPORT PROGRESS
 // ═══════════════════════════════════════════════════════
@@ -2539,6 +2623,7 @@ class VideoProject {
   final List<ImageTimelineItem> imageItems;
   final List<AudioTimelineItem> audioItems;
   final ColorGradeSettings colorGrade;
+  final VideoAudioSettings videoAudioSettings;
   final ExportPreset exportPreset;
   final DateTime createdAt;
   final DateTime modifiedAt;
@@ -2555,6 +2640,7 @@ class VideoProject {
     this.imageItems = const [],
     this.audioItems = const [],
     this.colorGrade = const ColorGradeSettings(),
+    this.videoAudioSettings = const VideoAudioSettings(),
     this.exportPreset = const ExportPreset(id: 'high_1080p', name: '1080p HD'),
     DateTime? createdAt,
     DateTime? modifiedAt,
@@ -2629,6 +2715,7 @@ class VideoProject {
     List<ImageTimelineItem>? imageItems,
     List<AudioTimelineItem>? audioItems,
     ColorGradeSettings? colorGrade,
+    VideoAudioSettings? videoAudioSettings,
     ExportPreset? exportPreset,
     DateTime? createdAt,
     DateTime? modifiedAt,
@@ -2645,6 +2732,7 @@ class VideoProject {
       imageItems: imageItems ?? this.imageItems,
       audioItems: audioItems ?? this.audioItems,
       colorGrade: colorGrade ?? this.colorGrade,
+      videoAudioSettings: videoAudioSettings ?? this.videoAudioSettings,
       exportPreset: exportPreset ?? this.exportPreset,
       createdAt: createdAt ?? this.createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
@@ -2663,6 +2751,7 @@ class VideoProject {
     'imageItems': imageItems.map((e) => e.toJson()).toList(),
     'audioItems': audioItems.map((e) => e.toJson()).toList(),
     'colorGrade': colorGrade.toJson(),
+    'videoAudioSettings': videoAudioSettings.toJson(),
     'exportPreset': exportPreset.toJson(),
     'createdAt': createdAt.toIso8601String(),
     'modifiedAt': modifiedAt.toIso8601String(),
@@ -2705,6 +2794,9 @@ class VideoProject {
         ),
         colorGrade: ColorGradeSettings.fromJson(
           json['colorGrade'] as Map<String, dynamic>?,
+        ),
+        videoAudioSettings: VideoAudioSettings.fromJson(
+          json['videoAudioSettings'] as Map<String, dynamic>?,
         ),
         exportPreset: ExportPreset.fromJson(
           json['exportPreset'] as Map<String, dynamic>?,

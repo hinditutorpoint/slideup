@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
@@ -111,6 +112,43 @@ class ThumbnailService {
       debugPrint('📚 Stack trace: $stackTrace');
     }
     return null;
+  }
+
+  Future<Uint8List?> generateVideoThumbnailBytes(
+    String videoPath, {
+    int width = 256,
+    int height = 256,
+    int quality = 75,
+    double timePosition = 1.0, // seconds
+  }) async {
+    try {
+      final thumbnailPath = await generateVideoThumbnail(
+        videoPath,
+        width: width,
+        height: height,
+        quality: quality,
+        timePosition: timePosition,
+      );
+
+      if (thumbnailPath == null) {
+        debugPrint('❌ Thumbnail path is null');
+        return null;
+      }
+
+      final file = File(thumbnailPath);
+
+      if (!await file.exists()) {
+        debugPrint('❌ Thumbnail file does not exist at: $thumbnailPath');
+        return null;
+      }
+
+      final bytes = await file.readAsBytes();
+      return bytes;
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error generating thumbnail bytes: $e');
+      debugPrint('📚 Stack trace: $stackTrace');
+      return null;
+    }
   }
 
   /// Fallback method if first approach fails
