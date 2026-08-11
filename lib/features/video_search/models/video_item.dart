@@ -10,6 +10,7 @@ class VideoItem extends Equatable {
   final int downloads;
   final int itemSize;
   final String? format;
+  final bool isSaved;
   final bool isLiked;
   final String? duration;
   final String? subject;
@@ -26,6 +27,7 @@ class VideoItem extends Equatable {
     this.downloads = 0,
     this.itemSize = 0,
     this.format,
+    this.isSaved = false,
     this.isLiked = false,
     this.duration,
     this.subject,
@@ -222,8 +224,23 @@ class VideoItem extends Equatable {
       'item_size': itemSize,
       'thumbnail_url': thumbnailUrl,
       'format': format,
+    };
+  }
+
+  Map<String, dynamic> toSavedDbMap() {
+    return {
+      'identifier': identifier,
+      'title': title,
+      'description': description,
+      'creator': creator,
+      'date': date,
+      'mediatype': mediaType,
+      'downloads': downloads,
+      'item_size': itemSize,
+      'thumbnail_url': thumbnailUrl,
+      'format': format,
       'duration': duration,
-      'liked_at': DateTime.now().toIso8601String(),
+      'saved_at': DateTime.now().toIso8601String(),
     };
   }
 
@@ -237,8 +254,6 @@ class VideoItem extends Equatable {
       mediaType: map['mediatype'] ?? 'movies',
       downloads: map['downloads'] ?? 0,
       itemSize: map['item_size'] ?? 0,
-      format: map['format'],
-      isLiked: true,
       duration: map['duration'],
     );
   }
@@ -253,6 +268,7 @@ class VideoItem extends Equatable {
     int? downloads,
     int? itemSize,
     String? format,
+    bool? isSaved,
     bool? isLiked,
     String? duration,
     String? subject,
@@ -269,6 +285,7 @@ class VideoItem extends Equatable {
       downloads: downloads ?? this.downloads,
       itemSize: itemSize ?? this.itemSize,
       format: format ?? this.format,
+      isSaved: isSaved ?? this.isSaved,
       isLiked: isLiked ?? this.isLiked,
       duration: duration ?? this.duration,
       subject: subject ?? this.subject,
@@ -288,6 +305,7 @@ class VideoItem extends Equatable {
     downloads,
     itemSize,
     format,
+    isSaved,
     isLiked,
     duration,
     subject,

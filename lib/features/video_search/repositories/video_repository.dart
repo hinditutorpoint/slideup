@@ -15,7 +15,19 @@ abstract class VideoRepository {
   Future<bool> isLiked(String identifier);
   Future<List<VideoItem>> getLikedVideos();
   Future<Set<String>> getLikedIdentifiers();
+
+  Future<void> toggleSave(VideoItem item);
+  Future<bool> isSaved(String identifier);
+  Future<List<VideoItem>> getSavedVideos();
+  Future<Set<String>> getSavedIdentifiers();
+
   Future<Map<String, dynamic>> getVideoMetadata(String identifier);
+  Future<VideoSearchResponse> getRelatedVideos({
+    required String identifier,
+    String? collection,
+    String? subject,
+    String? creator,
+  });
 }
 
 class VideoRepositoryImpl implements VideoRepository {
@@ -41,12 +53,16 @@ class VideoRepositoryImpl implements VideoRepository {
         filter: filter,
       );
 
-      // Get liked identifiers to mark items as liked
+      // Get saved and liked identifiers to mark items
+      final savedIds = await _localDataSource.getSavedIdentifiers();
       final likedIds = await _localDataSource.getLikedIdentifiers();
 
-      // Update items with liked status
+      // Update items with saved and liked status
       final updatedItems = response.items.map((item) {
-        return item.copyWith(isLiked: likedIds.contains(item.identifier));
+        return item.copyWith(
+          isSaved: savedIds.contains(item.identifier),
+          isLiked: likedIds.contains(item.identifier),
+        );
       }).toList();
 
       return VideoSearchResponse(
@@ -66,10 +82,16 @@ class VideoRepositoryImpl implements VideoRepository {
   @override
   Future<void> toggleLike(VideoItem item) async {
     try {
-      final isCurrentlyLiked = await _localDataSource.isLiked(item.identifier);
+      final isCurrentlyLiked = await _localDataSource.isLiked(
+        item.identifier,
+        mediatype: item.mediaType,
+      );
 
       if (isCurrentlyLiked) {
-        await _localDataSource.unlikeItem(item.identifier);
+        await _localDataSource.unlikeItem(
+          item.identifier,
+          mediatype: item.mediaType,
+        );
       } else {
         await _localDataSource.likeItem(item);
       }
@@ -114,6 +136,62 @@ class VideoRepositoryImpl implements VideoRepository {
   }
 
   @override
+  Future<void> toggleSave(VideoItem item) async {
+    try {
+      final isCurrentlySaved = await _localDataSource.isSaved(
+        item.identifier,
+        mediatype: item.mediaType,
+      );
+
+      if (isCurrentlySaved) {
+        await _localDataSource.unsaveItem(
+          item.identifier,
+          mediatype: item.mediaType,
+        );
+      } else {
+        await _localDataSource.saveItem(item);
+      }
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw DatabaseException(
+        message: 'Failed to update save status',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<bool> isSaved(String identifier) async {
+    try {
+      return await _localDataSource.isSaved(identifier);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  @override
+  Future<List<VideoItem>> getSavedVideos() async {
+    try {
+      return await _localDataSource.getSavedItems();
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw DatabaseException(
+        message: 'Failed to get saved videos',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<Set<String>> getSavedIdentifiers() async {
+    try {
+      return await _localDataSource.getSavedIdentifiers();
+    } catch (e) {
+      return {};
+    }
+  }
+
+  @override
   Future<Map<String, dynamic>> getVideoMetadata(String identifier) async {
     try {
       return await _remoteDataSource.getVideoMetadata(identifier);
@@ -121,6 +199,45 @@ class VideoRepositoryImpl implements VideoRepository {
       if (e is AppException) rethrow;
       throw NetworkException(
         message: 'Failed to get video metadata',
+        originalError: e,
+      );
+    }
+  }
+
+  @override
+  Future<VideoSearchResponse> getRelatedVideos({
+    required String identifier,
+    String? collection,
+    String? subject,
+    String? creator,
+  }) async {
+    try {
+      final response = await _remoteDataSource.searchRelatedVideos(
+        identifier: identifier,
+        collection: collection,
+        subject: subject,
+        creator: creator,
+      );
+
+      // Mark saved and liked items
+      final savedIds = await _localDataSource.getSavedIdentifiers();
+      final likedIds = await _localDataSource.getLikedIdentifiers();
+      final updatedItems = response.items.map((item) {
+        return item.copyWith(
+          isSaved: savedIds.contains(item.identifier),
+          isLiked: likedIds.contains(item.identifier),
+        );
+      }).toList();
+
+      return VideoSearchResponse(
+        numFound: response.numFound,
+        start: response.start,
+        items: updatedItems,
+      );
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw NetworkException(
+        message: 'Failed to get related videos',
         originalError: e,
       );
     }

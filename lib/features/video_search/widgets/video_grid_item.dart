@@ -8,6 +8,7 @@ import '../models/video_item.dart';
 class VideoGridItem extends StatelessWidget {
   final VideoItem item;
   final VoidCallback onTap;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
@@ -15,6 +16,7 @@ class VideoGridItem extends StatelessWidget {
     super.key,
     required this.item,
     required this.onTap,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -48,7 +50,6 @@ class VideoGridItem extends StatelessWidget {
                     item: item,
                     colorScheme: colorScheme,
                     isSmallScreen: isSmallScreen,
-                    onLike: onLike,
                   ),
                 ),
                 // Info Section
@@ -61,6 +62,8 @@ class VideoGridItem extends StatelessWidget {
                     isSmallScreen: isSmallScreen,
                     availableWidth: totalWidth,
                     onShare: onShare,
+                    onSave: onSave,
+                    onLike: onLike,
                   ),
                 ),
               ],
@@ -76,13 +79,11 @@ class _ThumbnailSection extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
   final bool isSmallScreen;
-  final VoidCallback onLike;
 
   const _ThumbnailSection({
     required this.item,
     required this.colorScheme,
     required this.isSmallScreen,
-    required this.onLike,
   });
 
   @override
@@ -146,18 +147,6 @@ class _ThumbnailSection extends StatelessWidget {
               color: Colors.white,
               size: isSmallScreen ? 24 : 28,
             ),
-          ),
-        ),
-
-        // Like button - top right
-        Positioned(
-          top: 4,
-          right: 4,
-          child: _OverlayButton(
-            icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
-            color: item.isLiked ? Colors.red : Colors.white,
-            onTap: onLike,
-            isSmallScreen: isSmallScreen,
           ),
         ),
 
@@ -225,42 +214,14 @@ class _ThumbnailSection extends StatelessWidget {
   }
 }
 
-class _OverlayButton extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  final bool isSmallScreen;
-
-  const _OverlayButton({
-    required this.icon,
-    required this.color,
-    required this.onTap,
-    required this.isSmallScreen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.4),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: EdgeInsets.all(isSmallScreen ? 4 : 5),
-          child: Icon(icon, size: isSmallScreen ? 14 : 16, color: color),
-        ),
-      ),
-    );
-  }
-}
-
 class _InfoSection extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
   final bool isSmallScreen;
   final double availableWidth;
   final VoidCallback onShare;
+  final VoidCallback onSave;
+  final VoidCallback onLike;
 
   const _InfoSection({
     required this.item,
@@ -268,6 +229,8 @@ class _InfoSection extends StatelessWidget {
     required this.isSmallScreen,
     required this.availableWidth,
     required this.onShare,
+    required this.onSave,
+    required this.onLike,
   });
 
   @override
@@ -335,6 +298,8 @@ class _InfoSection extends StatelessWidget {
                     availableWidth: constraints.maxWidth,
                     colorScheme: colorScheme,
                     onShare: onShare,
+                    onSave: onSave,
+                    onLike: onLike,
                   ),
                 ),
               ],
@@ -398,6 +363,8 @@ class _ActionBar extends StatelessWidget {
   final double availableWidth;
   final ColorScheme colorScheme;
   final VoidCallback onShare;
+  final VoidCallback onSave;
+  final VoidCallback onLike;
 
   const _ActionBar({
     required this.item,
@@ -405,6 +372,8 @@ class _ActionBar extends StatelessWidget {
     required this.availableWidth,
     required this.colorScheme,
     required this.onShare,
+    required this.onSave,
+    required this.onLike,
   });
 
   @override
@@ -416,6 +385,18 @@ class _ActionBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           _MiniDownloadButton(item: item, colorScheme: colorScheme),
+          const SizedBox(width: 6),
+          _MiniIconButton(
+            icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
+            onTap: onLike,
+            color: Colors.red,
+          ),
+          const SizedBox(width: 6),
+          _MiniIconButton(
+            icon: item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+            onTap: onSave,
+            color: colorScheme.primary,
+          ),
           const SizedBox(width: 6),
           _MiniIconButton(
             icon: Icons.share_rounded,
@@ -438,11 +419,24 @@ class _ActionBar extends StatelessWidget {
         const SizedBox(width: 4),
         Expanded(
           child: _ActionChip(
-            icon: Icons.share_rounded,
-            label: 'Share',
-            onTap: onShare,
+            icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
+            label: item.isLiked ? 'Liked' : 'Like',
+            onTap: onLike,
             isSmallScreen: isSmallScreen,
             colorScheme: colorScheme,
+            isActive: item.isLiked,
+            activeColor: Colors.red,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: _ActionChip(
+            icon: item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+            label: item.isSaved ? 'Saved' : 'Save',
+            onTap: onSave,
+            isSmallScreen: isSmallScreen,
+            colorScheme: colorScheme,
+            isActive: item.isSaved,
           ),
         ),
       ],
@@ -508,6 +502,8 @@ class _ActionChip extends StatelessWidget {
   final VoidCallback onTap;
   final bool isSmallScreen;
   final ColorScheme colorScheme;
+  final bool isActive;
+  final Color? activeColor;
 
   const _ActionChip({
     required this.icon,
@@ -515,12 +511,19 @@ class _ActionChip extends StatelessWidget {
     required this.onTap,
     required this.isSmallScreen,
     required this.colorScheme,
+    this.isActive = false,
+    this.activeColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = isActive
+        ? (activeColor ?? colorScheme.primary)
+        : colorScheme.primary;
     return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      color: isActive
+          ? effectiveColor.withValues(alpha: 0.1)
+          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       borderRadius: BorderRadius.circular(6),
       child: InkWell(
         onTap: onTap,
@@ -546,7 +549,7 @@ class _ActionChip extends StatelessWidget {
                   style: TextStyle(
                     fontSize: isSmallScreen ? 9 : 10,
                     fontWeight: FontWeight.w500,
-                    color: colorScheme.primary,
+                    color: effectiveColor,
                   ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,

@@ -25,9 +25,11 @@ import '../models/media_file.dart';
 import '../models/disk_info.dart';
 import '../features/features_navigation_screen.dart';
 import '../features/video_search/screens/video_search_screen.dart';
+import '../features/video_player/providers/video_player_provider.dart';
 import '../providers/theme_provider.dart';
 import '../core/theme/app_theme.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
+import '../features/video_editor/video_editor_screen.dart';
 
 // Quick action model
 class QuickAction {
@@ -162,11 +164,38 @@ class _MainScreenState extends ConsumerState<MainScreen>
       ),
     );
 
-    if (isLargeScreen) {
-      return _buildLargeScreenLayout(theme, colorScheme);
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _exitApp();
+      },
+      child: isLargeScreen
+          ? _buildLargeScreenLayout(theme, colorScheme)
+          : _buildMobileLayout(theme, colorScheme),
+    );
+  }
+
+  /// Stop all playback and fully close the app when back is pressed on home.
+  Future<void> _exitApp() async {
+    try {
+      await AudioPlaybackHelper.stopAudio(ref);
+    } catch (e) {
+      debugPrint('⚠️ Stop audio on exit error: $e');
     }
 
-    return _buildMobileLayout(theme, colorScheme);
+    try {
+      final videoNotifier = ref.read(videoPlayerProvider.notifier);
+      if (!videoNotifier.isDisposed) {
+        await videoNotifier.stop();
+      }
+    } catch (e) {
+      debugPrint('⚠️ Stop video on exit error: $e');
+    }
+
+    if (mounted) {
+      SystemNavigator.pop();
+    }
   }
 
   // ==================== MOBILE LAYOUT ====================
@@ -203,6 +232,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.movie_edit),
+                        onPressed: _openVideoEditor,
+                        tooltip: 'Video Editor',
+                      ),
+                      const SizedBox(height: 8),
                       IconButton(
                         icon: const Icon(Icons.settings_outlined),
                         onPressed: () => _navigateTo(const SettingsScreen()),
@@ -570,6 +605,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
                       title: 'Watch History',
                       subtitle: 'Recently watched',
                       onTap: () {},
+                    ),
+                    _DrawerItem(
+                      icon: Icons.movie_edit,
+                      title: 'Video Editor',
+                      subtitle: 'Trim, effects & export',
+                      onTap: _openVideoEditor,
                     ),
                   ],
                 ),
@@ -1056,6 +1097,15 @@ class _MainScreenState extends ConsumerState<MainScreen>
                         // Scan QR code
                       },
                     ),
+                    _buildQuickActionCard(
+                      icon: Icons.movie_edit,
+                      label: 'Video Editor',
+                      color: Colors.indigo,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openVideoEditor();
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1376,6 +1426,39 @@ class _MainScreenState extends ConsumerState<MainScreen>
           behavior: SnackBarBehavior.floating,
         ),
       );
+    }
+  }
+
+  Future<void> _openVideoEditor() async {
+    Navigator.pop(context); // Close drawer if open
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+        allowMultiple: false,
+      );
+
+      if (!mounted || result == null || result.files.isEmpty) return;
+
+      final videoPath = result.files.single.path;
+      if (videoPath == null) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => VideoEditorScreen(videoPath: videoPath),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open video editor: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 

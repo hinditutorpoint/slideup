@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
 import '../models/media_file.dart';
+import '../services/thumbnail_service.dart';
 
 class MediaItemCard extends StatelessWidget {
   final MediaFile mediaFile;
@@ -148,6 +149,19 @@ class MediaItemCard extends StatelessWidget {
       );
     }
 
+    // For videos with a saved resume position, generate a thumbnail at that
+    // frame so recent items show the last-watched position.
+    if (mediaFile.type == MediaType.video &&
+        mediaFile.lastPosition != null &&
+        mediaFile.lastPosition! > 0 &&
+        !mediaFile.path.startsWith('http')) {
+      return _PositionThumbnail(
+        videoPath: mediaFile.path,
+        position: Duration(milliseconds: mediaFile.lastPosition!),
+        fallback: _buildDefaultIcon(),
+      );
+    }
+
     return _buildDefaultIcon();
   }
 
@@ -180,6 +194,66 @@ class MediaItemCard extends StatelessWidget {
     return Container(
       color: color.withValues(alpha: 0.1),
       child: Icon(icon, size: 40, color: color),
+    );
+  }
+}
+
+/// Generates a video thumbnail at a specific position (e.g. last resume frame).
+class _PositionThumbnail extends StatefulWidget {
+  final String videoPath;
+  final Duration position;
+  final Widget fallback;
+
+  const _PositionThumbnail({
+    required this.videoPath,
+    required this.position,
+    required this.fallback,
+  });
+
+  @override
+  State<_PositionThumbnail> createState() => _PositionThumbnailState();
+}
+
+class _PositionThumbnailState extends State<_PositionThumbnail> {
+  String? _thumbnailPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_PositionThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoPath != widget.videoPath ||
+        oldWidget.position != widget.position) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final path = await ThumbnailService.instance.generateVideoThumbnailAtTime(
+      widget.videoPath,
+      time: widget.position,
+      width: 256,
+      height: 144,
+    );
+    if (mounted) {
+      setState(() => _thumbnailPath = path);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = _thumbnailPath;
+    if (path == null || !File(path).existsSync()) {
+      return widget.fallback;
+    }
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => widget.fallback,
     );
   }
 }

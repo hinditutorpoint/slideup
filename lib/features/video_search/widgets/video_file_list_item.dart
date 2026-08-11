@@ -6,26 +6,22 @@ import '../models/video_file.dart';
 class VideoFileListItem extends StatelessWidget {
   final VideoFile file;
   final String identifier;
-  final bool isLiked;
   final bool isFavorite;
   final String? thumbnailUrl;
   final VoidCallback onPlay;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const VideoFileListItem({
     super.key,
     required this.file,
     required this.identifier,
-    required this.isLiked,
     required this.isFavorite,
     this.thumbnailUrl,
     required this.onPlay,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 
@@ -79,13 +75,11 @@ class VideoFileListItem extends StatelessWidget {
                     const SizedBox(height: 6),
                     // Slim Action Bar - Fixed
                     _SlimActionBar(
-                      isLiked: isLiked,
                       isFavorite: isFavorite,
                       isSmallScreen: isSmallScreen,
                       colorScheme: colorScheme,
                       onDownload: onDownload,
                       onShare: onShare,
-                      onLike: onLike,
                       onFavorite: onFavorite,
                     ),
                   ],
@@ -94,11 +88,9 @@ class VideoFileListItem extends StatelessWidget {
               const SizedBox(width: 2),
               // 3-dot menu
               _MoreMenu(
-                isLiked: isLiked,
                 isFavorite: isFavorite,
                 onDownload: onDownload,
                 onShare: onShare,
-                onLike: onLike,
                 onFavorite: onFavorite,
               ),
             ],
@@ -417,23 +409,19 @@ class _MetaRow extends StatelessWidget {
 }
 
 class _SlimActionBar extends StatelessWidget {
-  final bool isLiked;
   final bool isFavorite;
   final bool isSmallScreen;
   final ColorScheme colorScheme;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const _SlimActionBar({
-    required this.isLiked,
     required this.isFavorite,
     required this.isSmallScreen,
     required this.colorScheme,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 
@@ -453,11 +441,9 @@ class _SlimActionBar extends StatelessWidget {
 
         if (useIconsOnly) {
           return _IconOnlyActions(
-            isLiked: isLiked,
             isFavorite: isFavorite,
             onDownload: onDownload,
             onShare: onShare,
-            onLike: onLike,
             onFavorite: onFavorite,
           );
         }
@@ -475,20 +461,9 @@ class _SlimActionBar extends StatelessWidget {
             SizedBox(width: chipSpacing),
             Flexible(
               child: _SlimActionChip(
-                icon: isLiked ? Icons.favorite : Icons.favorite_border,
-                label: isLiked ? 'Liked' : 'Like',
-                onTap: onLike,
-                isSmallScreen: isSmallScreen,
-                iconColor: isLiked ? Colors.red : null,
-                isActive: isLiked,
-              ),
-            ),
-            SizedBox(width: chipSpacing),
-            Flexible(
-              child: _SlimActionChip(
                 icon: isFavorite ? Icons.star : Icons.star_border,
                 label: isFavorite ? 'Favorite' : 'Favorite',
-                onTap: onLike,
+                onTap: onFavorite,
                 isSmallScreen: isSmallScreen,
                 iconColor: isFavorite ? Colors.red : null,
                 isActive: isFavorite,
@@ -511,19 +486,15 @@ class _SlimActionBar extends StatelessWidget {
 }
 
 class _IconOnlyActions extends StatelessWidget {
-  final bool isLiked;
   final bool isFavorite;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const _IconOnlyActions({
-    required this.isLiked,
     required this.isFavorite,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 
@@ -541,15 +512,9 @@ class _IconOnlyActions extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         _IconButton(
-          icon: isLiked ? Icons.favorite : Icons.favorite_border,
-          onTap: onLike,
-          color: isLiked ? Colors.red : colorScheme.primary,
-        ),
-        const SizedBox(width: 6),
-        _IconButton(
-          icon: isLiked ? Icons.favorite : Icons.favorite_border,
-          onTap: onLike,
-          color: isLiked ? Colors.red : colorScheme.primary,
+          icon: isFavorite ? Icons.star : Icons.star_border,
+          onTap: onFavorite,
+          color: isFavorite ? Colors.red : colorScheme.primary,
         ),
         const SizedBox(width: 8),
         _IconButton(
@@ -697,19 +662,15 @@ class _MicroDot extends StatelessWidget {
 }
 
 class _MoreMenu extends StatelessWidget {
-  final bool isLiked;
   final bool isFavorite;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const _MoreMenu({
-    required this.isLiked,
     required this.isFavorite,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 
@@ -731,12 +692,6 @@ class _MoreMenu extends StatelessWidget {
         itemBuilder: (context) => [
           _menuItem('download', Icons.download_rounded, 'Download'),
           _menuItem(
-            'like',
-            isLiked ? Icons.favorite : Icons.favorite_border,
-            isLiked ? 'Unlike' : 'Like',
-            iconColor: isLiked ? Colors.red : null,
-          ),
-          _menuItem(
             'favorite',
             isFavorite ? Icons.star : Icons.star_border,
             isFavorite ? 'Favorite' : 'Favorite',
@@ -748,8 +703,6 @@ class _MoreMenu extends StatelessWidget {
           switch (value) {
             case 'download':
               onDownload();
-            case 'like':
-              onLike();
             case 'share':
               onShare();
             case 'favorite':

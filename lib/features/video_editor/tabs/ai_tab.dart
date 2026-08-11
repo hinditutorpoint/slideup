@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/video_edit_settings.dart';
 import '../services/ai_image_service.dart';
@@ -26,10 +27,16 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   final AiImageService _aiService = AiImageService();
   final _promptController = TextEditingController();
   final _negativePromptController = TextEditingController();
+  final _apiKeyController = TextEditingController();
+  final _storage = const FlutterSecureStorage();
   late TabController _tabController;
+
+  static const String _providerKey = 'ai_provider';
+  static const String _apiKeyKey = 'ai_api_key';
 
   AiImageStyle _selectedStyle = AiImageStyle.realistic;
   AiImageSize _selectedSize = AiImageSize.landscape;
+  AiProvider _selectedProvider = AiProvider.openRouter;
   int _imageCount = 1;
 
   List<AiGeneratedImage> _generatedImages = [];
@@ -49,16 +56,65 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
 
     // Configure AI service (use your API key)
     // In production, load from secure storage
-    _configureAiService();
+    _loadSavedConfig();
   }
 
-  void _configureAiService() {
-    // Example: Configure with Stability AI
-    // Replace with your actual API key
-    _aiService.configure(
-      AiProviderConfig(
-        provider: AiProvider.stabilityAi,
-        apiKey: 'YOUR_API_KEY', // Load from secure storage
+  Future<void> _loadSavedConfig() async {
+    try {
+      final providerName = await _storage.read(key: _providerKey);
+      final apiKey = await _storage.read(key: _apiKeyKey);
+      if (!mounted) return;
+
+      setState(() {
+        if (providerName != null) {
+          _selectedProvider =
+              AiProvider.values.firstWhere(
+                (p) => p.name == providerName,
+                orElse: () => AiProvider.openRouter,
+              );
+        }
+        if (apiKey != null && apiKey.isNotEmpty) {
+          _apiKeyController.text = apiKey;
+        }
+      });
+
+      if (apiKey != null && apiKey.isNotEmpty) {
+        _aiService.configure(
+          AiProviderConfig(provider: _selectedProvider, apiKey: apiKey),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to load AI config: $e');
+    }
+  }
+
+  Future<void> _saveAiConfig() async {
+    final apiKey = _apiKeyController.text.trim();
+    if (apiKey.isEmpty) {
+      _showSnack('Please enter an API key');
+      return;
+    }
+
+    try {
+      await _storage.write(key: _providerKey, value: _selectedProvider.name);
+      await _storage.write(key: _apiKeyKey, value: apiKey);
+      _aiService.configure(
+        AiProviderConfig(provider: _selectedProvider, apiKey: apiKey),
+      );
+      _showSnack('AI settings saved');
+      HapticFeedback.selectionClick();
+    } catch (e) {
+      _showSnack('Failed to save settings: $e');
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(fontSize: 12)),
+        duration: const Duration(seconds: 2),
+        backgroundColor: Colors.grey[800],
       ),
     );
   }
@@ -174,6 +230,10 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Provider / API key config
+          _buildProviderConfig(isCompact),
+          SizedBox(height: isCompact ? 12 : 16),
+
           // Prompt input
           _buildPromptInput(isCompact),
           SizedBox(height: isCompact ? 12 : 16),
@@ -219,6 +279,124 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Widget _buildProviderConfig(bool isCompact) {
+    return Container(
+      padding: EdgeInsets.all(isCompact ? 10 : 12),
+      decoration: BoxDecoration(
+        color: Colors.purple.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'AI Provider',
+            style: TextStyle(
+              color: Colors.purpleAccent,
+              fontSize: isCompact ? 11 : 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: isCompact ? 8 : 10),
+          DropdownButtonFormField<AiProvider>(
+            value: _selectedProvider,
+            dropdownColor: Colors.grey[850],
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: isCompact ? 12 : 13,
+            ),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: isCompact ? 8 : 10,
+              ),
+            ),
+            items: AiProvider.values.map((provider) {
+              return DropdownMenuItem(
+                value: provider,
+                child: Text(
+                  _providerLabel(provider),
+                  style: const TextStyle(color: Colors.white),
+                ),
+              );
+            }).toList(),
+            onChanged: (provider) {
+              if (provider != null) {
+                setState(() => _selectedProvider = provider);
+              }
+            },
+          ),
+          SizedBox(height: isCompact ? 8 : 10),
+          TextField(
+            controller: _apiKeyController,
+            obscureText: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Enter your API key...',
+              hintStyle: TextStyle(color: Colors.grey[600]),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: EdgeInsets.all(isCompact ? 10 : 12),
+            ),
+          ),
+          SizedBox(height: isCompact ? 8 : 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _saveAiConfig,
+              icon: Icon(
+                Icons.save_outlined,
+                size: isCompact ? 14 : 16,
+                color: Colors.purpleAccent,
+              ),
+              label: Text(
+                _aiService.isConfigured ? 'Update AI Settings' : 'Save & Enable',
+                style: TextStyle(
+                  fontSize: isCompact ? 11 : 12,
+                  color: Colors.purpleAccent,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.purple.withValues(alpha: 0.4)),
+                padding: EdgeInsets.symmetric(vertical: isCompact ? 8 : 10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _providerLabel(AiProvider provider) {
+    switch (provider) {
+      case AiProvider.stabilityAi:
+        return 'Stability AI';
+      case AiProvider.openAi:
+        return 'OpenAI (DALL·E)';
+      case AiProvider.replicate:
+        return 'Replicate';
+      case AiProvider.deepAi:
+        return 'DeepAI';
+      case AiProvider.lexica:
+        return 'Lexica (search)';
+      case AiProvider.openRouter:
+        return 'OpenRouter';
+      case AiProvider.cloudflare:
+        return 'Cloudflare Workers';
+    }
   }
 
   Widget _buildPromptInput(bool isCompact) {

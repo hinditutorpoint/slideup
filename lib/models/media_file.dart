@@ -30,6 +30,7 @@ class MediaFile {
   final int? width;
   final bool isSelected;
   final bool isFavorite;
+  final int? lastPosition; // Last playback position in milliseconds
 
   MediaFile({
     required this.id,
@@ -54,6 +55,7 @@ class MediaFile {
     this.width,
     this.isSelected = false,
     this.isFavorite = false,
+    this.lastPosition,
   });
 
   MediaFile copyWith({
@@ -79,6 +81,7 @@ class MediaFile {
     int? width,
     bool? isSelected,
     bool? isFavorite,
+    int? lastPosition,
   }) {
     return MediaFile(
       id: id ?? this.id,
@@ -103,6 +106,7 @@ class MediaFile {
       width: width ?? this.width,
       isSelected: isSelected ?? this.isSelected,
       isFavorite: isFavorite ?? this.isFavorite,
+      lastPosition: lastPosition ?? this.lastPosition,
     );
   }
 

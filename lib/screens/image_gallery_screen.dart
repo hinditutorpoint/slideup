@@ -18,17 +18,29 @@ class ImageGalleryScreen extends ConsumerStatefulWidget {
 class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
   int _crossAxisCount = 3;
   bool _isGridView = true;
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final imagesAsync = ref.watch(imagesProvider);
+    final imagesAsync = ref.watch(filteredImagesProvider);
     final galleryState = ref.watch(imageGalleryProvider);
 
     return PopScope(
-      canPop: !galleryState.isSelectionMode,
+      canPop: !galleryState.isSelectionMode && !galleryState.isSearchMode,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && galleryState.isSelectionMode) {
-          ref.read(imageGalleryProvider.notifier).exitSelectionMode();
+        if (!didPop) {
+          if (galleryState.isSelectionMode) {
+            ref.read(imageGalleryProvider.notifier).exitSelectionMode();
+          } else if (galleryState.isSearchMode) {
+            ref.read(imageGalleryProvider.notifier).exitSearchMode();
+            _searchController.clear();
+          }
         }
       },
       child: Scaffold(
@@ -148,6 +160,41 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
       );
     }
 
+    if (galleryState.isSearchMode) {
+      return AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            ref.read(imageGalleryProvider.notifier).exitSearchMode();
+            _searchController.clear();
+          },
+        ),
+        title: TextField(
+          controller: _searchController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Search images...',
+            border: InputBorder.none,
+            hintStyle: TextStyle(color: Colors.white70),
+          ),
+          style: const TextStyle(color: Colors.white, fontSize: 18),
+          onChanged: (value) {
+            ref.read(imageGalleryProvider.notifier).setSearchQuery(value);
+          },
+        ),
+        actions: [
+          if (galleryState.searchQuery.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.clear),
+              onPressed: () {
+                _searchController.clear();
+                ref.read(imageGalleryProvider.notifier).setSearchQuery('');
+              },
+            ),
+        ],
+      );
+    }
+
     return AppBar(
       title: const Text('Gallery'),
       actions: [
@@ -189,7 +236,7 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
         IconButton(
           icon: const Icon(Icons.search),
           onPressed: () {
-            // TODO: Implement search
+            ref.read(imageGalleryProvider.notifier).toggleSearchMode();
           },
         ),
       ],
@@ -684,3 +731,18 @@ final imagesProvider = FutureProvider.autoDispose<List<MediaFile>>((ref) async {
 
   return existingImages;
 });
+
+// Filtered images provider
+final filteredImagesProvider =
+    Provider.autoDispose<AsyncValue<List<MediaFile>>>((ref) {
+      final imagesAsync = ref.watch(imagesProvider);
+      final galleryState = ref.watch(imageGalleryProvider);
+      final searchQuery = galleryState.searchQuery.toLowerCase();
+
+      return imagesAsync.whenData((images) {
+        if (searchQuery.isEmpty) return images;
+        return images.where((img) {
+          return img.name.toLowerCase().contains(searchQuery);
+        }).toList();
+      });
+    });

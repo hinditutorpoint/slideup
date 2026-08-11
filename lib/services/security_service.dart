@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
@@ -24,25 +25,43 @@ class SecurityService {
 
   // App Password Management
   Future<void> setAppPassword(String password) async {
-    final hashedPassword = hashPassword(password);
-    await _secureStorage.write(key: _appPasswordKey, value: hashedPassword);
+    try {
+      final hashedPassword = hashPassword(password);
+      await _secureStorage.write(key: _appPasswordKey, value: hashedPassword);
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.setAppPassword error: $e');
+    }
   }
 
   Future<bool> hasAppPassword() async {
-    final password = await _secureStorage.read(key: _appPasswordKey);
-    return password != null && password.isNotEmpty;
+    try {
+      final password = await _secureStorage.read(key: _appPasswordKey);
+      return password != null && password.isNotEmpty;
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.hasAppPassword error: $e');
+      return false;
+    }
   }
 
   Future<bool> verifyAppPassword(String password) async {
-    final storedHash = await _secureStorage.read(key: _appPasswordKey);
-    if (storedHash == null) return false;
+    try {
+      final storedHash = await _secureStorage.read(key: _appPasswordKey);
+      if (storedHash == null) return false;
 
-    final inputHash = hashPassword(password);
-    return storedHash == inputHash;
+      final inputHash = hashPassword(password);
+      return storedHash == inputHash;
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.verifyAppPassword error: $e');
+      return false;
+    }
   }
 
   Future<void> removeAppPassword() async {
-    await _secureStorage.delete(key: _appPasswordKey);
+    try {
+      await _secureStorage.delete(key: _appPasswordKey);
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.removeAppPassword error: $e');
+    }
   }
 
   // Biometric Authentication
@@ -57,15 +76,24 @@ class SecurityService {
   }
 
   Future<bool> isBiometricEnabled() async {
-    final enabled = await _secureStorage.read(key: _biometricEnabledKey);
-    return enabled == 'true';
+    try {
+      final enabled = await _secureStorage.read(key: _biometricEnabledKey);
+      return enabled == 'true';
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.isBiometricEnabled error: $e');
+      return false;
+    }
   }
 
   Future<void> setBiometricEnabled(bool enabled) async {
-    await _secureStorage.write(
-      key: _biometricEnabledKey,
-      value: enabled.toString(),
-    );
+    try {
+      await _secureStorage.write(
+        key: _biometricEnabledKey,
+        value: enabled.toString(),
+      );
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.setBiometricEnabled error: $e');
+    }
   }
 
   Future<bool> authenticateWithBiometric() async {
@@ -109,23 +137,36 @@ class SecurityService {
   }
 
   Future<Map<String, String>> _getFileLocks() async {
-    final locksJson = await _secureStorage.read(key: _fileLocksKey);
-    if (locksJson == null) return {};
-
     try {
-      final decoded = jsonDecode(locksJson) as Map<String, dynamic>;
-      return decoded.map((key, value) => MapEntry(key, value.toString()));
+      final locksJson = await _secureStorage.read(key: _fileLocksKey);
+      if (locksJson == null) return {};
+
+      try {
+        final decoded = jsonDecode(locksJson) as Map<String, dynamic>;
+        return decoded.map((key, value) => MapEntry(key, value.toString()));
+      } catch (e) {
+        return {};
+      }
     } catch (e) {
+      debugPrint('⚠️ SecurityService._getFileLocks error: $e');
       return {};
     }
   }
 
   Future<void> _saveFileLocks(Map<String, String> locks) async {
-    final locksJson = jsonEncode(locks);
-    await _secureStorage.write(key: _fileLocksKey, value: locksJson);
+    try {
+      final locksJson = jsonEncode(locks);
+      await _secureStorage.write(key: _fileLocksKey, value: locksJson);
+    } catch (e) {
+      debugPrint('⚠️ SecurityService._saveFileLocks error: $e');
+    }
   }
 
   Future<void> clearAllSecurity() async {
-    await _secureStorage.deleteAll();
+    try {
+      await _secureStorage.deleteAll();
+    } catch (e) {
+      debugPrint('⚠️ SecurityService.clearAllSecurity error: $e');
+    }
   }
 }

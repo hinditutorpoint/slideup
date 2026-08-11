@@ -19,10 +19,11 @@ class ArchiveConstants {
 
   // Database
   static const String databaseName = 'slideup_archive_app.db';
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 3;
 
   // Table names
   static const String likedItemsTable = 'liked_items';
+  static const String savedItemsTable = 'saved_items';
 
   // Shared Preferences keys
   static const String viewModeKey = 'view_mode';

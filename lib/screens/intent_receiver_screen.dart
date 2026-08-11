@@ -345,8 +345,6 @@ class _IntentReceiverScreenState extends ConsumerState<IntentReceiverScreen> {
         action: SnackBarAction(label: 'OK', onPressed: () {}),
       ),
     );
-
-    // TODO: Implement document viewer
     _safeNavigate(const MainScreen());
   }
 

@@ -9,7 +9,6 @@ class ThumbnailFile extends Equatable {
   final String? mtime;
   final String? width;
   final String? height;
-  final bool isLiked;
   final bool isFavorite;
 
   const ThumbnailFile({
@@ -20,7 +19,6 @@ class ThumbnailFile extends Equatable {
     this.mtime,
     this.width,
     this.height,
-    this.isLiked = false,
     this.isFavorite = false,
   });
 
@@ -61,7 +59,6 @@ class ThumbnailFile extends Equatable {
     'mtime': mtime,
     'width': width,
     'height': height,
-    'isLiked': isLiked,
     'isFavorite': isFavorite,
   };
 
@@ -162,7 +159,7 @@ class ThumbnailFile extends Equatable {
     String? mtime,
     String? width,
     String? height,
-    bool? isLiked,
+    bool? isFavorite,
   }) {
     return ThumbnailFile(
       name: name ?? this.name,
@@ -172,7 +169,7 @@ class ThumbnailFile extends Equatable {
       mtime: mtime ?? this.mtime,
       width: width ?? this.width,
       height: height ?? this.height,
-      isLiked: isLiked ?? this.isLiked,
+      isFavorite: isFavorite ?? this.isFavorite,
     );
   }
 
@@ -185,6 +182,6 @@ class ThumbnailFile extends Equatable {
     mtime,
     width,
     height,
-    isLiked,
+    isFavorite,
   ];
 }

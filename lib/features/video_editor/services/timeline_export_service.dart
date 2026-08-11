@@ -11,7 +11,6 @@ import 'package:uuid/uuid.dart';
 
 import '../models/video_edit_settings.dart';
 import 'package:slideup/core/utils/safe_async.dart';
-import 'package:slideup/core/utils/isolate_helper.dart';
 
 // ═══════════════════════════════════════════════════════
 // ✅ TIMELINE EXPORT MODELS
@@ -320,17 +319,27 @@ class TimelineExportService {
       _currentSession = await FFmpegKit.executeAsync(
         command,
         (session) async {
-          final returnCode = await session.getReturnCode();
-          final success = ReturnCode.isSuccess(returnCode);
+          var success = false;
+          try {
+            final returnCode = await session.getReturnCode();
+            success = ReturnCode.isSuccess(returnCode);
 
-          if (!success) {
-            // Get detailed error logs
-            final logs = await session.getAllLogsAsString();
-            final output = await session.getOutput();
+            if (!success) {
+              // Get detailed error logs
+              final logs = await session.getAllLogsAsString();
+              final output = await session.getOutput();
 
-            debugPrint('❌ FFmpeg failed with return code: $returnCode');
-            debugPrint('📋 FFmpeg Output: $output');
-            debugPrint('📋 FFmpeg Logs: ${logs?.substring(0, 500)}');
+              debugPrint('❌ FFmpeg failed with return code: $returnCode');
+              debugPrint('📋 FFmpeg Output: $output');
+              if (logs != null && logs.isNotEmpty) {
+                debugPrint(
+                  '📋 FFmpeg Logs: ${logs.length > 500 ? logs.substring(0, 500) : logs}',
+                );
+              }
+            }
+          } catch (e, stackTrace) {
+            debugPrint('❌ FFmpeg session callback error: $e');
+            debugPrint('Stack: $stackTrace');
           }
 
           if (!completer.isCompleted) {
@@ -347,7 +356,18 @@ class TimelineExportService {
       );
 
       // Wait for completion
-      final success = await completer.future;
+      final success = await completer.future.timeout(
+        const Duration(minutes: 30),
+        onTimeout: () {
+          debugPrint('⚠️ FFmpeg session callback timed out after 30 minutes');
+          if (_isCancelled) {
+            completer.complete(false);
+            return false;
+          }
+          completer.complete(false);
+          return false;
+        },
+      );
 
       // Clear callbacks
       _clearProgressCallback();
@@ -532,7 +552,16 @@ class TimelineExportService {
         commandParts.add('-map "[vout]"');
 
         if (audioStream != null && !preset.removeAudio) {
-          commandParts.add('-map "$audioStream"');
+          // Raw input refs like [0:a] must be mapped WITHOUT brackets
+          // (FFmpeg only treats bracketed names as filter graph output
+          // labels). Filter outputs like [aout] keep their brackets.
+          final isRawInputRef =
+              RegExp(r'^\[\d+:[a-zA-Z]+\]$').hasMatch(audioStream);
+          commandParts.add(
+            isRawInputRef
+                ? '-map ${audioStream.substring(1, audioStream.length - 1)}'
+                : '-map "$audioStream"',
+          );
         }
       } else {
         commandParts.add('-map 0:v');
@@ -842,255 +871,6 @@ class TimelineExportService {
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ BUILD IMAGE OVERLAYS
-  // ═══════════════════════════════════════════════════════
-
-  Future<String> _buildImageOverlays({
-    required String baseStream,
-    required List<ImageTimelineItem> imageItems,
-    required Map<String, int> imageInputIndices,
-    required List<String> filters,
-    required VideoProject project,
-  }) async {
-    String currentStream = baseStream;
-    int overlayCounter = 0;
-
-    // Sort by layer (lower layers first)
-    final sortedItems = List<ImageTimelineItem>.from(imageItems)
-      ..sort((a, b) => a.layer.compareTo(b.layer));
-
-    for (final item in sortedItems) {
-      final inputIdx = imageInputIndices[item.id];
-      if (inputIdx == null) continue;
-
-      final videoWidth = project.exportPreset.width ?? 1920;
-      final videoHeight = project.exportPreset.height ?? 1080;
-
-      // Calculate position and size
-      final itemWidth = (videoWidth * item.scale).toInt();
-      final itemHeight = (itemWidth / item.aspectRatio).toInt();
-      final x = ((item.x * videoWidth) - (itemWidth / 2)).toInt();
-      final y = ((item.y * videoHeight) - (itemHeight / 2)).toInt();
-
-      // Prepare overlay stream
-      String overlayStream = '[$inputIdx:v]';
-
-      // Scale image
-      filters.add(
-        '$overlayStream scale=$itemWidth:$itemHeight[img${overlayCounter}_scaled]',
-      );
-      overlayStream = '[img${overlayCounter}_scaled]';
-
-      // Rotate if needed
-      if (item.rotation != 0) {
-        final angleRad = item.rotation * 3.14159 / 180;
-        filters.add(
-          '$overlayStream rotate=$angleRad:c=none[img${overlayCounter}_rotated]',
-        );
-        overlayStream = '[img${overlayCounter}_rotated]';
-      }
-
-      // Apply opacity
-      if (item.opacity < 1.0) {
-        filters.add(
-          '$overlayStream format=rgba,colorchannelmixer=aa=${item.opacity}[img${overlayCounter}_alpha]',
-        );
-        overlayStream = '[img${overlayCounter}_alpha]';
-      }
-
-      // Build enable expression for time-based display
-      final startSec = item.startTime.inMilliseconds / 1000;
-      final endSec = item.endTime.inMilliseconds / 1000;
-      final enableExpr = "between(t,$startSec,$endSec)";
-
-      // Overlay onto base
-      final outputStream = '[overlay$overlayCounter]';
-      filters.add(
-        '$currentStream$overlayStream overlay=$x:$y:enable=\'$enableExpr\'$outputStream',
-      );
-
-      currentStream = outputStream;
-      overlayCounter++;
-    }
-
-    return currentStream;
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ BUILD TEXT OVERLAYS
-  // ═══════════════════════════════════════════════════════
-
-  Future<String> _buildTextOverlays({
-    required String baseStream,
-    required List<TextTimelineItem> textItems,
-    required List<String> filters,
-    required VideoProject project,
-  }) async {
-    String currentStream = baseStream;
-
-    // Sort by layer
-    final sortedItems = List<TextTimelineItem>.from(textItems)
-      ..sort((a, b) => a.layer.compareTo(b.layer));
-
-    for (int i = 0; i < sortedItems.length; i++) {
-      final item = sortedItems[i];
-
-      final videoWidth = project.exportPreset.width ?? 1920;
-      final videoHeight = project.exportPreset.height ?? 1080;
-
-      // Calculate position
-      final x = (item.x * videoWidth).toInt();
-      final y = (item.y * videoHeight).toInt();
-
-      // Convert color
-      final r = (item.style.color >> 16) & 0xFF;
-      final g = (item.style.color >> 8) & 0xFF;
-      final b = item.style.color & 0xFF;
-      final colorHex =
-          '0x${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}';
-
-      // Build enable expression
-      final startSec = item.startTime.inMilliseconds / 1000;
-      final endSec = item.endTime.inMilliseconds / 1000;
-      final enableExpr = "between(t,$startSec,$endSec)";
-
-      // Escape text for FFmpeg
-      final escapedText = item.text
-          .replaceAll("'", "'\\\\\\''")
-          .replaceAll(':', '\\:');
-
-      // Build drawtext filter
-      final outputStream = i == sortedItems.length - 1
-          ? currentStream
-          : '[text$i]';
-
-      String drawtextFilter =
-          '$currentStream drawtext='
-          "text='$escapedText':"
-          'fontsize=${item.style.fontSize.toInt()}:'
-          'fontcolor=$colorHex:'
-          'x=$x:y=$y:'
-          "enable='$enableExpr'";
-
-      // Add shadow if needed
-      if (item.style.shadowBlur > 0) {
-        final shadowR = (item.style.shadowColor >> 16) & 0xFF;
-        final shadowG = (item.style.shadowColor >> 8) & 0xFF;
-        final shadowB = item.style.shadowColor & 0xFF;
-        final shadowHex =
-            '0x${shadowR.toRadixString(16).padLeft(2, '0')}${shadowG.toRadixString(16).padLeft(2, '0')}${shadowB.toRadixString(16).padLeft(2, '0')}';
-        drawtextFilter += ':shadowcolor=$shadowHex:shadowx=2:shadowy=2';
-      }
-
-      if (i < sortedItems.length - 1) {
-        drawtextFilter += outputStream;
-      }
-
-      filters.add(drawtextFilter);
-
-      if (i < sortedItems.length - 1) {
-        currentStream = outputStream;
-      }
-    }
-
-    return currentStream;
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ BUILD AUDIO MIX
-  // ═══════════════════════════════════════════════════════
-
-  Future<String> _buildAudioMix({
-    required int mainVideoIndex,
-    required List<AudioTimelineItem> audioItems,
-    required Map<String, int> audioInputIndices,
-    required List<String> filters,
-    required VideoProject project,
-  }) async {
-    if (audioItems.isEmpty) {
-      return '[$mainVideoIndex:a]';
-    }
-
-    final audioStreams = <String>[];
-
-    // Add main video audio
-    audioStreams.add('[$mainVideoIndex:a]');
-
-    // Process each audio item
-    for (int i = 0; i < audioItems.length; i++) {
-      final item = audioItems[i];
-      final inputIdx = audioInputIndices[item.id];
-      if (inputIdx == null) continue;
-
-      String audioStream = '[$inputIdx:a]';
-
-      // Apply volume
-      if (item.effectiveVolume != 1.0) {
-        filters.add(
-          '$audioStream volume=${item.effectiveVolume}[audio${i}_vol]',
-        );
-        audioStream = '[audio${i}_vol]';
-      }
-
-      // Apply fade in
-      if (item.fadeIn && item.fadeDuration.inMilliseconds > 0) {
-        final fadeDur = item.fadeDuration.inMilliseconds / 1000;
-        filters.add(
-          '$audioStream afade=t=in:st=0:d=$fadeDur[audio${i}_fadein]',
-        );
-        audioStream = '[audio${i}_fadein]';
-      }
-
-      // Apply fade out
-      if (item.fadeOut && item.fadeDuration.inMilliseconds > 0) {
-        final audioEndSec = item.endTime.inMilliseconds / 1000;
-        final fadeDur = item.fadeDuration.inMilliseconds / 1000;
-        final fadeStart = audioEndSec - fadeDur;
-
-        if (fadeStart > 0) {
-          filters.add(
-            '$audioStream afade=t=out:st=$fadeStart:d=$fadeDur[audio${i}_fadeout]',
-          );
-          audioStream = '[audio${i}_fadeout]';
-        }
-      }
-
-      // Apply delay based on start time
-      final delaySec = item.startTime.inMilliseconds / 1000;
-      if (delaySec > 0) {
-        final delayMs = (delaySec * 1000).toInt();
-        filters.add('$audioStream adelay=$delayMs|$delayMs[audio${i}_delayed]');
-        audioStream = '[audio${i}_delayed]';
-      }
-
-      audioStreams.add(audioStream);
-    }
-
-    // Mix all audio streams
-    if (audioStreams.length == 1) {
-      return audioStreams[0];
-    }
-
-    final mixFilter =
-        '${audioStreams.join('')}amix=inputs=${audioStreams.length}:duration=first[aout]';
-    filters.add(mixFilter);
-
-    return '[aout]';
-  }
-
-  // ═══════════════════════════════════════════════════════
-  // ✅ BUILD COLOR GRADE FILTERS
-  // ═══════════════════════════════════════════════════════
-
-  Future<String> _buildColorGradeFilters(ColorGradeSettings settings) async {
-    final filterResult = await IsolateHelper.instance.compute(
-      _buildColorGradeFiltersIsolate,
-      settings,
-    );
-    return filterResult.getOrElse('');
-  }
-
-  // ═══════════════════════════════════════════════════════
   // ✅ VALIDATE PROJECT
   // ═══════════════════════════════════════════════════════
 
@@ -1213,44 +993,6 @@ class TimelineExportService {
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ ISOLATE FUNCTIONS
-// ═══════════════════════════════════════════════════════
-
-String _buildColorGradeFiltersIsolate(ColorGradeSettings s) {
-  final filters = <String>[];
-
-  if (s.brightness != 0.0 || s.contrast != 1.0 || s.saturation != 1.0) {
-    filters.add(
-      'eq=brightness=${s.brightness}:contrast=${s.contrast}:saturation=${s.saturation}',
-    );
-  }
-
-  if (s.hue != 0.0) {
-    filters.add('hue=h=${s.hue}');
-  }
-
-  if (s.red != 1.0 || s.green != 1.0 || s.blue != 1.0) {
-    final rs = (s.red - 1.0).clamp(-1.0, 1.0);
-    final gs = (s.green - 1.0).clamp(-1.0, 1.0);
-    final bs = (s.blue - 1.0).clamp(-1.0, 1.0);
-    filters.add('colorbalance=rs=$rs:gs=$gs:bs=$bs:rm=$rs:gm=$gs:bm=$bs');
-  }
-
-  if (s.temperature != 0.0) {
-    final temp = s.temperature / 100;
-    final r = temp > 0 ? temp : 0.0;
-    final b = temp < 0 ? -temp : 0.0;
-    filters.add('colorbalance=rs=$r:bs=$b');
-  }
-
-  if (s.highlights != 0.0 || s.shadows != 0.0) {
-    final shadowVal = (1.0 + s.shadows).clamp(0.5, 1.5);
-    final highlightVal = (1.0 - s.highlights).clamp(0.5, 1.5);
-    filters.add(
-      'curves=m=0/0 0.25/${0.25 * shadowVal} 0.75/${0.75 * highlightVal} 1/1',
-    );
-  }
-
-  return filters.isEmpty ? '' : filters.join(',');
-}
+  // ═══════════════════════════════════════════════════════
+  // ✅ VALIDATE PROJECT
+  // ═══════════════════════════════════════════════════════

@@ -50,7 +50,7 @@ class _TextSheetState extends ConsumerState<TextSheet>
   PositionPreset _selectedPosition = PositionPreset.center;
   double _fontSize = 32;
   Color _textColor = Colors.white;
-  Color _backgroundColor = Colors.transparent;
+  final Color _backgroundColor = Colors.transparent;
   bool _isBold = false;
   bool _isItalic = false;
   bool _hasShadow = true;
@@ -1279,7 +1279,7 @@ class _TextSheetState extends ConsumerState<TextSheet>
           duration: Duration(seconds: _durationSeconds),
           style: TextOverlayStyle(
             fontSize: _fontSize,
-            color: _textColor.value,
+            color: _textColor.toARGB32(),
             bold: _isBold,
             italic: _isItalic,
             shadowBlur: _hasShadow ? 4 : 0,

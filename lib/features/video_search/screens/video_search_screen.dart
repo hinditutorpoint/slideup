@@ -19,6 +19,8 @@ import '../widgets/video_grid_item.dart';
 import '../widgets/video_list_item.dart';
 import '../widgets/video_search_bar.dart';
 
+import 'liked_videos_screen.dart';
+import 'saved_videos_screen.dart';
 import 'video_meta_screen.dart';
 
 class VideoSearchScreen extends ConsumerStatefulWidget {
@@ -83,7 +85,26 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
     }
   }
 
-  void _likeVideo(VideoItem item) async {
+  void _saveVideo(VideoItem item) async {
+    final result = await SafeAsync.run(
+      () => ref.read(videoSearchProvider.notifier).toggleSave(item),
+      operationName: 'Toggle Save',
+    );
+
+    if (!mounted) return;
+    result.when(
+      success: (_) {
+        _showSnackBar(
+          item.isSaved ? 'Removed from saved' : 'Added to saved videos',
+        );
+      },
+      failure: (error, _) {
+        _showSnackBar('Failed to update save status');
+      },
+    );
+  }
+
+  void _toggleLike(VideoItem item) async {
     final result = await SafeAsync.run(
       () => ref.read(videoSearchProvider.notifier).toggleLike(item),
       operationName: 'Toggle Like',
@@ -97,7 +118,7 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
         );
       },
       failure: (error, _) {
-        _showSnackBar('Failed to open PDF');
+        _showSnackBar('Failed to update favorite status');
       },
     );
   }
@@ -131,67 +152,128 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
       appBar: AppBar(
         title: const Text('Video Search'),
         actions: [
-          // Filter button
-          Badge(
-            isLabelVisible: searchState.filter.hasActiveFilters,
-            label: Text('${searchState.filter.activeFilterCount}'),
-            child: IconButton(
-              icon: Icon(
-                searchState.filter.hasActiveFilters
-                    ? Icons.filter_list
-                    : Icons.filter_list_outlined,
-                color: searchState.filter.hasActiveFilters
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-              tooltip: 'Filters',
-              onPressed: _showFilterSheet,
-            ),
-          ),
-
-          // View toggle
+          // Refresh button (kept outside as requested)
           IconButton(
-            icon: Icon(
-              viewMode == ViewMode.grid
-                  ? Icons.view_list_rounded
-                  : Icons.grid_view_rounded,
-            ),
-            tooltip: viewMode == ViewMode.grid ? 'List view' : 'Grid view',
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
             onPressed: () {
-              ref.read(videoViewModeProvider.notifier).toggle();
+              ref.read(videoSearchProvider.notifier).refresh();
             },
           ),
 
-          // Favorites
-          IconButton(
-            icon: const Icon(Icons.favorite),
-            tooltip: 'Liked Videos',
-            onPressed: () => _showLikedVideos(context),
-          ),
-
-          // Downloads
-          Consumer(
-            builder: (context, ref, child) {
-              final downloadsState = ref.watch(downloadsProvider);
-              final activeCount = downloadsState.activeDownloads.length;
-
-              return Badge(
-                isLabelVisible: activeCount > 0,
-                label: Text('$activeCount'),
-                child: IconButton(
-                  icon: const Icon(Icons.download),
-                  tooltip: 'Downloads',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DownloadsScreen(),
+          // More actions menu
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'More actions',
+            onSelected: (value) {
+              switch (value) {
+                case 'filters':
+                  _showFilterSheet();
+                  break;
+                case 'view_mode':
+                  ref.read(videoViewModeProvider.notifier).toggle();
+                  break;
+                case 'liked':
+                  _showLikedVideos(context);
+                  break;
+                case 'saved':
+                  _showSavedVideos(context);
+                  break;
+                case 'downloads':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DownloadsScreen()),
+                  );
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              // Filters
+              PopupMenuItem(
+                value: 'filters',
+                child: Row(
+                  children: [
+                    Badge(
+                      isLabelVisible: searchState.filter.hasActiveFilters,
+                      label: Text('${searchState.filter.activeFilterCount}'),
+                      child: Icon(
+                        searchState.filter.hasActiveFilters
+                            ? Icons.filter_list
+                            : Icons.filter_list_outlined,
+                        color: searchState.filter.hasActiveFilters
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
                       ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Text('Filters'),
+                  ],
+                ),
+              ),
+
+              // View toggle
+              PopupMenuItem(
+                value: 'view_mode',
+                child: Row(
+                  children: [
+                    Icon(
+                      viewMode == ViewMode.grid
+                          ? Icons.view_list_rounded
+                          : Icons.grid_view_rounded,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(viewMode == ViewMode.grid ? 'List view' : 'Grid view'),
+                  ],
+                ),
+              ),
+
+              // Favorites
+              const PopupMenuItem(
+                value: 'liked',
+                child: Row(
+                  children: [
+                    Icon(Icons.favorite),
+                    SizedBox(width: 12),
+                    Text('Liked Videos'),
+                  ],
+                ),
+              ),
+
+              // Saved
+              const PopupMenuItem(
+                value: 'saved',
+                child: Row(
+                  children: [
+                    Icon(Icons.bookmark),
+                    SizedBox(width: 12),
+                    Text('Saved Videos'),
+                  ],
+                ),
+              ),
+
+              // Downloads
+              PopupMenuItem(
+                value: 'downloads',
+                child: Consumer(
+                  builder: (context, ref, child) {
+                    final downloadsState = ref.watch(downloadsProvider);
+                    final activeCount = downloadsState.activeDownloads.length;
+
+                    return Row(
+                      children: [
+                        Badge(
+                          isLabelVisible: activeCount > 0,
+                          label: Text('$activeCount'),
+                          child: const Icon(Icons.download),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('Downloads'),
+                      ],
                     );
                   },
                 ),
-              );
-            },
+              ),
+            ],
           ),
         ],
       ),
@@ -326,7 +408,8 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
         return VideoGridItem(
           item: item,
           onTap: () => _openVideo(item),
-          onLike: () => _likeVideo(item),
+          onSave: () => _saveVideo(item),
+          onLike: () => _toggleLike(item),
           onShare: () => _shareVideo(item),
         );
       },
@@ -352,7 +435,8 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
         return VideoListItem(
           item: item,
           onTap: () => _openVideo(item),
-          onLike: () => _likeVideo(item),
+          onSave: () => _saveVideo(item),
+          onLike: () => _toggleLike(item),
           onShare: () => _shareVideo(item),
         );
       },
@@ -360,145 +444,16 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
   }
 
   void _showLikedVideos(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => const LikedVideosSheet(),
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const LikedVideosScreen()),
     );
   }
-}
 
-class LikedVideosSheet extends ConsumerWidget {
-  const LikedVideosSheet({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final likedVideos = ref.watch(likedVideosProvider);
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.7,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      expand: false,
-      builder: (context, scrollController) {
-        return Column(
-          children: [
-            // Handle
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.outline.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(Icons.favorite, color: Colors.red),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Liked Videos',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // Content
-            Expanded(
-              child: likedVideos.when(
-                data: (items) {
-                  if (items.isEmpty) {
-                    return const EmptyStateWidget(
-                      title: 'No liked videos yet',
-                      subtitle: 'Videos you like will appear here',
-                      icon: Icons.favorite_border,
-                    );
-                  }
-
-                  return ListView.builder(
-                    controller: scrollController,
-                    itemCount: items.length,
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      return ListTile(
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: Stack(
-                            children: [
-                              Image.network(
-                                item.thumbnailUrl,
-                                width: 80,
-                                height: 45,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 80,
-                                  height: 45,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
-                                  child: const Icon(Icons.movie_outlined),
-                                ),
-                              ),
-                              Positioned.fill(
-                                child: Center(
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.black54,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.play_arrow,
-                                      color: Colors.white,
-                                      size: 16,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        title: Text(
-                          item.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: item.creator != null
-                            ? Text(
-                                item.creator!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              )
-                            : null,
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => VideoMetaScreen(videoItem: item),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-                loading: () => const LoadingWidget(),
-                error: (error, _) => AppErrorWidget(
-                  message: 'Failed to load liked videos',
-                  onRetry: () => ref.refresh(likedVideosProvider),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+  void _showSavedVideos(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SavedVideosScreen()),
     );
   }
 }

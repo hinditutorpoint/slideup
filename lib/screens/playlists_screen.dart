@@ -131,6 +131,13 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
       title: const Text('Playlists'),
       actions: [
         IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          tooltip: 'Refresh',
+          onPressed: () {
+            ref.read(playlistsProvider.notifier).loadPlaylists();
+          },
+        ),
+        IconButton(
           icon: const Icon(Icons.search),
           tooltip: 'Search',
           onPressed: () {

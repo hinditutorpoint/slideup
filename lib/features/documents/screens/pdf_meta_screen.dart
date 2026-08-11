@@ -497,13 +497,11 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
           return ThumbnailGridItem(
             thumbnail: thumb,
             identifier: _identifier,
-            isLiked: false,
             isFavorite: false,
             onTap: () => _viewImage(thumb),
             onDownload: () => _downloadImage(thumb),
             onShare: () => _shareImage(thumb),
             onFavorite: () => _toggleFavorite(thumb),
-            onLike: () {},
           );
         },
       ),
@@ -524,12 +522,10 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
           return ThumbnailListItem(
             thumbnail: thumb,
             identifier: _identifier,
-            isLiked: false,
             isFavorite: false,
             onTap: () => _viewImage(thumb),
             onDownload: () => _downloadImage(thumb),
             onShare: () => _shareImage(thumb),
-            onLike: () {},
             onFavorite: () => _toggleFavorite(thumb),
           );
         },

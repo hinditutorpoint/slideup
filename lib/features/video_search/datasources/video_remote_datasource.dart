@@ -13,6 +13,14 @@ abstract class VideoRemoteDataSource {
   });
 
   Future<Map<String, dynamic>> getVideoMetadata(String identifier);
+
+  Future<VideoSearchResponse> searchRelatedVideos({
+    required String identifier,
+    String? collection,
+    String? subject,
+    String? creator,
+    int pageSize = 10,
+  });
 }
 
 class VideoRemoteDataSourceImpl implements VideoRemoteDataSource {
@@ -118,5 +126,78 @@ class VideoRemoteDataSourceImpl implements VideoRemoteDataSource {
         '${ArchiveConstants.archiveBaseUrl}${ArchiveConstants.metadataPath}/$identifier';
 
     return await _networkService.get(url);
+  }
+
+  @override
+  Future<VideoSearchResponse> searchRelatedVideos({
+    required String identifier,
+    String? collection,
+    String? subject,
+    String? creator,
+    int pageSize = 10,
+  }) async {
+    final queryParts = <String>[];
+
+    // Media type filter
+    queryParts.add('mediatype:${ArchiveConstants.mediaTypeVideo}');
+
+    // Build related query from collection, subject, or creator
+    final relatedParts = <String>[];
+    if (collection != null && collection.isNotEmpty) {
+      relatedParts.add('collection:$collection');
+    }
+    if (subject != null && subject.isNotEmpty) {
+      // Take first subject keyword
+      final firstSubject = subject.split(',').first.trim();
+      if (firstSubject.isNotEmpty) {
+        relatedParts.add('subject:"$firstSubject"');
+      }
+    }
+    if (creator != null && creator.isNotEmpty) {
+      relatedParts.add('creator:"$creator"');
+    }
+
+    // If we have related filters, use OR to get broader results
+    if (relatedParts.isNotEmpty) {
+      queryParts.add('(${relatedParts.join(' OR ')})');
+    }
+
+    // Exclude current item
+    queryParts.add('-identifier:$identifier');
+
+    final searchQuery = queryParts.join(' AND ');
+
+    final videoFields = [
+      'identifier',
+      'title',
+      'description',
+      'creator',
+      'date',
+      'mediatype',
+      'downloads',
+      'item_size',
+      'format',
+      'runtime',
+      'length',
+      'subject',
+      'collection',
+      'language',
+      'year',
+    ];
+
+    final queryParams = {
+      'q': searchQuery,
+      'output': 'json',
+      'rows': pageSize.toString(),
+      'page': '1',
+      'fl[]': videoFields.join(','),
+      'sort': 'downloads desc',
+    };
+
+    final url =
+        '${ArchiveConstants.archiveBaseUrl}${ArchiveConstants.advancedSearchPath}';
+
+    final response = await _networkService.get(url, queryParams: queryParams);
+    return VideoSearchResponse.fromJson(response);
   }
 }

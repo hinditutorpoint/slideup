@@ -8,6 +8,7 @@ import '../models/video_item.dart';
 class VideoListItem extends StatelessWidget {
   final VideoItem item;
   final VoidCallback onTap;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
@@ -15,6 +16,7 @@ class VideoListItem extends StatelessWidget {
     super.key,
     required this.item,
     required this.onTap,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -44,6 +46,7 @@ class VideoListItem extends StatelessWidget {
                 return _CompactLayout(
                   item: item,
                   colorScheme: colorScheme,
+                  onSave: onSave,
                   onLike: onLike,
                   onShare: onShare,
                 );
@@ -54,6 +57,7 @@ class VideoListItem extends StatelessWidget {
                 colorScheme: colorScheme,
                 isSmallScreen: isSmallScreen,
                 maxWidth: maxWidth,
+                onSave: onSave,
                 onLike: onLike,
                 onShare: onShare,
               );
@@ -70,6 +74,7 @@ class _StandardLayout extends StatelessWidget {
   final ColorScheme colorScheme;
   final bool isSmallScreen;
   final double maxWidth;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
@@ -78,6 +83,7 @@ class _StandardLayout extends StatelessWidget {
     required this.colorScheme,
     required this.isSmallScreen,
     required this.maxWidth,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -108,13 +114,14 @@ class _StandardLayout extends StatelessWidget {
             item: item,
             colorScheme: colorScheme,
             isSmallScreen: isSmallScreen,
+            onSave: onSave,
             onLike: onLike,
             onShare: onShare,
           ),
         ),
         const SizedBox(width: 4),
         // 3-dot menu
-        _MoreMenu(item: item, onLike: onLike, onShare: onShare),
+        _MoreMenu(item: item, onSave: onSave, onLike: onLike, onShare: onShare),
       ],
     );
   }
@@ -123,12 +130,14 @@ class _StandardLayout extends StatelessWidget {
 class _CompactLayout extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
   const _CompactLayout({
     required this.item,
     required this.colorScheme,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -179,7 +188,12 @@ class _CompactLayout extends StatelessWidget {
                 ],
               ),
             ),
-            _MoreMenu(item: item, onLike: onLike, onShare: onShare),
+            _MoreMenu(
+              item: item,
+              onSave: onSave,
+              onLike: onLike,
+              onShare: onShare,
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -192,6 +206,7 @@ class _CompactLayout extends StatelessWidget {
             _CompactActions(
               item: item,
               colorScheme: colorScheme,
+              onSave: onSave,
               onLike: onLike,
               onShare: onShare,
             ),
@@ -312,6 +327,7 @@ class _InfoSection extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
   final bool isSmallScreen;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
@@ -319,6 +335,7 @@ class _InfoSection extends StatelessWidget {
     required this.item,
     required this.colorScheme,
     required this.isSmallScreen,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -372,6 +389,7 @@ class _InfoSection extends StatelessWidget {
           item: item,
           isSmallScreen: isSmallScreen,
           colorScheme: colorScheme,
+          onSave: onSave,
           onLike: onLike,
           onShare: onShare,
         ),
@@ -481,6 +499,7 @@ class _SlimActionBar extends StatelessWidget {
   final VideoItem item;
   final bool isSmallScreen;
   final ColorScheme colorScheme;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
@@ -488,6 +507,7 @@ class _SlimActionBar extends StatelessWidget {
     required this.item,
     required this.isSmallScreen,
     required this.colorScheme,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -505,6 +525,7 @@ class _SlimActionBar extends StatelessWidget {
           return _IconOnlyActions(
             item: item,
             colorScheme: colorScheme,
+            onSave: onSave,
             onLike: onLike,
             onShare: onShare,
           );
@@ -525,12 +546,24 @@ class _SlimActionBar extends StatelessWidget {
             Flexible(
               child: _SlimActionChip(
                 icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
-                label: item.isLiked ? 'Liked' : 'Like',
+                label: 'Like',
                 onTap: onLike,
                 isSmallScreen: isSmallScreen,
                 colorScheme: colorScheme,
-                iconColor: item.isLiked ? Colors.red : null,
                 isActive: item.isLiked,
+                iconColor: Colors.red,
+              ),
+            ),
+            SizedBox(width: chipSpacing),
+            // Save
+            Flexible(
+              child: _SlimActionChip(
+                icon: item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+                label: 'Save',
+                onTap: onSave,
+                isSmallScreen: isSmallScreen,
+                colorScheme: colorScheme,
+                isActive: item.isSaved,
               ),
             ),
             SizedBox(width: chipSpacing),
@@ -582,12 +615,14 @@ class _DownloadChip extends StatelessWidget {
 class _IconOnlyActions extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
   const _IconOnlyActions({
     required this.item,
     required this.colorScheme,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -615,7 +650,13 @@ class _IconOnlyActions extends StatelessWidget {
         _MiniIconButton(
           icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
           onTap: onLike,
-          color: item.isLiked ? Colors.red : colorScheme.primary,
+          color: Colors.red,
+        ),
+        const SizedBox(width: 6),
+        _MiniIconButton(
+          icon: item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+          onTap: onSave,
+          color: colorScheme.primary,
         ),
         const SizedBox(width: 6),
         _MiniIconButton(
@@ -631,12 +672,14 @@ class _IconOnlyActions extends StatelessWidget {
 class _CompactActions extends StatelessWidget {
   final VideoItem item;
   final ColorScheme colorScheme;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
   const _CompactActions({
     required this.item,
     required this.colorScheme,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -663,7 +706,13 @@ class _CompactActions extends StatelessWidget {
         _MiniIconButton(
           icon: item.isLiked ? Icons.favorite : Icons.favorite_border,
           onTap: onLike,
-          color: item.isLiked ? Colors.red : colorScheme.primary,
+          color: Colors.red,
+        ),
+        const SizedBox(width: 6),
+        _MiniIconButton(
+          icon: item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+          onTap: onSave,
+          color: colorScheme.primary,
         ),
         const SizedBox(width: 6),
         _MiniIconButton(
@@ -787,11 +836,13 @@ class _MicroDot extends StatelessWidget {
 
 class _MoreMenu extends StatelessWidget {
   final VideoItem item;
+  final VoidCallback onSave;
   final VoidCallback onLike;
   final VoidCallback onShare;
 
   const _MoreMenu({
     required this.item,
+    required this.onSave,
     required this.onLike,
     required this.onShare,
   });
@@ -820,14 +871,27 @@ class _MoreMenu extends StatelessWidget {
             item.isLiked ? 'Unlike' : 'Like',
             iconColor: item.isLiked ? Colors.red : null,
           ),
+          _menuItem(
+            'save',
+            item.isSaved ? Icons.bookmark : Icons.bookmark_border,
+            item.isSaved ? 'Unsave' : 'Save',
+            iconColor: item.isSaved
+                ? Theme.of(context).colorScheme.primary
+                : null,
+          ),
           _menuItem('share', Icons.share_rounded, 'Share'),
         ],
         onSelected: (value) {
           switch (value) {
+            case 'save':
+              onSave();
+              break;
             case 'like':
               onLike();
+              break;
             case 'share':
               onShare();
+              break;
           }
         },
       ),

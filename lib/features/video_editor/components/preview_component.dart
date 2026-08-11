@@ -258,7 +258,7 @@ class PreviewComponentState extends ConsumerState<PreviewComponent> {
             ...visibleTextItems.map(
               (item) => _buildTextOverlayWidget(
                 item: item,
-                isSelected: timelineState.selectedItemId == item.id,
+                isSelected: timelineState.selectedItemIds.contains(item.id),
                 isLocked: timelineState.lockedItems.contains(item.id),
                 maxWidth: maxWidth,
                 maxHeight: maxHeight,
@@ -267,7 +267,7 @@ class PreviewComponentState extends ConsumerState<PreviewComponent> {
             ...visibleImageItems.map(
               (item) => _buildImageOverlayWidget(
                 item: item,
-                isSelected: timelineState.selectedItemId == item.id,
+                isSelected: timelineState.selectedItemIds.contains(item.id),
                 isLocked: timelineState.lockedItems.contains(item.id),
                 maxWidth: maxWidth,
                 maxHeight: maxHeight,

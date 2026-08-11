@@ -169,6 +169,23 @@ class VideoSearchNotifier extends Notifier<VideoSearchState> {
     }
   }
 
+  Future<void> toggleSave(VideoItem item) async {
+    try {
+      await _repository.toggleSave(item);
+
+      final updatedItems = state.items.map((i) {
+        if (i.identifier == item.identifier) {
+          return i.copyWith(isSaved: !i.isSaved);
+        }
+        return i;
+      }).toList();
+
+      state = state.copyWith(items: updatedItems);
+    } catch (e) {
+      // Silently fail
+    }
+  }
+
   Future<void> toggleLike(VideoItem item) async {
     try {
       await _repository.toggleLike(item);
@@ -218,6 +235,13 @@ final videoSearchProvider =
 final likedVideosProvider = FutureProvider<List<VideoItem>>((ref) async {
   final repository = ref.watch(videoRepositoryProvider);
   return await repository.getLikedVideos();
+});
+
+// ============ Saved Videos Provider ============
+
+final savedVideosProvider = FutureProvider<List<VideoItem>>((ref) async {
+  final repository = ref.watch(videoRepositoryProvider);
+  return await repository.getSavedVideos();
 });
 
 // ============ Video Metadata Provider ============

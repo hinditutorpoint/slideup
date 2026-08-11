@@ -17,12 +17,14 @@ class TimelineState {
   final List<AudioTimelineItem> audioItems;
   final String? selectedItemId;
   final TimelineItemType? selectedItemType;
+  final Set<String> selectedItemIds;
   final Duration currentPosition;
   final double zoomLevel;
   final bool isPlaying;
   final Duration totalDuration;
   final Set<String> lockedItems;
   final Set<String> hiddenItems;
+  final List<Duration> markers;
 
   const TimelineState({
     this.textItems = const [],
@@ -30,12 +32,14 @@ class TimelineState {
     this.audioItems = const [],
     this.selectedItemId,
     this.selectedItemType,
+    this.selectedItemIds = const {},
     this.currentPosition = Duration.zero,
     this.zoomLevel = 1.0,
     this.isPlaying = false,
     this.totalDuration = Duration.zero,
     this.lockedItems = const {},
     this.hiddenItems = const {},
+    this.markers = const [],
   });
 
   List<TimelineItem> get allItems {
@@ -59,6 +63,11 @@ class TimelineState {
     return null;
   }
 
+  List<TimelineItem> get selectedItems {
+    if (selectedItemIds.isEmpty) return [];
+    return allItems.where((i) => selectedItemIds.contains(i.id)).toList();
+  }
+
   List<TimelineItem> getVisibleItemsAt(Duration position) {
     return allItems.where((item) {
       if (hiddenItems.contains(item.id)) return false;
@@ -72,12 +81,14 @@ class TimelineState {
     List<AudioTimelineItem>? audioItems,
     String? selectedItemId,
     TimelineItemType? selectedItemType,
+    Set<String>? selectedItemIds,
     Duration? currentPosition,
     double? zoomLevel,
     bool? isPlaying,
     Duration? totalDuration,
     Set<String>? lockedItems,
     Set<String>? hiddenItems,
+    List<Duration>? markers,
   }) {
     return TimelineState(
       textItems: textItems ?? this.textItems,
@@ -85,12 +96,14 @@ class TimelineState {
       audioItems: audioItems ?? this.audioItems,
       selectedItemId: selectedItemId ?? this.selectedItemId,
       selectedItemType: selectedItemType ?? this.selectedItemType,
+      selectedItemIds: selectedItemIds ?? this.selectedItemIds,
       currentPosition: currentPosition ?? this.currentPosition,
       zoomLevel: zoomLevel ?? this.zoomLevel,
       isPlaying: isPlaying ?? this.isPlaying,
       totalDuration: totalDuration ?? this.totalDuration,
       lockedItems: lockedItems ?? this.lockedItems,
       hiddenItems: hiddenItems ?? this.hiddenItems,
+      markers: markers ?? this.markers,
     );
   }
 
@@ -101,12 +114,14 @@ class TimelineState {
       audioItems: audioItems,
       selectedItemId: null,
       selectedItemType: null,
+      selectedItemIds: const {},
       currentPosition: currentPosition,
       zoomLevel: zoomLevel,
       isPlaying: isPlaying,
       totalDuration: totalDuration,
       lockedItems: lockedItems,
       hiddenItems: hiddenItems,
+      markers: markers,
     );
   }
 }
@@ -133,6 +148,9 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       totalDuration: project.effectiveDuration,
       currentPosition: Duration.zero,
       selectedItemId: null,
+      selectedItemType: null,
+      selectedItemIds: const {},
+      markers: project.markers,
     );
   }
 
@@ -145,6 +163,7 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
         textItems: state.textItems,
         imageItems: state.imageItems,
         audioItems: state.audioItems,
+        markers: state.markers,
       ),
     );
   }
@@ -170,11 +189,150 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
   // ═══════════════════════════════════════════════════════
 
   void selectItem(String? itemId, [TimelineItemType? type]) {
-    state = state.copyWith(selectedItemId: itemId, selectedItemType: type);
+    state = state.copyWith(
+      selectedItemId: itemId,
+      selectedItemType: type,
+      selectedItemIds: {if (itemId != null) itemId},
+    );
+  }
+
+  void toggleSelectItem(String itemId, TimelineItemType type) {
+    final ids = Set<String>.from(state.selectedItemIds);
+    if (!ids.add(itemId)) {
+      ids.remove(itemId);
+    }
+    state = state.copyWith(
+      selectedItemId: ids.contains(itemId) ? itemId : state.selectedItemId,
+      selectedItemType: type,
+      selectedItemIds: ids,
+    );
   }
 
   void clearSelection() {
     state = state.clearSelection();
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ GROUP OPERATIONS
+  // ═══════════════════════════════════════════════════════
+
+  void groupSelectedItems() {
+    final selectedIds = state.selectedItemIds;
+    if (selectedIds.isEmpty) return;
+
+    final groupId = _uuid.v4();
+
+    var textItems = state.textItems;
+    var imageItems = state.imageItems;
+    var audioItems = state.audioItems;
+
+    textItems = textItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: groupId)
+            : e)
+        .toList();
+    imageItems = imageItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: groupId)
+            : e)
+        .toList();
+    audioItems = audioItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: groupId)
+            : e)
+        .toList();
+
+    state = state.copyWith(
+      textItems: textItems,
+      imageItems: imageItems,
+      audioItems: audioItems,
+    );
+    syncToProject();
+  }
+
+  void ungroupSelectedItems() {
+    final selectedIds = state.selectedItemIds;
+    if (selectedIds.isEmpty) return;
+
+    var textItems = state.textItems;
+    var imageItems = state.imageItems;
+    var audioItems = state.audioItems;
+
+    textItems = textItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: null)
+            : e)
+        .toList();
+    imageItems = imageItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: null)
+            : e)
+        .toList();
+    audioItems = audioItems
+        .map((e) => selectedIds.contains(e.id)
+            ? e.copyWith(groupId: null)
+            : e)
+        .toList();
+
+    state = state.copyWith(
+      textItems: textItems,
+      imageItems: imageItems,
+      audioItems: audioItems,
+    );
+    syncToProject();
+  }
+
+  /// Select every item that shares a group with [itemId].
+  void selectGroup(String itemId) {
+    TimelineItem? item;
+    for (final i in state.allItems) {
+      if (i.id == itemId) {
+        item = i;
+        break;
+      }
+    }
+    if (item == null) return;
+    final groupId = item.groupId;
+    if (groupId == null) {
+      selectItem(itemId, item.type);
+      return;
+    }
+
+    final ids = state.allItems
+        .where((i) => i.groupId == groupId)
+        .map((i) => i.id)
+        .toSet();
+    state = state.copyWith(
+      selectedItemId: itemId,
+      selectedItemType: item.type,
+      selectedItemIds: ids,
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ MARKERS
+  // ═══════════════════════════════════════════════════════
+
+  void addMarker([Duration? position]) {
+    final marker = position ?? state.currentPosition;
+    final markers = List<Duration>.from(state.markers)..add(marker);
+    markers.sort((a, b) => a.compareTo(b));
+    state = state.copyWith(markers: markers);
+    syncToProject();
+  }
+
+  void removeMarkerAt(Duration position) {
+    final markers = List<Duration>.from(state.markers);
+    markers.removeWhere(
+      (m) => (m - position).inMilliseconds.abs() < 500,
+    );
+    state = state.copyWith(markers: markers);
+    syncToProject();
+  }
+
+  void clearMarkers() {
+    state = state.copyWith(markers: const []);
+    syncToProject();
   }
 
   // ═══════════════════════════════════════════════════════
@@ -206,6 +364,7 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       textItems: [...state.textItems, item],
       selectedItemId: item.id,
       selectedItemType: TimelineItemType.text,
+      selectedItemIds: {item.id},
     );
 
     syncToProject();
@@ -222,11 +381,13 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   void removeTextItem(String itemId) {
     final items = state.textItems.where((item) => item.id != itemId).toList();
+    final ids = Set<String>.from(state.selectedItemIds)..remove(itemId);
     state = state.copyWith(
       textItems: items,
       selectedItemId: state.selectedItemId == itemId
           ? null
           : state.selectedItemId,
+      selectedItemIds: ids,
     );
     syncToProject();
   }
@@ -264,6 +425,22 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       imageItems: [...state.imageItems, item],
       selectedItemId: item.id,
       selectedItemType: TimelineItemType.image,
+      selectedItemIds: {item.id},
+    );
+
+    syncToProject();
+  }
+
+  void addGeneratedImage(ImageTimelineItem item) {
+    final withLayer = item.copyWith(
+      layer: _getNextLayer(TimelineItemType.image),
+    );
+
+    state = state.copyWith(
+      imageItems: [...state.imageItems, withLayer],
+      selectedItemId: withLayer.id,
+      selectedItemType: TimelineItemType.image,
+      selectedItemIds: {withLayer.id},
     );
 
     syncToProject();
@@ -280,11 +457,13 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   void removeImageItem(String itemId) {
     final items = state.imageItems.where((item) => item.id != itemId).toList();
+    final ids = Set<String>.from(state.selectedItemIds)..remove(itemId);
     state = state.copyWith(
       imageItems: items,
       selectedItemId: state.selectedItemId == itemId
           ? null
           : state.selectedItemId,
+      selectedItemIds: ids,
     );
     syncToProject();
   }
@@ -317,6 +496,7 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       audioItems: [...state.audioItems, item],
       selectedItemId: item.id,
       selectedItemType: TimelineItemType.audio,
+      selectedItemIds: {item.id},
     );
 
     syncToProject();
@@ -333,11 +513,13 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   void removeAudioItem(String itemId) {
     final items = state.audioItems.where((item) => item.id != itemId).toList();
+    final ids = Set<String>.from(state.selectedItemIds)..remove(itemId);
     state = state.copyWith(
       audioItems: items,
       selectedItemId: state.selectedItemId == itemId
           ? null
           : state.selectedItemId,
+      selectedItemIds: ids,
     );
     syncToProject();
   }
@@ -427,6 +609,89 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
         return;
       }
     }
+  }
+
+  /// Move all selected (or group-shared) items together by [delta],
+  /// clamping so no item exceeds the total timeline duration.
+  void moveSelectedItems(Duration delta) {
+    final ids = state.selectedItemIds;
+    if (ids.isEmpty) return;
+
+    final canMove = ids.every((id) {
+      final item = _findItem(id);
+      if (item == null) return true;
+      final newStart = item.startTime + delta;
+      return newStart >= Duration.zero &&
+          newStart + item.duration <= state.totalDuration;
+    });
+    if (!canMove) return;
+
+    var textItems = state.textItems;
+    var imageItems = state.imageItems;
+    var audioItems = state.audioItems;
+
+    textItems = textItems.map((e) {
+      if (!ids.contains(e.id)) return e;
+      return e.copyWith(
+        startTime: e.startTime + delta,
+        endTime: e.endTime + delta,
+      );
+    }).toList();
+    imageItems = imageItems.map((e) {
+      if (!ids.contains(e.id)) return e;
+      return e.copyWith(
+        startTime: e.startTime + delta,
+        endTime: e.endTime + delta,
+      );
+    }).toList();
+    audioItems = audioItems.map((e) {
+      if (!ids.contains(e.id)) return e;
+      return e.copyWith(
+        startTime: e.startTime + delta,
+        endTime: e.endTime + delta,
+      );
+    }).toList();
+
+    state = state.copyWith(
+      textItems: textItems,
+      imageItems: imageItems,
+      audioItems: audioItems,
+    );
+    syncToProject();
+  }
+
+  void deleteSelectedItems() {
+    final ids = state.selectedItemIds;
+    if (ids.isEmpty) return;
+
+    state = state.copyWith(
+      textItems: state.textItems
+          .where((e) => !ids.contains(e.id))
+          .toList(),
+      imageItems: state.imageItems
+          .where((e) => !ids.contains(e.id))
+          .toList(),
+      audioItems: state.audioItems
+          .where((e) => !ids.contains(e.id))
+          .toList(),
+      selectedItemId: null,
+      selectedItemType: null,
+      selectedItemIds: const {},
+    );
+    syncToProject();
+  }
+
+  TimelineItem? _findItem(String id) {
+    for (final e in state.textItems) {
+      if (e.id == id) return e;
+    }
+    for (final e in state.imageItems) {
+      if (e.id == id) return e;
+    }
+    for (final e in state.audioItems) {
+      if (e.id == id) return e;
+    }
+    return null;
   }
 
   void duplicateItem(String itemId) {
@@ -593,6 +858,46 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     }
   }
 
+  void reorderItems(int oldIndex, int newIndex) {
+    final items = List<TimelineItem>.from(state.allItems);
+    if (items.isEmpty || oldIndex < 0 || oldIndex >= items.length) return;
+
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex > items.length) return;
+
+    final moved = items.removeAt(oldIndex);
+    items.insert(newIndex, moved);
+
+    var textItems = state.textItems;
+    var imageItems = state.imageItems;
+    var audioItems = state.audioItems;
+
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      final layer = i;
+      if (item is TextTimelineItem) {
+        textItems = textItems
+            .map((e) => e.id == item.id ? e.copyWith(layer: layer) : e)
+            .toList();
+      } else if (item is ImageTimelineItem) {
+        imageItems = imageItems
+            .map((e) => e.id == item.id ? e.copyWith(layer: layer) : e)
+            .toList();
+      } else if (item is AudioTimelineItem) {
+        audioItems = audioItems
+            .map((e) => e.id == item.id ? e.copyWith(layer: layer) : e)
+            .toList();
+      }
+    }
+
+    state = state.copyWith(
+      textItems: textItems,
+      imageItems: imageItems,
+      audioItems: audioItems,
+    );
+    syncToProject();
+  }
+
   int _getMaxLayer() {
     int max = 0;
     for (final item in state.allItems) {
@@ -676,4 +981,12 @@ final audioItemsProvider = Provider<List<AudioTimelineItem>>((ref) {
 
 final allItemsProvider = Provider<List<TimelineItem>>((ref) {
   return ref.watch(timelineProvider).allItems;
+});
+
+final selectedItemIdsProvider = Provider<Set<String>>((ref) {
+  return ref.watch(timelineProvider).selectedItemIds;
+});
+
+final markersProvider = Provider<List<Duration>>((ref) {
+  return ref.watch(timelineProvider).markers;
 });

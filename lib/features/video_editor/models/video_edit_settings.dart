@@ -168,6 +168,9 @@ class ColorGradeSettings {
   final double shadows;
   final double whites;
   final double blacks;
+  final bool chromaKeyEnabled;
+  final int chromaKeyColor;
+  final double chromaKeySimilarity;
 
   const ColorGradeSettings({
     this.brightness = 0.0,
@@ -184,6 +187,9 @@ class ColorGradeSettings {
     this.shadows = 0.0,
     this.whites = 0.0,
     this.blacks = 0.0,
+    this.chromaKeyEnabled = false,
+    this.chromaKeyColor = 0xFF00FF00,
+    this.chromaKeySimilarity = 0.2,
   });
 
   factory ColorGradeSettings.clamped({
@@ -201,6 +207,9 @@ class ColorGradeSettings {
     double shadows = 0.0,
     double whites = 0.0,
     double blacks = 0.0,
+    bool chromaKeyEnabled = false,
+    int chromaKeyColor = 0xFF00FF00,
+    double chromaKeySimilarity = 0.2,
   }) {
     return ColorGradeSettings(
       brightness: brightness.clamp(-1.0, 1.0),
@@ -217,6 +226,9 @@ class ColorGradeSettings {
       shadows: shadows.clamp(-1.0, 1.0),
       whites: whites.clamp(-1.0, 1.0),
       blacks: blacks.clamp(-1.0, 1.0),
+      chromaKeyEnabled: chromaKeyEnabled,
+      chromaKeyColor: chromaKeyColor,
+      chromaKeySimilarity: chromaKeySimilarity.clamp(0.0, 1.0),
     );
   }
 
@@ -235,6 +247,9 @@ class ColorGradeSettings {
     double? shadows,
     double? whites,
     double? blacks,
+    bool? chromaKeyEnabled,
+    int? chromaKeyColor,
+    double? chromaKeySimilarity,
   }) {
     return ColorGradeSettings(
       brightness: brightness ?? this.brightness,
@@ -251,6 +266,9 @@ class ColorGradeSettings {
       shadows: shadows ?? this.shadows,
       whites: whites ?? this.whites,
       blacks: blacks ?? this.blacks,
+      chromaKeyEnabled: chromaKeyEnabled ?? this.chromaKeyEnabled,
+      chromaKeyColor: chromaKeyColor ?? this.chromaKeyColor,
+      chromaKeySimilarity: chromaKeySimilarity ?? this.chromaKeySimilarity,
     );
   }
 
@@ -268,7 +286,8 @@ class ColorGradeSettings {
       highlights == 0.0 &&
       shadows == 0.0 &&
       whites == 0.0 &&
-      blacks == 0.0;
+      blacks == 0.0 &&
+      !chromaKeyEnabled;
 
   List<double> toColorMatrix() {
     try {
@@ -335,6 +354,9 @@ class ColorGradeSettings {
     'shadows': shadows,
     'whites': whites,
     'blacks': blacks,
+    'chromaKeyEnabled': chromaKeyEnabled,
+    'chromaKeyColor': chromaKeyColor,
+    'chromaKeySimilarity': chromaKeySimilarity,
   };
 
   factory ColorGradeSettings.fromJson(Map<String, dynamic>? json) {
@@ -356,6 +378,10 @@ class ColorGradeSettings {
         shadows: json.safeGet<double>('shadows', 0.0)!,
         whites: json.safeGet<double>('whites', 0.0)!,
         blacks: json.safeGet<double>('blacks', 0.0)!,
+        chromaKeyEnabled: json.safeGet<bool>('chromaKeyEnabled', false)!,
+        chromaKeyColor: json.safeGet<int>('chromaKeyColor', 0xFF00FF00)!,
+        chromaKeySimilarity:
+            json.safeGet<double>('chromaKeySimilarity', 0.2)!,
       );
     } catch (e) {
       debugPrint('❌ ColorGradeSettings.fromJson error: $e');
@@ -380,7 +406,10 @@ class ColorGradeSettings {
         other.highlights == highlights &&
         other.shadows == shadows &&
         other.whites == whites &&
-        other.blacks == blacks;
+        other.blacks == blacks &&
+        other.chromaKeyEnabled == chromaKeyEnabled &&
+        other.chromaKeyColor == chromaKeyColor &&
+        other.chromaKeySimilarity == chromaKeySimilarity;
   }
 
   @override
@@ -399,6 +428,9 @@ class ColorGradeSettings {
     shadows,
     whites,
     blacks,
+    chromaKeyEnabled,
+    chromaKeyColor,
+    chromaKeySimilarity,
   );
 
   static const ColorGradeSettings defaultSettings = ColorGradeSettings();
@@ -1353,6 +1385,7 @@ class TimelineItem {
   final double rotation;
   final bool isLocked;
   final bool isVisible;
+  final String? groupId;
 
   const TimelineItem({
     required this.id,
@@ -1366,6 +1399,7 @@ class TimelineItem {
     this.rotation = 0.0,
     this.isLocked = false,
     this.isVisible = true,
+    this.groupId,
   });
 
   Duration get duration => endTime - startTime;
@@ -1386,6 +1420,7 @@ class TimelineItem {
     double? rotation,
     bool? isLocked,
     bool? isVisible,
+    String? groupId,
   }) {
     return TimelineItem(
       id: id ?? this.id,
@@ -1399,6 +1434,7 @@ class TimelineItem {
       rotation: rotation ?? this.rotation,
       isLocked: isLocked ?? this.isLocked,
       isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
     );
   }
 
@@ -1414,6 +1450,7 @@ class TimelineItem {
     'rotation': rotation,
     'isLocked': isLocked,
     'isVisible': isVisible,
+    'groupId': groupId,
   };
 
   @override
@@ -1449,6 +1486,7 @@ class TextTimelineItem extends TimelineItem {
     super.rotation = 0.0,
     super.isLocked,
     super.isVisible,
+    super.groupId,
     required this.text,
     this.style = const TextOverlayStyle(),
     this.animationIn = TextAnimation.none,
@@ -1468,6 +1506,7 @@ class TextTimelineItem extends TimelineItem {
     double rotation = 0.0,
     bool isLocked = false,
     bool isVisible = true,
+    String? groupId,
     TextOverlayStyle style = const TextOverlayStyle(),
     TextAnimation animationIn = TextAnimation.none,
     TextAnimation animationOut = TextAnimation.none,
@@ -1486,6 +1525,7 @@ class TextTimelineItem extends TimelineItem {
       rotation: rotation % 360,
       isLocked: isLocked,
       isVisible: isVisible,
+      groupId: groupId,
       text: text,
       style: style,
       animationIn: animationIn,
@@ -1507,6 +1547,7 @@ class TextTimelineItem extends TimelineItem {
     double? rotation,
     bool? isLocked,
     bool? isVisible,
+    String? groupId,
     String? text,
     TextOverlayStyle? style,
     TextAnimation? animationIn,
@@ -1524,6 +1565,7 @@ class TextTimelineItem extends TimelineItem {
       rotation: rotation ?? this.rotation,
       isLocked: isLocked ?? this.isLocked,
       isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
       text: text ?? this.text,
       style: style ?? this.style,
       animationIn: animationIn ?? this.animationIn,
@@ -1567,6 +1609,7 @@ class TextTimelineItem extends TimelineItem {
         rotation: json.safeGet<double>('rotation', 0.0)!,
         isLocked: json.safeGet<bool>('isLocked', false)!,
         isVisible: json.safeGet<bool>('isVisible', true)!,
+        groupId: json.safeGet<String>('groupId'),
         text: json.safeGet<String>('text', '')!,
         style: TextOverlayStyle.fromJson(
           json['style'] as Map<String, dynamic>?,
@@ -1629,6 +1672,7 @@ class ImageTimelineItem extends TimelineItem {
     super.rotation = 0.0,
     super.isLocked,
     super.isVisible,
+    super.groupId,
     required this.imagePath,
     this.thumbnailUrl,
     this.imageBytes,
@@ -1667,6 +1711,7 @@ class ImageTimelineItem extends TimelineItem {
     double rotation = 0.0,
     bool isLocked = false,
     bool isVisible = true,
+    String? groupId,
     String? thumbnailUrl,
     Uint8List? imageBytes,
     int width = 1920,
@@ -1693,6 +1738,7 @@ class ImageTimelineItem extends TimelineItem {
       rotation: rotation % 360,
       isLocked: isLocked,
       isVisible: isVisible,
+      groupId: groupId,
       imagePath: imagePath,
       thumbnailUrl: thumbnailUrl,
       imageBytes: imageBytes,
@@ -1722,6 +1768,7 @@ class ImageTimelineItem extends TimelineItem {
     double? rotation,
     bool? isLocked,
     bool? isVisible,
+    String? groupId,
     String? imagePath,
     String? thumbnailUrl,
     Uint8List? imageBytes,
@@ -1747,6 +1794,7 @@ class ImageTimelineItem extends TimelineItem {
       rotation: rotation ?? this.rotation,
       isLocked: isLocked ?? this.isLocked,
       isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
       imagePath: imagePath ?? this.imagePath,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       imageBytes: imageBytes ?? this.imageBytes,
@@ -1805,6 +1853,7 @@ class ImageTimelineItem extends TimelineItem {
         rotation: json.safeGet<double>('rotation', 0.0)!,
         isLocked: json.safeGet<bool>('isLocked', false)!,
         isVisible: json.safeGet<bool>('isVisible', true)!,
+        groupId: json.safeGet<String>('groupId'),
         imagePath: json.safeGet<String>('imagePath', '')!,
         thumbnailUrl: json.safeGet<String>('thumbnailUrl'),
         width: json.safeGet<int>('width', 1920)!,
@@ -1856,6 +1905,7 @@ class AudioTimelineItem extends TimelineItem {
     super.layer = -1,
     super.isLocked,
     super.isVisible,
+    super.groupId,
     required this.audioPath,
     this.title = '',
     this.artist = '',
@@ -1891,6 +1941,7 @@ class AudioTimelineItem extends TimelineItem {
     int layer = -1,
     bool isLocked = false,
     bool isVisible = true,
+    String? groupId,
     String title = '',
     String artist = '',
     Duration trimStart = Duration.zero,
@@ -1911,6 +1962,7 @@ class AudioTimelineItem extends TimelineItem {
       layer: layer,
       isLocked: isLocked,
       isVisible: isVisible,
+      groupId: groupId,
       audioPath: audioPath,
       title: title,
       artist: artist,
@@ -1939,6 +1991,7 @@ class AudioTimelineItem extends TimelineItem {
     double? rotation,
     bool? isLocked,
     bool? isVisible,
+    String? groupId,
     String? audioPath,
     String? title,
     String? artist,
@@ -1959,6 +2012,7 @@ class AudioTimelineItem extends TimelineItem {
       layer: layer ?? this.layer,
       isLocked: isLocked ?? this.isLocked,
       isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
       audioPath: audioPath ?? this.audioPath,
       title: title ?? this.title,
       artist: artist ?? this.artist,
@@ -2017,6 +2071,7 @@ class AudioTimelineItem extends TimelineItem {
         layer: json.safeGet<int>('layer', -1)!,
         isLocked: json.safeGet<bool>('isLocked', false)!,
         isVisible: json.safeGet<bool>('isVisible', true)!,
+        groupId: json.safeGet<String>('groupId'),
         audioPath: json.safeGet<String>('audioPath', '')!,
         title: json.safeGet<String>('title', '')!,
         artist: json.safeGet<String>('artist', '')!,
@@ -2628,6 +2683,7 @@ class VideoProject {
   final DateTime createdAt;
   final DateTime modifiedAt;
   final Uint8List? thumbnail;
+  final List<Duration> markers;
 
   VideoProject({
     required this.id,
@@ -2645,6 +2701,7 @@ class VideoProject {
     DateTime? createdAt,
     DateTime? modifiedAt,
     this.thumbnail,
+    this.markers = const [],
   }) : trimEnd = trimEnd ?? videoDuration,
        createdAt = createdAt ?? DateTime.now(),
        modifiedAt = modifiedAt ?? DateTime.now();
@@ -2720,6 +2777,7 @@ class VideoProject {
     DateTime? createdAt,
     DateTime? modifiedAt,
     Uint8List? thumbnail,
+    List<Duration>? markers,
   }) {
     return VideoProject(
       id: id ?? this.id,
@@ -2737,6 +2795,7 @@ class VideoProject {
       createdAt: createdAt ?? this.createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
       thumbnail: thumbnail ?? this.thumbnail,
+      markers: markers ?? this.markers,
     );
   }
 
@@ -2755,6 +2814,7 @@ class VideoProject {
     'exportPreset': exportPreset.toJson(),
     'createdAt': createdAt.toIso8601String(),
     'modifiedAt': modifiedAt.toIso8601String(),
+    'markers': markers.map((e) => e.inMilliseconds).toList(),
   };
 
   factory VideoProject.fromJson(Map<String, dynamic>? json) {
@@ -2803,6 +2863,7 @@ class VideoProject {
         ),
         createdAt: _parseDateTime(json['createdAt']),
         modifiedAt: _parseDateTime(json['modifiedAt']),
+        markers: _parseMarkerList(json['markers']),
       );
     } catch (e) {
       debugPrint('❌ VideoProject.fromJson error: $e');
@@ -3160,6 +3221,23 @@ DateTime _parseDateTime(dynamic value) {
     return DateTime.now();
   } catch (e) {
     return DateTime.now();
+  }
+}
+
+/// Safe markers parsing (list of int milliseconds)
+List<Duration> _parseMarkerList(dynamic value) {
+  try {
+    if (value == null) return [];
+    if (value is List) {
+      return value
+          .whereType<num>()
+          .where((e) => e > 0)
+          .map((e) => Duration(milliseconds: e.toInt()))
+          .toList();
+    }
+    return [];
+  } catch (e) {
+    return [];
   }
 }
 

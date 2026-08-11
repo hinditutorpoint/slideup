@@ -1,4 +1,5 @@
-import 'dart:io' show Platform;
+import 'dart:async';
+import 'dart:io' show File, FileMode, Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:workmanager/workmanager.dart';
 import 'features/speaker_player/services/background_chapter_generator.dart';
 
@@ -37,8 +39,33 @@ import '/features/speaker_player/screens/models_screen.dart';
 import 'navigation_service.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // ------------------------------------------------------------
+  // Global error handling: keep the app alive and log everything.
+  // ------------------------------------------------------------
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    _logGlobalError(
+      'FlutterError: ${details.exception}\n${details.stack}',
+    );
+  };
 
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    _logGlobalError('Platform error: $error\n$stackTrace');
+    return true; // Swallow the error so the app keeps running.
+  };
+
+  await runZonedGuarded(
+    () => _bootstrapApp(),
+    (error, stackTrace) {
+      _logGlobalError('Uncaught zone error: $error\n$stackTrace');
+    },
+  );
+}
+
+Future<void> _bootstrapApp() async {
+  // Ensure the binding is initialized in the SAME zone as runApp
+  // (otherwise Flutter throws "Zone mismatch").
+  WidgetsFlutterBinding.ensureInitialized();
   // ------------------------------------------------------------
   // Workmanager: MUST be initialized in main on Android/iOS
   // ------------------------------------------------------------
@@ -57,6 +84,7 @@ Future<void> main() async {
 
   await Hive.initFlutter();
   await Hive.openBox('settingsBox');
+  await Hive.openBox('settings');
   // Step 1: Enums first (no dependencies)
   Hive
     // Step 1: Existing enums
@@ -142,6 +170,27 @@ Future<void> main() async {
       child: const SlideupMediaPlayerApp(),
     ),
   );
+}
+
+void _logGlobalError(String message) {
+  try {
+    debugPrint('🛑 $message');
+    getApplicationDocumentsDirectory().then((dir) {
+      try {
+        final file = File(
+          '${dir.path}/error_log.txt',
+        );
+        file.writeAsStringSync(
+          '${DateTime.now().toIso8601String()}\n$message\n\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {
+        // Logging must never crash the app.
+      }
+    });
+  } catch (_) {
+    // Logging must never crash the app.
+  }
 }
 
 class SlideupMediaPlayerApp extends ConsumerStatefulWidget {

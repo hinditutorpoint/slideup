@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class PreferencesService {
@@ -44,12 +45,21 @@ class PreferencesService {
   // =========================
 
   Future<bool> get isFirstLaunch async {
-    final value = await _storage.read(key: _firstLaunchKey);
-    return value == null ? true : _stringToBool(value);
+    try {
+      final value = await _storage.read(key: _firstLaunchKey);
+      return value == null ? true : _stringToBool(value);
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.isFirstLaunch error: $e');
+      return true;
+    }
   }
 
   Future<void> setFirstLaunchComplete() async {
-    await _storage.write(key: _firstLaunchKey, value: _boolToString(false));
+    try {
+      await _storage.write(key: _firstLaunchKey, value: _boolToString(false));
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.setFirstLaunchComplete error: $e');
+    }
   }
 
   // =========================
@@ -57,16 +67,28 @@ class PreferencesService {
   // =========================
 
   Future<bool> get hasAcceptedTerms async {
-    final accepted = _stringToBool(await _storage.read(key: _termsAcceptedKey));
-    final version = _stringToInt(
-      await _storage.read(key: _termsAcceptedVersionKey),
-    );
+    try {
+      final accepted = _stringToBool(
+        await _storage.read(key: _termsAcceptedKey),
+      );
+      final version = _stringToInt(
+        await _storage.read(key: _termsAcceptedVersionKey),
+      );
 
-    return accepted && version >= currentTermsVersion;
+      return accepted && version >= currentTermsVersion;
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.hasAcceptedTerms error: $e');
+      return false;
+    }
   }
 
   Future<bool> get hasAcceptedPrivacy async {
-    return _stringToBool(await _storage.read(key: _privacyAcceptedKey));
+    try {
+      return _stringToBool(await _storage.read(key: _privacyAcceptedKey));
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.hasAcceptedPrivacy error: $e');
+      return false;
+    }
   }
 
   Future<bool> get hasAcceptedAll async {
@@ -74,15 +96,23 @@ class PreferencesService {
   }
 
   Future<void> acceptTerms() async {
-    await _storage.write(key: _termsAcceptedKey, value: _boolToString(true));
-    await _storage.write(
-      key: _termsAcceptedVersionKey,
-      value: currentTermsVersion.toString(),
-    );
+    try {
+      await _storage.write(key: _termsAcceptedKey, value: _boolToString(true));
+      await _storage.write(
+        key: _termsAcceptedVersionKey,
+        value: currentTermsVersion.toString(),
+      );
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.acceptTerms error: $e');
+    }
   }
 
   Future<void> acceptPrivacy() async {
-    await _storage.write(key: _privacyAcceptedKey, value: _boolToString(true));
+    try {
+      await _storage.write(key: _privacyAcceptedKey, value: _boolToString(true));
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.acceptPrivacy error: $e');
+    }
   }
 
   Future<void> acceptAll() async {
@@ -92,9 +122,13 @@ class PreferencesService {
   }
 
   Future<void> resetAcceptance() async {
-    await _storage.delete(key: _termsAcceptedKey);
-    await _storage.delete(key: _termsAcceptedVersionKey);
-    await _storage.delete(key: _privacyAcceptedKey);
+    try {
+      await _storage.delete(key: _termsAcceptedKey);
+      await _storage.delete(key: _termsAcceptedVersionKey);
+      await _storage.delete(key: _privacyAcceptedKey);
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.resetAcceptance error: $e');
+    }
   }
 
   // =========================
@@ -102,10 +136,19 @@ class PreferencesService {
   // =========================
 
   Future<String> get viewMode async {
-    return await _storage.read(key: _viewModeKey) ?? 'grid';
+    try {
+      return await _storage.read(key: _viewModeKey) ?? 'grid';
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.viewMode error: $e');
+      return 'grid';
+    }
   }
 
   Future<void> setViewMode(String mode) async {
-    await _storage.write(key: _viewModeKey, value: mode);
+    try {
+      await _storage.write(key: _viewModeKey, value: mode);
+    } catch (e) {
+      debugPrint('⚠️ PreferencesService.setViewMode error: $e');
+    }
   }
 }

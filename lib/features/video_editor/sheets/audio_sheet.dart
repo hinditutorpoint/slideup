@@ -5,7 +5,6 @@ import 'package:file_picker/file_picker.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart';
-import '../services/audio_edit_service.dart';
 import 'package:slideup/core/utils/safe_async.dart';
 
 // ═══════════════════════════════════════════════════════
@@ -1143,6 +1142,13 @@ class _AudioSheetState extends ConsumerState<AudioSheet>
             const Color(0xFF9C27B0),
             () => _applyAudioEffect(AudioEffectType.trebleBoost),
           ),
+          _buildEffectCard(
+            'Vocal Remover',
+            'Remove vocals (karaoke effect)',
+            Icons.mic_off,
+            const Color(0xFFF44336),
+            () => _applyAudioEffect(AudioEffectType.vocalRemoval),
+          ),
         ],
       ),
     );
@@ -1421,10 +1427,22 @@ class _AudioSheetState extends ConsumerState<AudioSheet>
           );
           break;
         case AudioEffectType.bassBoost:
-          // TODO: Implement bass boost
+          result = await _audioService.applyBassBoost(
+            inputPath: project.videoPath,
+            onProgress: _onProgress,
+          );
           break;
         case AudioEffectType.trebleBoost:
-          // TODO: Implement treble boost
+          result = await _audioService.applyTrebleBoost(
+            inputPath: project.videoPath,
+            onProgress: _onProgress,
+          );
+          break;
+        case AudioEffectType.vocalRemoval:
+          result = await _audioService.removeVocals(
+            inputPath: project.videoPath,
+            onProgress: _onProgress,
+          );
           break;
         default:
           break;

@@ -36,10 +36,11 @@ class DatabaseService {
       onUpgrade: _upgradeDB,
       singleInstance: true,
     ).then((db) async {
-      // Set busy timeout and WAL mode for better concurrency
+      // Set busy timeout and WAL mode for better concurrency.
+      // PRAGMA statements must use rawQuery on Android (execute uses execSQL).
       try {
-        await db.execute('PRAGMA busy_timeout = 30000;');
-        await db.execute('PRAGMA journal_mode = WAL;');
+        await db.rawQuery('PRAGMA busy_timeout = 30000;');
+        await db.rawQuery('PRAGMA journal_mode = WAL;');
       } catch (e) {
         debugPrint('Error setting PRAGMA: $e');
       }

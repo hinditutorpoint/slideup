@@ -6,26 +6,22 @@ import '../models/video_file.dart';
 class VideoFileGridItem extends StatelessWidget {
   final VideoFile file;
   final String identifier;
-  final bool isLiked;
   final bool isFavorite;
   final String? thumbnailUrl;
   final VoidCallback onPlay;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const VideoFileGridItem({
     super.key,
     required this.file,
     required this.identifier,
-    required this.isLiked,
     required this.isFavorite,
     this.thumbnailUrl,
     required this.onPlay,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 
@@ -61,11 +57,11 @@ class VideoFileGridItem extends StatelessWidget {
                   child: _VideoThumbnail(
                     thumbnailUrl: _thumbnailUrl,
                     file: file,
-                    isLiked: isLiked,
                     isFavorite: isFavorite,
                     colorScheme: colorScheme,
                     isSmallScreen: isSmallScreen,
-                    onLike: onLike,
+                    onDownload: onDownload,
+                    onShare: onShare,
                     onFavorite: onFavorite,
                   ),
                 ),
@@ -74,13 +70,11 @@ class VideoFileGridItem extends StatelessWidget {
                   height: infoHeight,
                   child: _InfoSection(
                     file: file,
-                    isLiked: isLiked,
                     isFavorite: isFavorite,
                     colorScheme: colorScheme,
                     isSmallScreen: isSmallScreen,
                     onDownload: onDownload,
                     onShare: onShare,
-                    onLike: onLike,
                     onFavorite: onFavorite,
                   ),
                 ),
@@ -96,21 +90,21 @@ class VideoFileGridItem extends StatelessWidget {
 class _VideoThumbnail extends StatelessWidget {
   final String? thumbnailUrl;
   final VideoFile file;
-  final bool isLiked;
   final bool isFavorite;
   final ColorScheme colorScheme;
   final bool isSmallScreen;
-  final VoidCallback onLike;
+  final VoidCallback onDownload;
+  final VoidCallback onShare;
   final VoidCallback onFavorite;
 
   const _VideoThumbnail({
     required this.thumbnailUrl,
     required this.file,
-    required this.isLiked,
     required this.isFavorite,
     required this.colorScheme,
     required this.isSmallScreen,
-    required this.onLike,
+    required this.onDownload,
+    required this.onShare,
     required this.onFavorite,
   });
 
@@ -180,19 +174,8 @@ class _VideoThumbnail extends StatelessWidget {
           ),
         ),
 
-        // Like button - top right
         Positioned(
           top: 4,
-          right: 4,
-          child: _LikeButton(
-            isLiked: isLiked,
-            onTap: onLike,
-            isSmallScreen: isSmallScreen,
-          ),
-        ),
-
-        Positioned(
-          top: 36,
           right: 4,
           child: _FavoriteButton(
             isFavorite: isFavorite,
@@ -344,38 +327,6 @@ class _QualityBadge extends StatelessWidget {
   }
 }
 
-class _LikeButton extends StatelessWidget {
-  final bool isLiked;
-  final VoidCallback onTap;
-  final bool isSmallScreen;
-
-  const _LikeButton({
-    required this.isLiked,
-    required this.onTap,
-    required this.isSmallScreen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.4),
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: EdgeInsets.all(isSmallScreen ? 5 : 6),
-          child: Icon(
-            isLiked ? Icons.favorite : Icons.favorite_border,
-            size: isSmallScreen ? 16 : 18,
-            color: isLiked ? Colors.red : Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _FavoriteButton extends StatelessWidget {
   final bool isFavorite;
   final VoidCallback onTap;
@@ -410,24 +361,20 @@ class _FavoriteButton extends StatelessWidget {
 
 class _InfoSection extends StatelessWidget {
   final VideoFile file;
-  final bool isLiked;
   final bool isFavorite;
   final ColorScheme colorScheme;
   final bool isSmallScreen;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const _InfoSection({
     required this.file,
-    required this.isLiked,
     required this.isFavorite,
     required this.colorScheme,
     required this.isSmallScreen,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
   });
 

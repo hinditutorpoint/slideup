@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -11,6 +12,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../navigation_service.dart';
 import '../models/video_player_state.dart';
 import '../models/player_settings.dart';
 import 'settings_storage_service.dart';
@@ -585,10 +587,27 @@ class VideoPlayerService {
       // Restore position if enabled
       if (_settings.rememberPosition && fileId != null) {
         try {
-          final savedPosition =
+          var savedPosition =
               await SettingsStorageService.getPlaybackPosition(fileId);
+          // Network URLs played via the launcher may have been saved under the
+          // url.hashCode key (PlayerMedia.fromUrl) while recent-history items
+          // pass the raw URL as fileId. Try both.
+          if (savedPosition == null &&
+              (fileId.startsWith('http://') || fileId.startsWith('https://'))) {
+            savedPosition = await SettingsStorageService.getPlaybackPosition(
+              fileId.hashCode.toString(),
+            );
+          }
           if (savedPosition != null && savedPosition.inSeconds > 5) {
-            await seek(savedPosition);
+            debugPrint(
+              '🎬 Saved position found: ${savedPosition.inSeconds}s '
+              '(duration=${_state.duration.inSeconds}s)',
+            );
+            if (await _confirmResumeFromLastPosition()) {
+              await _resumeFromPosition(savedPosition);
+            } else {
+              await SettingsStorageService.clearPlaybackPosition(fileId);
+            }
           }
         } catch (e) {
           debugPrint('⚠️ Failed to restore position: $e');
@@ -654,6 +673,79 @@ class VideoPlayerService {
       return _playlistFileIds[index];
     }
     return null;
+  }
+
+  /// Restore a saved playback position. Seeks directly on the player so the
+  /// position is not clamped to zero while the duration is still unknown.
+  Future<void> _resumeFromPosition(Duration position) async {
+    if (_isDisposed || _player == null) return;
+    try {
+      _updateState(_state.copyWith(isCompleted: false));
+      // Network streams (and some slow local files) are still loading right
+      // after open(), so a seek issued before the demuxer reports a duration
+      // gets dropped by the engine. Wait until the stream is ready first.
+      await _waitUntilStreamReady();
+      await _player!.seek(position);
+      _updateState(_state.copyWith(position: position));
+      debugPrint('✅ Resumed at ${position.inSeconds}s');
+    } catch (e) {
+      debugPrint('⚠️ Failed to resume position: $e');
+    }
+  }
+
+  /// Waits until the player reports a real (non-zero) duration so that seeks
+  /// issued during resume are not dropped. Times out to avoid hanging.
+  Future<void> _waitUntilStreamReady() async {
+    if (_player == null || _isDisposed) return;
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline) && !_isDisposed) {
+      try {
+        final duration = _player!.state.duration;
+        if (duration > Duration.zero) return;
+      } catch (e) {
+        // state may throw while platform is initializing; keep waiting
+      }
+      await Future.delayed(const Duration(milliseconds: 250));
+    }
+    debugPrint('⚠️ Timed out waiting for stream to be ready');
+  }
+
+  /// When "Ask to Resume Last Position" is enabled, prompt the user before
+  /// restoring a saved playback position. Otherwise resume automatically.
+  Future<bool> _confirmResumeFromLastPosition() async {
+    try {
+      final ask = Hive.box('settings').get(
+            'askResumeLastPosition',
+            defaultValue: false,
+          ) as bool;
+      if (!ask) return true;
+
+      final context = rootNavigatorKey.currentContext;
+      if (context == null || !context.mounted) return true;
+
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Resume Playback'),
+          content: const Text('Play from last saved position?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Start Over'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Resume'),
+            ),
+          ],
+        ),
+      );
+      return result ?? true;
+    } catch (e) {
+      debugPrint('⚠️ Failed to ask resume position: $e');
+      return true;
+    }
   }
 
   Future<void> playOrPause() async {

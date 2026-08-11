@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,11 @@ import 'sheets/audio_sheet.dart';
 import 'sheets/color_sheet.dart';
 import 'sheets/library_sheet.dart';
 import 'sheets/export_sheet.dart'; // Keep this for export dialog
+import 'sheets/effects_sheet.dart';
+import 'sheets/image_picker_sheet.dart';
+import 'sheets/image_edit_sheet.dart';
+import 'sheets/merge_sheet.dart';
+import 'tabs/ai_tab.dart';
 
 // ═══════════════════════════════════════════════════════
 // ✅ PROVIDERS
@@ -230,7 +236,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                       _playbackControlsHeight -
                       _thumbnailTimelineHeight;
 
-                  final editorHeight = remainingHeight / 2;
+                  final editorHeight = remainingHeight;
 
                   return Column(
                     children: [
@@ -280,32 +286,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                                     .read(videoEditorProvider.notifier)
                                     .togglePanel(EditorPanel.properties);
                               },
-                            ),
-                          ),
-                        ),
-
-                      // TIMELINE EDITOR PLACEHOLDER
-                      if (project != null)
-                        SizedBox(
-                          height: editorHeight,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.grey[850],
-                              border: Border(
-                                top: BorderSide(
-                                  color: Colors.grey[800]!,
-                                  width: 0.5,
-                                ),
-                              ),
-                            ),
-                            child: Center(
-                              child: Text(
-                                'Advanced Timeline Editor',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[500],
-                                ),
-                              ),
                             ),
                           ),
                         ),
@@ -531,7 +511,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
   Widget _buildCompactVolumeSlider(VideoEditorState state) {
     return Container(
       width: 28,
-      height: 100,
+      height: 112,
       decoration: BoxDecoration(
         color: Colors.black54,
         borderRadius: BorderRadius.circular(14),
@@ -1157,7 +1137,9 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     return ReorderableListView.builder(
       itemCount: allItems.length,
       onReorder: (oldIndex, newIndex) {
-        // Handle reorder logic
+        ref
+            .read(timelineProvider.notifier)
+            .reorderItems(oldIndex, newIndex);
       },
       itemBuilder: (context, index) {
         final item = allItems[index];
@@ -1203,19 +1185,96 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
               ),
             ],
           ),
-          selected: timelineState.selectedItemId == item.id,
-          onTap: () => ref.read(timelineProvider.notifier).selectItem(item.id),
+          selected: timelineState.selectedItemIds.contains(item.id),
+          onTap: () => ref.read(timelineProvider.notifier).selectGroup(item.id),
         );
       },
     );
   }
 
   Widget _buildEffectsPanel() {
-    return Center(
-      child: Text(
-        'Effects coming soon',
-        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-      ),
+    final current = ref.watch(previewColorGradeProvider);
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: [
+              Text(
+                'Video Effects',
+                style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => ref
+                    .read(videoEditorProvider.notifier)
+                    .setPreviewColorGrade(const ColorGradeSettings()),
+                icon: const Icon(Icons.refresh, size: 14),
+                label: const Text('Reset', style: TextStyle(fontSize: 11)),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.orangeAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 1.1,
+            ),
+            itemCount: VideoEffect.filters.length,
+            itemBuilder: (context, index) {
+              final effect = VideoEffect.filters[index];
+              final isSelected = current == effect.settings;
+              return InkWell(
+                onTap: () {
+                  ref
+                      .read(videoEditorProvider.notifier)
+                      .setPreviewColorGrade(effect.settings);
+                  HapticFeedback.selectionClick();
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: Colors.grey[850],
+                    border: Border.all(
+                      color: isSelected
+                          ? effect.color
+                          : Colors.white.withValues(alpha: 0.1),
+                      width: isSelected ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(effect.icon, color: effect.color, size: 22),
+                      const SizedBox(height: 6),
+                      Text(
+                        effect.name,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: isSelected ? effect.color : Colors.white70,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1662,6 +1721,24 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
       case EditorTool.export:
         _showSheet(const ExportSheet()); // Export opens as bottom sheet
         break;
+      case EditorTool.image:
+        _addImageFromPicker();
+        break;
+      case EditorTool.music:
+        _pickMusicFile();
+        break;
+      case EditorTool.merge:
+        _showSheet(const MergeSheet());
+        break;
+      case EditorTool.extract:
+        _extractAudioFromVideo();
+        break;
+      case EditorTool.aiImage:
+        _showAiImageTab();
+        break;
+      case EditorTool.aiVideo:
+        _showSuccess('AI Video coming soon');
+        break;
       default:
         break;
     }
@@ -1673,6 +1750,159 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => sheet,
+    );
+  }
+
+  void _addImageFromPicker() {
+    final pos = ref.read(currentPositionProvider);
+
+    showImagePickerSheet(
+      context,
+      (StockImage image) {
+        final path = image.localPath ?? image.fullUrl;
+        if (path.isEmpty) {
+          _showError('Image not downloaded yet');
+          return;
+        }
+        ref
+            .read(timelineProvider.notifier)
+            .addImageItem(
+              imagePath: path,
+              startTime: pos,
+              duration: const Duration(seconds: 3),
+              width: image.width,
+              height: image.height,
+            );
+        HapticFeedback.mediumImpact();
+        if (mounted) {
+          final navigator = Navigator.of(context);
+          if (navigator.canPop()) navigator.pop();
+        }
+        if (path.startsWith('http')) {
+          _showSuccess('Image added to timeline');
+        } else {
+          _openImageEditor(path, image.title);
+        }
+      },
+    );
+  }
+
+  void _openImageEditor(String path, String name) {
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ImageEditSheet(
+        inputPath: path,
+        imageName: name,
+        onResult: (outputPath) {
+          ref
+              .read(timelineProvider.notifier)
+              .addImageItem(
+                imagePath: outputPath,
+                startTime: ref.read(currentPositionProvider),
+                duration: const Duration(seconds: 3),
+              );
+          HapticFeedback.mediumImpact();
+          _showSuccess('Edited image added to timeline');
+        },
+      ),
+    );
+  }
+
+  Future<void> _pickMusicFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+      );
+      if (result == null || result.files.single.path == null) return;
+      if (!mounted) return;
+
+      final path = result.files.single.path!;
+      final name = result.files.single.name;
+      final infoResult = await ref
+          .read(audioEditServiceProvider)
+          .getAudioInfo(path);
+      if (!mounted) return;
+
+      if (infoResult.isFailure) {
+        _showError('Could not read audio info');
+        return;
+      }
+
+      final info = infoResult.requireData;
+      ref
+          .read(timelineProvider.notifier)
+          .addAudioItem(
+            audioPath: path,
+            title: name,
+            startTime: ref.read(currentPositionProvider),
+            audioDuration: info.duration,
+          );
+      HapticFeedback.mediumImpact();
+      _showSuccess('Music added to timeline');
+    } catch (e) {
+      if (mounted) _showError('Failed to pick music: $e');
+    }
+  }
+
+  Future<void> _extractAudioFromVideo() async {
+    final project = ref.read(currentProjectProvider);
+    if (project == null || project.videoPath.isEmpty) {
+      _showError('Load a video first');
+      return;
+    }
+
+    try {
+      final result = await ref
+          .read(videoEditServiceProvider)
+          .extractAudio(inputPath: project.videoPath);
+      if (!mounted) return;
+
+      if (result.isFailure) {
+        _showError('Extract failed: ${result.error}');
+        return;
+      }
+
+      final audioPath = result.requireData;
+      final infoResult = await ref
+          .read(audioEditServiceProvider)
+          .getAudioInfo(audioPath);
+      if (!mounted) return;
+
+      ref
+          .read(timelineProvider.notifier)
+          .addAudioItem(
+            audioPath: audioPath,
+            title: 'Extracted audio',
+            startTime: ref.read(currentPositionProvider),
+            audioDuration:
+                infoResult.isSuccess ? infoResult.requireData.duration : project.videoDuration,
+          );
+      HapticFeedback.mediumImpact();
+      _showSuccess('Audio extracted and added to timeline');
+    } catch (e) {
+      if (mounted) _showError('Extract failed: $e');
+    }
+  }
+
+  void _showAiImageTab() {
+    final videoDuration = ref.read(currentProjectProvider)?.videoDuration ??
+        const Duration(seconds: 30);
+    final currentPosition = ref.read(currentPositionProvider);
+
+    _showSheet(
+      AiTab(
+        videoDuration: videoDuration,
+        currentPosition: currentPosition,
+        onImageGenerated: (item) {
+          ref.read(timelineProvider.notifier).addGeneratedImage(item);
+          HapticFeedback.mediumImpact();
+          _showSuccess('AI image added to timeline');
+        },
+      ),
     );
   }
 
@@ -1690,7 +1920,16 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
   }
 
   void _openProject(VideoProject project) {
-    ref.read(projectProvider.notifier).openProject(project.id);
+    ref
+        .read(projectProvider.notifier)
+        .openProject(project.id)
+        .then((result) {
+          if (result.isSuccess) {
+            ref
+                .read(timelineProvider.notifier)
+                .loadFromProject(result.requireData);
+          }
+        });
   }
 
   void _duplicateProject(VideoProject project) {
@@ -1772,8 +2011,28 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     }
   }
 
-  void _pickVideo() {
-    // Implement video picker
+  Future<void> _pickVideo() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final path = result.files.single.path;
+      if (path == null) return;
+      if (!mounted) return;
+
+      final loadResult = await ref
+          .read(videoEditorProvider.notifier)
+          .loadVideo(path);
+      if (loadResult.isFailure && mounted) {
+        _showError('Failed to load video: ${loadResult.error}');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('Failed to pick video: $e');
+      }
+    }
   }
 
   Future<void> _handleBack() async {
@@ -1859,8 +2118,9 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
   String _getItemLabel(TimelineItem item) {
     if (item is TextTimelineItem) return item.text;
     if (item is ImageTimelineItem) return 'Image';
-    if (item is AudioTimelineItem)
+    if (item is AudioTimelineItem) {
       return item.title.isEmpty ? 'Audio' : item.title;
+    }
     return 'Item';
   }
 }

@@ -15,6 +15,7 @@ import 'brightness_volume_indicator.dart';
 import 'seek_indicator_widget.dart';
 import 'speed_indicator_widget.dart';
 import 'thumbnail_preview_widget.dart';
+import 'network_clock_overlay_widget.dart';
 
 class VideoPlayerWidget extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -45,6 +46,10 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
   String? _errorMessage;
   bool _isDisposed = false;
   bool _isExiting = false;
+
+  // Pinch-to-zoom state
+  double _zoomScale = 1.0;
+  Offset _zoomFocalPoint = Offset.zero;
 
   @override
   void initState() {
@@ -267,9 +272,13 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
                 onLongPressStart: _handleLongPressStart,
                 onLongPressEnd: _handleLongPressEnd,
                 onVerticalDrag: _handleVerticalDrag,
+                onVerticalDragEnd: _handleVerticalDragEnd,
                 onHorizontalDragStart: _handleHorizontalDragStart,
                 onHorizontalDragUpdate: _handleHorizontalDragUpdate,
                 onHorizontalDragEnd: _handleHorizontalDragEnd,
+                onScaleStart: _handleScaleStart,
+                onScaleUpdate: _handleScaleUpdate,
+                onScaleEnd: _handleScaleEnd,
               ),
 
             if (playerState.showSeekPreview &&
@@ -280,7 +289,13 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
                 seekSeconds: playerState.accumulatedSeekSeconds,
                 isVisible: true,
               ),
-            // Layer 5: Controls overlay
+            // Layer 5: Network speed/data + clock (shown when controls hidden, only for URL sources)
+            if (isReady &&
+                !playerState.isLocked &&
+                playerState.currentUrl.startsWith('http'))
+              NetworkClockOverlayWidget(visible: !playerState.showControls),
+
+            // Layer 6: Controls overlay
             if (isReady && playerState.showControls && !playerState.isLocked)
               ControlsOverlayWidget(
                 playlist: widget.playlist,
@@ -366,12 +381,20 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
         );
       }
 
+      // Apply pinch-to-zoom transform around the focal point
+      if (_zoomScale > 1.0001) {
+        videoWidget = Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..translate(_zoomFocalPoint.dx, _zoomFocalPoint.dy)
+            ..scale(_zoomScale)
+            ..translate(-_zoomFocalPoint.dx, -_zoomFocalPoint.dy),
+          child: videoWidget,
+        );
+      }
+
       return Center(
-        child: InteractiveViewer(
-          minScale: 1.0,
-          maxScale: 4.0,
-          panEnabled: true,
-          scaleEnabled: true,
+        child: ClipRect(
           child: AspectRatio(aspectRatio: 16 / 9, child: videoWidget),
         ),
       );
@@ -648,11 +671,15 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     }
   }
 
-  void _handleVerticalDrag(double delta, bool isLeftSide) {
+  void _handleVerticalDrag(double delta, bool isLeftSide, Velocity velocity) {
     if (_isDisposed || _isExiting) return;
     try {
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
+
+      // Skip brightness/volume adjustment while the gesture is a fast flick;
+      // those are handled as next/previous swipes in _handleVerticalDragEnd.
+      if (velocity.pixelsPerSecond.dy.abs() >= 600) return;
 
       final adjustedDelta = -delta / 200;
 
@@ -663,6 +690,65 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
       }
     } catch (e) {
       debugPrint('⚠️ Handle vertical drag error: $e');
+    }
+  }
+
+  /// YouTube-Shorts style vertical swipe: a fast upward flick plays the next
+  /// item, a fast downward flick plays the previous one. Slow drags keep their
+  /// brightness/volume behavior.
+  void _handleVerticalDragEnd(double totalDelta, Velocity velocity) {
+    if (_isDisposed || _isExiting) return;
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return;
+
+      final distance = totalDelta.abs();
+      final speed = velocity.pixelsPerSecond.dy.abs();
+
+      // Only treat as a swipe on a quick, deliberate flick. Below this the
+      // gesture was a brightness/volume adjustment.
+      const minDistance = 80.0;
+      const minSpeed = 600.0;
+      if (distance < minDistance || speed < minSpeed) return;
+
+      if (totalDelta < 0) {
+        notifier.playNext();
+      } else {
+        notifier.playPrevious();
+      }
+      HapticFeedback.mediumImpact();
+    } catch (e) {
+      debugPrint('⚠️ Handle vertical drag end error: $e');
+    }
+  }
+
+  void _handleScaleStart() {
+    if (_isDisposed || _isExiting) return;
+  }
+
+  void _handleScaleUpdate(double scale, Offset focalPoint) {
+    if (_isDisposed || _isExiting) return;
+    try {
+      if (!mounted) return;
+      setState(() {
+        _zoomScale = scale.clamp(1.0, 4.0);
+        _zoomFocalPoint = focalPoint;
+      });
+    } catch (e) {
+      debugPrint('⚠️ Handle scale update error: $e');
+    }
+  }
+
+  void _handleScaleEnd() {
+    if (_isDisposed || _isExiting) return;
+    try {
+      if (!mounted) return;
+      setState(() {
+        _zoomScale = 1.0;
+        _zoomFocalPoint = Offset.zero;
+      });
+    } catch (e) {
+      debugPrint('⚠️ Handle scale end error: $e');
     }
   }
 

@@ -44,17 +44,37 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE ${ArchiveConstants.likedItemsTable} (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        identifier TEXT UNIQUE NOT NULL,
+        identifier TEXT NOT NULL,
         title TEXT,
         description TEXT,
         creator TEXT,
         date TEXT,
-        mediatype TEXT,
+        mediatype TEXT NOT NULL DEFAULT '',
         downloads INTEGER DEFAULT 0,
         item_size INTEGER DEFAULT 0,
         thumbnail_url TEXT,
         liked_at TEXT NOT NULL,
-        format TEXT
+        format TEXT,
+        UNIQUE(identifier, mediatype)
+      )
+    ''');
+
+    // Saved Items Table
+    await db.execute('''
+      CREATE TABLE ${ArchiveConstants.savedItemsTable} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        identifier TEXT NOT NULL,
+        title TEXT,
+        description TEXT,
+        creator TEXT,
+        date TEXT,
+        mediatype TEXT NOT NULL DEFAULT '',
+        downloads INTEGER DEFAULT 0,
+        item_size INTEGER DEFAULT 0,
+        thumbnail_url TEXT,
+        saved_at TEXT NOT NULL,
+        format TEXT,
+        UNIQUE(identifier, mediatype)
       )
     ''');
 
@@ -89,6 +109,16 @@ class DatabaseHelper {
     ''');
 
     await db.execute('''
+      CREATE INDEX idx_saved_items_identifier 
+      ON ${ArchiveConstants.savedItemsTable} (identifier)
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_saved_items_mediatype 
+      ON ${ArchiveConstants.savedItemsTable} (mediatype)
+    ''');
+
+    await db.execute('''
       CREATE INDEX idx_downloads_status 
       ON ${ArchiveConstants.downloadsTable} (status)
     ''');
@@ -100,9 +130,70 @@ class DatabaseHelper {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle database migrations here
     if (oldVersion < 2) {
-      // Migration for version 2
+      // Migration: change UNIQUE(identifier) to UNIQUE(identifier, mediatype)
+      await db.execute(
+        'ALTER TABLE ${ArchiveConstants.likedItemsTable} RENAME TO _liked_items_old',
+      );
+      await db.execute('''
+        CREATE TABLE ${ArchiveConstants.likedItemsTable} (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          identifier TEXT NOT NULL,
+          title TEXT,
+          description TEXT,
+          creator TEXT,
+          date TEXT,
+          mediatype TEXT NOT NULL DEFAULT '',
+          downloads INTEGER DEFAULT 0,
+          item_size INTEGER DEFAULT 0,
+          thumbnail_url TEXT,
+          liked_at TEXT NOT NULL,
+          format TEXT,
+          UNIQUE(identifier, mediatype)
+        )
+      ''');
+      await db.execute('''
+        INSERT OR IGNORE INTO ${ArchiveConstants.likedItemsTable}
+          (identifier, title, description, creator, date, mediatype, downloads, item_size, thumbnail_url, liked_at, format)
+        SELECT identifier, title, description, creator, date, COALESCE(mediatype, ''), downloads, item_size, thumbnail_url, liked_at, format
+        FROM _liked_items_old
+      ''');
+      await db.execute('DROP TABLE _liked_items_old');
+      // Recreate indexes
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_liked_items_identifier 
+        ON ${ArchiveConstants.likedItemsTable} (identifier)
+      ''');
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_liked_items_mediatype 
+        ON ${ArchiveConstants.likedItemsTable} (mediatype)
+      ''');
+      // Create saved items table
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS ${ArchiveConstants.savedItemsTable} (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          identifier TEXT NOT NULL,
+          title TEXT,
+          description TEXT,
+          creator TEXT,
+          date TEXT,
+          mediatype TEXT NOT NULL,
+          downloads INTEGER DEFAULT 0,
+          item_size INTEGER DEFAULT 0,
+          thumbnail_url TEXT,
+          liked_at TEXT NOT NULL,
+          format TEXT,
+          UNIQUE(identifier, mediatype)
+        )
+      ''');
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_saved_items_identifier 
+        ON ${ArchiveConstants.savedItemsTable} (identifier)
+      ''');
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_saved_items_mediatype 
+        ON ${ArchiveConstants.savedItemsTable} (mediatype)
+      ''');
     }
   }
 

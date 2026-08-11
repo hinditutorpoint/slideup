@@ -96,6 +96,7 @@ dependencies:
   audio_session: ^0.2.2
   syncfusion_pdfviewer_platform_interface: ^28.2.12
   simple_pip_mode: ^1.1.0
+  equalizer_flutter: ^0.0.1
 
 dev_dependencies:
   flutter_test:

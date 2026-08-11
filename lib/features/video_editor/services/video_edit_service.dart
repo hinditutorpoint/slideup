@@ -1400,5 +1400,14 @@ String _buildColorFiltersIsolate(ColorGradeSettings s) {
     );
   }
 
+  if (s.chromaKeyEnabled) {
+    filters.add('chromakey=color=0x${_rgbHexIsolate(s.chromaKeyColor)}:similarity=${s.chromaKeySimilarity}');
+  }
+
   return filters.isEmpty ? 'null' : filters.join(',');
+}
+
+String _rgbHexIsolate(int argb) {
+  final rgb = argb & 0xFFFFFF;
+  return rgb.toRadixString(16).padLeft(6, '0').toUpperCase();
 }

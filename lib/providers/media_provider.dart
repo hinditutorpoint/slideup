@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../models/media_file.dart';
 import '../models/recent_file.dart';
 import '../services/database_service.dart';
@@ -42,14 +45,26 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
     }
   }
 
-  Future<void> addToRecent(MediaFile file) async {
+  Future<void> addToRecent(MediaFile file, {Duration? lastPosition}) async {
+    if (!_isRecentHistoryEnabled()) return;
+
     final recent = RecentFile(
       id: _uuid.v4(),
       mediaId: file.id,
       lastAccessed: DateTime.now(),
+      lastPosition: lastPosition?.inMilliseconds ?? file.lastPosition,
     );
 
     await _db.insertOrUpdateRecentFile(recent);
+  }
+
+  bool _isRecentHistoryEnabled() {
+    try {
+      final box = Hive.box('settings');
+      return box.get('recentHistoryEnabled', defaultValue: true) as bool;
+    } catch (e) {
+      return true;
+    }
   }
 
   Future<void> removeFromRecent(String mediaId) async {
@@ -90,7 +105,7 @@ final recentFilesProvider = FutureProvider<List<MediaFile>>((ref) async {
 
   final files = <MediaFile>[];
   for (var recent in recents) {
-    final file = await db.getMediaFileById(recent.mediaId);
+    final file = await _resolveRecentMediaFile(db, recent);
     if (file != null) {
       files.add(file);
     }
@@ -98,3 +113,58 @@ final recentFilesProvider = FutureProvider<List<MediaFile>>((ref) async {
 
   return files;
 });
+
+/// Resolve a recent entry to a [MediaFile].
+///
+/// Order of resolution:
+/// 1. Look up the scanned media DB by id (internal storage).
+/// 2. Look up the scanned media DB by path (SD card if it was scanned).
+/// 3. Rebuild directly from the stored path/URL (SD card or network).
+Future<MediaFile?> _resolveRecentMediaFile(
+  DatabaseService db,
+  RecentFile recent,
+) async {
+  var file = await db.getMediaFileById(recent.mediaId);
+  if (file != null) {
+    return recent.lastPosition != null && recent.lastPosition! > 0
+        ? file.copyWith(lastPosition: recent.lastPosition)
+        : file;
+  }
+
+  file = await db.getMediaFileByPath(recent.mediaId);
+  if (file != null) {
+    return recent.lastPosition != null && recent.lastPosition! > 0
+        ? file.copyWith(lastPosition: recent.lastPosition)
+        : file;
+  }
+
+  final mediaId = recent.mediaId;
+  if (mediaId.startsWith('http://') || mediaId.startsWith('https://')) {
+    return MediaFile(
+      id: mediaId,
+      name: _nameFromUrl(mediaId),
+      path: mediaId,
+      type: MediaType.video,
+      size: 0,
+      dateModified: recent.lastAccessed,
+      lastPosition: recent.lastPosition,
+    );
+  }
+
+  final fromFile = MediaFile.fromFile(File(mediaId));
+  if (fromFile == null) return null;
+  return recent.lastPosition != null && recent.lastPosition! > 0
+      ? fromFile.copyWith(lastPosition: recent.lastPosition)
+      : fromFile;
+}
+
+String _nameFromUrl(String url) {
+  try {
+    final uri = Uri.parse(url);
+    final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+    if (segments.isNotEmpty) return segments.last;
+    return uri.host;
+  } catch (e) {
+    return url;
+  }
+}

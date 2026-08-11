@@ -8,7 +8,9 @@ class PlayerGestureDetector extends StatefulWidget {
   final Function(GestureZone zone)? onDoubleTap;
   final Function(GestureZone zone)? onLongPressStart;
   final VoidCallback? onLongPressEnd;
-  final Function(double delta, bool isLeftSide)? onVerticalDrag;
+  final Function(double delta, bool isLeftSide, Velocity velocity)?
+  onVerticalDrag;
+  final Function(double totalDelta, Velocity velocity)? onVerticalDragEnd;
 
   // ✅ Changed callbacks for horizontal seek
   final VoidCallback? onHorizontalDragStart;
@@ -17,6 +19,11 @@ class PlayerGestureDetector extends StatefulWidget {
 
   final bool enabled;
 
+  // Pinch-to-zoom callbacks
+  final VoidCallback? onScaleStart;
+  final void Function(double scale, Offset focalPoint)? onScaleUpdate;
+  final VoidCallback? onScaleEnd;
+
   const PlayerGestureDetector({
     super.key,
     this.onTap,
@@ -24,9 +31,13 @@ class PlayerGestureDetector extends StatefulWidget {
     this.onLongPressStart,
     this.onLongPressEnd,
     this.onVerticalDrag,
+    this.onVerticalDragEnd,
     this.onHorizontalDragStart,
     this.onHorizontalDragUpdate,
     this.onHorizontalDragEnd,
+    this.onScaleStart,
+    this.onScaleUpdate,
+    this.onScaleEnd,
     this.enabled = true,
   });
 
@@ -44,10 +55,18 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   Offset? _dragStartPosition;
   bool _isDragging = false;
   bool _isVerticalDrag = false;
+  double _totalVerticalDelta = 0;
+  DateTime? _lastPanUpdateTime;
 
   // Long press
   bool _isLongPressing = false;
   GestureZone? _longPressZone;
+
+  // Pinch-to-zoom tracking
+  final Map<int, Offset> _activePointers = {};
+  bool _isPinching = false;
+  double _pinchStartDistance = 0;
+  double _pinchStartScale = 1.0;
 
   // Constants
   static const _doubleTapTimeout = Duration(milliseconds: 300);
@@ -60,21 +79,28 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       return const SizedBox.expand();
     }
 
-    return GestureDetector(
+    return Listener(
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerUp,
       behavior: HitTestBehavior.translucent,
-      onTapDown: _handleTapDown,
-      onTapUp: _handleTapUp,
-      onTapCancel: _handleTapCancel,
-      onLongPressStart: _handleLongPressStart,
-      onLongPressEnd: _handleLongPressEnd,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapDown: _handleTapDown,
+        onTapUp: _handleTapUp,
+        onTapCancel: _handleTapCancel,
+        onLongPressStart: _handleLongPressStart,
+        onLongPressEnd: _handleLongPressEnd,
 
-      // ✅ Use onPanStart/Update/End for better control
-      onPanStart: _handlePanStart,
-      onPanUpdate: _handlePanUpdate,
-      onPanEnd: _handlePanEnd,
-      onPanCancel: _handlePanCancel,
+        // ✅ Use onPanStart/Update/End for better control
+        onPanStart: _handlePanStart,
+        onPanUpdate: _handlePanUpdate,
+        onPanEnd: _handlePanEnd,
+        onPanCancel: _handlePanCancel,
 
-      child: const SizedBox.expand(),
+        child: const SizedBox.expand(),
+      ),
     );
   }
 
@@ -164,16 +190,75 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   }
 
   // ═══════════════════════════════════════════════════════
+  // PINCH-TO-ZOOM (raw pointer tracking)
+  // ═══════════════════════════════════════════════════════
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _activePointers[event.pointer] = event.localPosition;
+    if (_activePointers.length == 2) {
+      final positions = _activePointers.values.toList();
+      _isPinching = true;
+      _pinchStartDistance = _distanceBetween(positions[0], positions[1]);
+      _pinchStartScale = 1.0;
+      widget.onScaleStart?.call();
+    }
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (!_activePointers.containsKey(event.pointer)) return;
+    _activePointers[event.pointer] = event.localPosition;
+
+    if (_isPinching && _activePointers.length == 2) {
+      final positions = _activePointers.values.toList();
+      final currentDistance = _distanceBetween(positions[0], positions[1]);
+      final currentMidpoint = _midpoint(positions[0], positions[1]);
+      if (_pinchStartDistance > 0) {
+        final scale = (currentDistance / _pinchStartDistance) * _pinchStartScale;
+        widget.onScaleUpdate?.call(scale, currentMidpoint);
+      }
+    }
+  }
+
+  void _handlePointerUp(PointerEvent event) {
+    if (_activePointers.remove(event.pointer) != null &&
+        _isPinching &&
+        _activePointers.length < 2) {
+      _isPinching = false;
+      widget.onScaleEnd?.call();
+    }
+    if (_activePointers.isEmpty) {
+      _pinchStartDistance = 0;
+      _pinchStartScale = 1.0;
+    }
+  }
+
+  double _distanceBetween(Offset a, Offset b) {
+    try {
+      return (b - a).distance;
+    } catch (_) {
+      return 0.0;
+    }
+  }
+
+  Offset _midpoint(Offset a, Offset b) {
+    return Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+  }
+
+  // ═══════════════════════════════════════════════════════
   // PAN/DRAG HANDLING
   // ═══════════════════════════════════════════════════════
 
   void _handlePanStart(DragStartDetails details) {
+    if (_isPinching) return;
     _dragStartPosition = details.globalPosition;
     _isDragging = false;
     _isVerticalDrag = false;
+    _totalVerticalDelta = 0;
+    _lastPanUpdateTime = null;
   }
 
   void _handlePanUpdate(DragUpdateDetails details) {
+    if (_isPinching) return;
     if (_dragStartPosition == null) return;
 
     try {
@@ -197,9 +282,25 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       }
 
       if (_isVerticalDrag) {
+        _totalVerticalDelta += details.delta.dy;
+
+        final now = DateTime.now();
+        double velocityDy = 0;
+        if (_lastPanUpdateTime != null) {
+          final dt = now.difference(_lastPanUpdateTime!).inMilliseconds;
+          if (dt > 0) {
+            velocityDy = details.delta.dy / (dt / 1000);
+          }
+        }
+        _lastPanUpdateTime = now;
+
         final screenWidth = MediaQuery.of(context).size.width;
         final isLeftSide = _dragStartPosition!.dx < screenWidth / 2;
-        widget.onVerticalDrag?.call(details.delta.dy, isLeftSide);
+        widget.onVerticalDrag?.call(
+          details.delta.dy,
+          isLeftSide,
+          Velocity(pixelsPerSecond: Offset(0, velocityDy)),
+        );
       } else {
         // ✅ Horizontal drag - pass raw delta
         widget.onHorizontalDragUpdate?.call(details.delta.dx);
@@ -211,7 +312,9 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
 
   void _handlePanEnd(DragEndDetails details) {
     try {
-      if (_isDragging && !_isVerticalDrag) {
+      if (_isDragging && _isVerticalDrag) {
+        widget.onVerticalDragEnd?.call(_totalVerticalDelta, details.velocity);
+      } else if (_isDragging && !_isVerticalDrag) {
         widget.onHorizontalDragEnd?.call();
       }
     } catch (e) {
@@ -220,6 +323,8 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       _dragStartPosition = null;
       _isDragging = false;
       _isVerticalDrag = false;
+      _totalVerticalDelta = 0;
+      _lastPanUpdateTime = null;
     }
   }
 
@@ -231,6 +336,8 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
     _dragStartPosition = null;
     _isDragging = false;
     _isVerticalDrag = false;
+    _totalVerticalDelta = 0;
+    _lastPanUpdateTime = null;
   }
 
   // ═══════════════════════════════════════════════════════

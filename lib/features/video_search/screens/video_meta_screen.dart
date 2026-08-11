@@ -15,10 +15,13 @@ import '../models/video_metadata.dart';
 import '../../../models/media_file.dart';
 import '../../../features/video_player/video_player_launcher.dart';
 import '../providers/video_metadata_provider.dart';
+import '../providers/video_providers.dart';
 import '../widgets/thumbnail_grid_item.dart';
 import '../widgets/thumbnail_list_item.dart';
 import '../widgets/video_file_grid_item.dart';
 import '../widgets/video_file_list_item.dart';
+import '../widgets/video_grid_item.dart';
+import '../widgets/video_list_item.dart';
 
 class VideoMetaScreen extends ConsumerStatefulWidget {
   final VideoItem videoItem;
@@ -33,6 +36,7 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     with TickerProviderStateMixin {
   TabController? _tabController;
   bool _isInitialized = false;
+  late bool _isLiked;
 
   @override
   void initState() {
@@ -41,8 +45,9 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
   }
 
   void _initTabController() {
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _isInitialized = true;
+    _isLiked = widget.videoItem.isLiked;
   }
 
   @override
@@ -135,6 +140,14 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
           tooltip: 'Open in Browser',
         ),
         IconButton(
+          icon: Icon(
+            _isLiked ? Icons.favorite : Icons.favorite_border,
+            color: _isLiked ? Colors.red : null,
+          ),
+          onPressed: _toggleLike,
+          tooltip: _isLiked ? 'Unlike' : 'Like',
+        ),
+        IconButton(
           icon: const Icon(Icons.share),
           onPressed: _shareVideo,
           tooltip: 'Share',
@@ -149,6 +162,8 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
       delegate: _SliverTabBarDelegate(
         TabBar(
           controller: _tabController,
+          isScrollable: true,
+          tabAlignment: TabAlignment.center,
           tabs: [
             Tab(
               child: Row(
@@ -172,6 +187,17 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
                 ],
               ),
             ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.explore, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Related (${state.relatedItemsCount})'),
+                ],
+              ),
+            ),
           ],
         ),
         backgroundColor: colorScheme.surface,
@@ -187,6 +213,7 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
         children: const [
           LoadingWidget(message: 'Loading video files...'),
           LoadingWidget(message: 'Loading images...'),
+          LoadingWidget(message: 'Loading related items...'),
         ],
       );
     }
@@ -198,6 +225,7 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
         children: [
           AppErrorWidget(message: state.error!, onRetry: _refreshMetadata),
           AppErrorWidget(message: state.error!, onRetry: _refreshMetadata),
+          AppErrorWidget(message: state.error!, onRetry: _refreshMetadata),
         ],
       );
     }
@@ -207,6 +235,7 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
       children: [
         _buildVideosTab(state, viewMode),
         _buildImagesTab(state, viewMode),
+        _buildRelatedTab(state, viewMode),
       ],
     );
   }
@@ -498,13 +527,11 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     return VideoFileGridItem(
       file: file,
       identifier: _identifier,
-      isLiked: state.isFileLiked(file.name),
       isFavorite: state.isFileFavorite(file.name),
       thumbnailUrl: _findThumbnailForFile(file, state.allThumbnails),
       onPlay: () => _playFile(file),
       onDownload: () => _downloadFile(file),
       onShare: () => _shareFile(file),
-      onLike: () => _toggleFileLike(file.name),
       onFavorite: () => _toggleFileFavorite(file),
     );
   }
@@ -525,13 +552,11 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     return VideoFileListItem(
       file: file,
       identifier: _identifier,
-      isLiked: state.isFileLiked(file.name),
       isFavorite: state.isFileFavorite(file.name),
       thumbnailUrl: _findThumbnailForFile(file, state.allThumbnails),
       onPlay: () => _playFile(file),
       onDownload: () => _downloadFile(file),
       onShare: () => _shareFile(file),
-      onLike: () => _toggleFileLike(file.name),
       onFavorite: () => _toggleFileFavorite(file),
     );
   }
@@ -585,11 +610,9 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     return ThumbnailGridItem(
       thumbnail: thumbnail,
       identifier: _identifier,
-      isLiked: state.isThumbnailLiked(thumbnail.name),
       onTap: () => _viewImage(thumbnail),
       onDownload: () => _downloadImage(thumbnail),
       onShare: () => _shareImage(thumbnail),
-      onLike: () => _toggleThumbnailLike(thumbnail.name),
       onFavorite: () => _toggleFavorite(thumbnail),
     );
   }
@@ -616,14 +639,140 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     return ThumbnailListItem(
       thumbnail: thumbnail,
       identifier: _identifier,
-      isLiked: state.isThumbnailLiked(thumbnail.name),
       isFavorite: state.isThumbnailFavorite(thumbnail.name),
       onTap: () => _viewImage(thumbnail),
       onDownload: () => _downloadImage(thumbnail),
       onShare: () => _shareImage(thumbnail),
-      onLike: () => _toggleThumbnailLike(thumbnail.name),
       onFavorite: () => _toggleFavorite(thumbnail),
     );
+  }
+
+  // ========== Related Items Tab ==========
+
+  Widget _buildRelatedTab(VideoMetadataState state, MetadataViewMode viewMode) {
+    if (state.isLoadingRelated) {
+      return const LoadingWidget(message: 'Loading related items...');
+    }
+
+    if (state.relatedError != null) {
+      return AppErrorWidget(
+        message: state.relatedError!,
+        onRetry: () {
+          ref
+              .read(videoMetadataNotifierProvider(_identifier).notifier)
+              .loadRelatedItems();
+        },
+      );
+    }
+
+    final items = state.relatedItems;
+    if (items.isEmpty) {
+      return const EmptyStateWidget(
+        title: 'No Related Items',
+        subtitle: 'No related videos found for this item',
+        icon: Icons.explore_off_outlined,
+      );
+    }
+
+    if (viewMode == MetadataViewMode.grid) {
+      return _buildRelatedGrid(items);
+    } else {
+      return _buildRelatedList(items);
+    }
+  }
+
+  Widget _buildRelatedGrid(List<VideoItem> items) {
+    final crossAxisCount = ResponsiveHelper.getGridCrossAxisCount(context);
+    final padding = ResponsiveHelper.getScreenPadding(context);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await ref
+            .read(videoMetadataNotifierProvider(_identifier).notifier)
+            .loadRelatedItems();
+      },
+      child: GridView.builder(
+        padding: padding,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossAxisCount,
+          childAspectRatio: 0.75,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final item = items[index];
+          return VideoGridItem(
+            item: item,
+            onTap: () => _openRelatedItem(item),
+            onSave: () => _saveRelatedVideo(item),
+            onLike: () => _toggleRelatedLike(item),
+            onShare: () => _shareRelatedVideo(item),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildRelatedList(List<VideoItem> items) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        await ref
+            .read(videoMetadataNotifierProvider(_identifier).notifier)
+            .loadRelatedItems();
+      },
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final item = items[index];
+          return VideoListItem(
+            item: item,
+            onTap: () => _openRelatedItem(item),
+            onSave: () => _saveRelatedVideo(item),
+            onLike: () => _toggleRelatedLike(item),
+            onShare: () => _shareRelatedVideo(item),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openRelatedItem(VideoItem item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => VideoMetaScreen(videoItem: item)),
+    );
+  }
+
+  void _saveRelatedVideo(VideoItem item) {
+    ref.read(videoSearchProvider.notifier).toggleSave(item);
+    _showSnackBar(
+      item.isSaved ? 'Removed from saved' : 'Added to saved videos',
+    );
+  }
+
+  void _toggleRelatedLike(VideoItem item) {
+    ref.read(videoSearchProvider.notifier).toggleLike(item);
+    _showSnackBar(
+      item.isLiked ? 'Removed from favorites' : 'Added to favorites',
+    );
+  }
+
+  Future<void> _shareRelatedVideo(VideoItem item) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Share: ${item.title}',
+          text:
+              '${item.title}\n\n'
+              'Watch on Archive.org: ${item.detailsUrl}',
+          uri: Uri.parse(item.detailsUrl),
+        ),
+      );
+    } catch (e) {
+      _showSnackBar('Error sharing');
+    }
   }
 
   // ========== Actions ==========
@@ -634,43 +783,53 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
         .refresh();
   }
 
-  void _toggleFileLike(String fileName) {
-    try {
-      ref
-          .read(videoMetadataNotifierProvider(_identifier).notifier)
-          .toggleFileLike(fileName);
-    } catch (e) {
-      _showSnackBar(e.toString());
-    }
+  void _toggleLike() {
+    setState(() {
+      _isLiked = !_isLiked;
+    });
+    ref.read(videoSearchProvider.notifier).toggleLike(widget.videoItem);
+    _showSnackBar(_isLiked ? 'Added to favorites' : 'Removed from favorites');
   }
 
-  void _toggleFileFavorite(VideoFile videoFile) {
+  Future<void> _toggleFileFavorite(VideoFile videoFile) async {
     try {
-      ref
+      debugPrint('Toggle file favorite: ${videoFile.name}');
+      await ref
           .read(videoMetadataNotifierProvider(_identifier).notifier)
           .toggleFileFavorite(videoFile.toMap());
+      if (mounted) {
+        _showSnackBar(
+          ref
+                  .read(videoMetadataNotifierProvider(_identifier))
+                  .isFileFavorite(videoFile.name)
+              ? 'Added to favorites'
+              : 'Removed from favorites',
+        );
+      }
     } catch (e) {
-      _showSnackBar(e.toString());
+      debugPrint('Error toggling file favorite: $e');
+      if (mounted) _showSnackBar('Failed to update favorite: $e');
     }
   }
 
-  void _toggleThumbnailLike(String fileName) {
+  Future<void> _toggleFavorite(ThumbnailFile thumbnail) async {
     try {
-      ref
-          .read(videoMetadataNotifierProvider(_identifier).notifier)
-          .toggleThumbnailLike(fileName);
-    } catch (e) {
-      _showSnackBar(e.toString());
-    }
-  }
-
-  void _toggleFavorite(ThumbnailFile thumbnail) {
-    try {
-      ref
+      debugPrint('Toggle thumbnail favorite: ${thumbnail.name}');
+      await ref
           .read(videoMetadataNotifierProvider(_identifier).notifier)
           .toggleThumbnailFavorite(thumbnail.toMap());
+      if (mounted) {
+        _showSnackBar(
+          ref
+                  .read(videoMetadataNotifierProvider(_identifier))
+                  .isThumbnailFavorite(thumbnail.name)
+              ? 'Added to favorites'
+              : 'Removed from favorites',
+        );
+      }
     } catch (e) {
-      _showSnackBar(e.toString());
+      debugPrint('Error toggling thumbnail favorite: $e');
+      if (mounted) _showSnackBar('Failed to update favorite: $e');
     }
   }
 

@@ -6,23 +6,19 @@ import '../models/thumbnail_file.dart';
 class ThumbnailGridItem extends StatelessWidget {
   final ThumbnailFile thumbnail;
   final String identifier;
-  final bool isLiked;
-  final bool isFavorite;
   final VoidCallback onTap;
   final VoidCallback onDownload;
   final VoidCallback onShare;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
+  final bool isFavorite;
 
   const ThumbnailGridItem({
     super.key,
     required this.thumbnail,
     required this.identifier,
-    required this.isLiked,
     required this.onTap,
     required this.onDownload,
     required this.onShare,
-    required this.onLike,
     required this.onFavorite,
     this.isFavorite = false,
   });
@@ -55,11 +51,9 @@ class ThumbnailGridItem extends StatelessWidget {
                   child: _ThumbnailSection(
                     thumbnail: thumbnail,
                     identifier: identifier,
-                    isLiked: isLiked,
                     isFavorite: isFavorite,
                     colorScheme: colorScheme,
                     isSmallScreen: isSmallScreen,
-                    onLike: onLike,
                     onFavorite: onFavorite,
                   ),
                 ),
@@ -88,20 +82,16 @@ class ThumbnailGridItem extends StatelessWidget {
 class _ThumbnailSection extends StatelessWidget {
   final ThumbnailFile thumbnail;
   final String identifier;
-  final bool isLiked;
-  final bool isFavorite;
   final ColorScheme colorScheme;
+  final bool isFavorite;
   final bool isSmallScreen;
-  final VoidCallback onLike;
   final VoidCallback onFavorite;
 
   const _ThumbnailSection({
     required this.thumbnail,
     required this.identifier,
-    required this.isLiked,
     required this.colorScheme,
     required this.isSmallScreen,
-    required this.onLike,
     required this.onFavorite,
     required this.isFavorite,
   });
@@ -175,20 +165,8 @@ class _ThumbnailSection extends StatelessWidget {
           ),
         ),
 
-        // Like button - top right
         Positioned(
           top: 4,
-          right: 4,
-          child: _LikeButton(
-            isLiked: isLiked,
-            onTap: onLike,
-            isSmallScreen: isSmallScreen,
-          ),
-        ),
-
-        // Like button - top right
-        Positioned(
-          top: 10,
           right: 4,
           child: _FavoriteButton(
             isFavorite: isFavorite,
@@ -219,38 +197,6 @@ class _ThumbnailSection extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _LikeButton extends StatelessWidget {
-  final bool isLiked;
-  final VoidCallback onTap;
-  final bool isSmallScreen;
-
-  const _LikeButton({
-    required this.isLiked,
-    required this.onTap,
-    required this.isSmallScreen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.4),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: EdgeInsets.all(isSmallScreen ? 4 : 5),
-          child: Icon(
-            isLiked ? Icons.favorite : Icons.favorite_border,
-            size: isSmallScreen ? 14 : 16,
-            color: isLiked ? Colors.red : Colors.white,
-          ),
-        ),
-      ),
     );
   }
 }

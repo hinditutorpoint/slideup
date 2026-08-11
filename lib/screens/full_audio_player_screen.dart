@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:equalizer_flutter/equalizer_flutter.dart';
 import 'dart:io';
+import 'dart:async';
+import 'package:share_plus/share_plus.dart';
 import '../models/media_file.dart';
 import '../providers/audio_handler_provider.dart';
 import '../providers/mini_player_provider.dart';
 import '../helpers/format_helper.dart';
+import '../services/database_service.dart';
 
 class FullAudioPlayerScreen extends ConsumerStatefulWidget {
   final MediaFile mediaFile;
@@ -27,6 +31,8 @@ class FullAudioPlayerScreen extends ConsumerStatefulWidget {
 class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _rotationController;
+  Timer? _sleepTimer;
+  bool _isFavorite = false;
 
   @override
   void initState() {
@@ -48,11 +54,52 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
           }
         }
       });
+
+      // Load favorite status
+      _loadFavoriteStatus();
     });
+  }
+
+  Future<void> _loadFavoriteStatus() async {
+    try {
+      final isFav = await DatabaseService.instance.isMediaFileFavorite(
+        widget.mediaFile.id,
+      );
+      if (mounted) {
+        setState(() => _isFavorite = isFav);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFavorite() async {
+    try {
+      await DatabaseService.instance.toggleFavoriteMediaFile(
+        widget.mediaFile.id,
+        widget.mediaFile,
+      );
+      if (mounted) {
+        setState(() => _isFavorite = !_isFavorite);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _isFavorite ? 'Added to favorites' : 'Removed from favorites',
+            ),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update favorite')),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    _sleepTimer?.cancel();
     _rotationController.dispose();
     super.dispose();
   }
@@ -389,10 +436,11 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
             },
           ),
           IconButton(
-            icon: const Icon(Icons.favorite_border),
-            onPressed: () {
-              // TODO: Add to favorites
-            },
+            icon: Icon(
+              _isFavorite ? Icons.favorite : Icons.favorite_border,
+              color: _isFavorite ? Colors.red : null,
+            ),
+            onPressed: _toggleFavorite,
           ),
           StreamBuilder<PlaybackState>(
             stream: audioHandler.playbackState,
@@ -614,9 +662,36 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
             ListTile(
               leading: const Icon(Icons.share),
               title: const Text('Share'),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(context);
-                // TODO: Share implementation
+                final audioHandler = ref.read(audioHandlerProvider);
+                final mediaItem = audioHandler.mediaItem.value;
+                if (mediaItem != null) {
+                  final path = mediaItem.extras?['path'] as String?;
+                  if (path != null) {
+                    try {
+                      // ignore: deprecated_member_use
+                      await Share.shareXFiles([
+                        XFile(path),
+                      ], text: 'Check out this song: ${mediaItem.title}');
+                    } catch (e) {
+                      debugPrint('Error sharing file: $e');
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed to share file: $e')),
+                        );
+                      }
+                    }
+                  } else {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('File path not found for sharing'),
+                        ),
+                      );
+                    }
+                  }
+                }
               },
             ),
             ListTile(
@@ -624,7 +699,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
               title: const Text('Song Details'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Show details
+                _showSongDetails();
               },
             ),
             ListTile(
@@ -632,15 +707,31 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
               title: const Text('Sleep Timer'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Sleep timer
+                _showSleepTimerDialog();
               },
             ),
             ListTile(
               leading: const Icon(Icons.equalizer),
               title: const Text('Equalizer'),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(context);
-                // TODO: Equalizer
+                try {
+                  final audioHandler = ref.read(audioHandlerProvider);
+                  final sessionId = audioHandler.player.androidAudioSessionId;
+                  if (sessionId != null) {
+                    EqualizerFlutter.setAudioSessionId(sessionId);
+                  }
+                  EqualizerFlutter.open(sessionId ?? 0);
+                } catch (e) {
+                  debugPrint('Error opening equalizer: $e');
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Equalizer not supported on this device'),
+                      ),
+                    );
+                  }
+                }
               },
             ),
             const SizedBox(height: 20),
@@ -648,5 +739,135 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
         ),
       ),
     );
+  }
+
+  void _showSongDetails() {
+    final audioHandler = ref.read(audioHandlerProvider);
+    final mediaItem = audioHandler.mediaItem.value;
+
+    if (mediaItem == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Song Details'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDetailRow('Title', mediaItem.title),
+              _buildDetailRow('Artist', mediaItem.artist ?? 'Unknown'),
+              if (mediaItem.album != null)
+                _buildDetailRow('Album', mediaItem.album!),
+              if (mediaItem.genre != null)
+                _buildDetailRow('Genre', mediaItem.genre!),
+              if (mediaItem.extras != null) ...[
+                if (mediaItem.extras!['size'] != null)
+                  _buildDetailRow(
+                    'Size',
+                    FormatHelper.formatBytes(mediaItem.extras!['size']),
+                  ),
+                if (mediaItem.extras!['path'] != null)
+                  _buildDetailRow('Path', mediaItem.extras!['path']),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(value),
+        ],
+      ),
+    );
+  }
+
+  void _showSleepTimerDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sleep Timer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildTimerOption('5 Minutes', const Duration(minutes: 5)),
+            _buildTimerOption('15 Minutes', const Duration(minutes: 15)),
+            _buildTimerOption('30 Minutes', const Duration(minutes: 30)),
+            _buildTimerOption('1 Hour', const Duration(hours: 1)),
+            if (_sleepTimer != null && _sleepTimer!.isActive) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.timer_off, color: Colors.red),
+                title: const Text(
+                  'Cancel Timer',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  _sleepTimer?.cancel();
+                  _sleepTimer = null;
+                  Navigator.pop(context);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Sleep timer cancelled')),
+                    );
+                  }
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimerOption(String label, Duration duration) {
+    return ListTile(
+      leading: const Icon(Icons.timer),
+      title: Text(label),
+      onTap: () {
+        _startSleepTimer(duration);
+        Navigator.pop(context);
+      },
+    );
+  }
+
+  void _startSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _sleepTimer = Timer(duration, () {
+      if (mounted) {
+        final audioHandler = ref.read(audioHandlerProvider);
+        audioHandler.stop();
+      }
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sleep timer set for ${duration.inMinutes} minutes'),
+        ),
+      );
+    }
   }
 }

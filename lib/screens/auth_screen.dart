@@ -96,9 +96,11 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      body: Container(
+    return PopScope(
+      canPop: widget.isSetup,
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -256,6 +258,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

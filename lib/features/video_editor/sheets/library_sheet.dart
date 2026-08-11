@@ -396,6 +396,8 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
         labelColor: Colors.white,
         unselectedLabelColor: Colors.white54,
         labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
         tabs: [
           Tab(
             child: Row(

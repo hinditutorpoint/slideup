@@ -5,6 +5,8 @@ import '../features/epub_reader/providers/epub_provider.dart';
 import '../providers/intent_handler_provider.dart';
 import '../services/intent_handler_service.dart';
 import '../screens/intent_receiver_screen.dart';
+import '../screens/auth_screen.dart';
+import '../services/security_service.dart';
 import '../navigation_service.dart';
 
 class AppLifecycleHandler extends ConsumerStatefulWidget {
@@ -19,6 +21,8 @@ class AppLifecycleHandler extends ConsumerStatefulWidget {
 
 class _AppLifecycleHandlerState extends ConsumerState<AppLifecycleHandler>
     with WidgetsBindingObserver {
+  bool _wasBackgrounded = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,17 +45,62 @@ class _AppLifecycleHandlerState extends ConsumerState<AppLifecycleHandler>
       case AppLifecycleState.resumed:
         _refreshDownloads();
         _onAppResumed();
+        if (_wasBackgrounded) {
+          _wasBackgrounded = false;
+          _relockOnResume();
+        }
         break;
       case AppLifecycleState.inactive:
         break;
       case AppLifecycleState.paused:
+        _wasBackgrounded = true;
         ref.read(miniPlayerProvider.notifier).setAppForegroundState(false);
         break;
       case AppLifecycleState.detached:
         break;
       case AppLifecycleState.hidden:
+        _wasBackgrounded = true;
         ref.read(miniPlayerProvider.notifier).setAppForegroundState(false);
         break;
+    }
+  }
+
+  Future<void> _relockOnResume() async {
+    try {
+      final hasPassword = await SecurityService.instance.hasAppPassword();
+      if (!hasPassword) return;
+
+      final navigator = rootNavigatorKey.currentState;
+      if (navigator == null || !navigator.mounted) return;
+
+      final topRoute = ModalRoute.of(navigator.context);
+      if (topRoute?.settings.name == '/auth' ||
+          topRoute is PageRoute && topRoute.settings.name == '/auth') {
+        return;
+      }
+
+      final canUseBiometric = await SecurityService.instance.canUseBiometric();
+      final biometricEnabled = await SecurityService.instance
+          .isBiometricEnabled();
+
+      bool authenticated = false;
+
+      if (canUseBiometric && biometricEnabled) {
+        authenticated = await SecurityService.instance
+            .authenticateWithBiometric();
+      }
+
+      if (!authenticated && navigator.mounted) {
+        await navigator.push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/auth'),
+            builder: (context) => const AuthScreen(isSetup: false),
+            fullscreenDialog: true,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Re-lock error: $e');
     }
   }
 

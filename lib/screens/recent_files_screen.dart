@@ -9,6 +9,8 @@ import '../helpers/audio_playback_helper.dart';
 import 'pdf_viewer_screen.dart';
 import 'image_viewer_screen.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
+import '../widgets/playlist_selection_dialog.dart';
 
 class RecentFilesScreen extends ConsumerStatefulWidget {
   const RecentFilesScreen({super.key});
@@ -85,6 +87,13 @@ class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
             ),
           ),
           const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: () {
+              ref.invalidate(recentFilesProvider);
+            },
+          ),
           IconButton(
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
@@ -317,12 +326,31 @@ class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
 
-  void _shareFile(MediaFile file) {
-    // TODO: Implement share functionality
+  void _shareFile(MediaFile file) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Share File',
+          files: [XFile(file.path)],
+          text: 'Shared ${file.name} from Slideup',
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to share: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _addToPlaylist(MediaFile file) {
-    // TODO: Show playlist selection dialog
+    showDialog(
+      context: context,
+      builder: (context) => PlaylistSelectionDialog(mediaFile: file),
+    );
   }
 
   void _removeFromRecent(MediaFile file) async {

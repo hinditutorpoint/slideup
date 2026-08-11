@@ -74,7 +74,6 @@ class VideoFile extends Equatable {
   final String? bitrate;
   final String? original;
   final String? sha1;
-  final bool isLiked;
   final bool isFavorite;
 
   const VideoFile({
@@ -89,7 +88,6 @@ class VideoFile extends Equatable {
     this.bitrate,
     this.original,
     this.sha1,
-    this.isLiked = false,
     this.isFavorite = false,
   });
 
@@ -267,7 +265,6 @@ class VideoFile extends Equatable {
     String? bitrate,
     String? original,
     String? sha1,
-    bool? isLiked,
     bool? isFavorite,
   }) {
     return VideoFile(
@@ -282,7 +279,6 @@ class VideoFile extends Equatable {
       bitrate: bitrate ?? this.bitrate,
       original: original ?? this.original,
       sha1: sha1 ?? this.sha1,
-      isLiked: isLiked ?? this.isLiked,
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }
@@ -300,7 +296,6 @@ class VideoFile extends Equatable {
     bitrate,
     original,
     sha1,
-    isLiked,
     isFavorite,
   ];
 
@@ -319,7 +314,6 @@ class VideoFile extends Equatable {
     'bitrate': bitrate,
     'original': original,
     'sha1': sha1,
-    'isLiked': isLiked,
     'isFavorite': isFavorite,
   };
 }

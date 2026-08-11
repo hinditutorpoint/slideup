@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -71,6 +72,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   double _dragStartX = 0;
   Duration _originalStartTime = Duration.zero;
   Duration _originalDuration = Duration.zero;
+  bool _isMultiDrag = false;
 
   double get _pixelsPerSecond {
     final zoom = ref.watch(timelineProvider).zoomLevel;
@@ -122,6 +124,8 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 
   Widget _buildToolbar(TimelineState state) {
+    final hasSelection = state.selectedItemIds.isNotEmpty;
+
     return Container(
       padding: EdgeInsets.symmetric(horizontal: _dims.paddingS),
       decoration: BoxDecoration(
@@ -132,6 +136,75 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
       ),
       child: Row(
         children: [
+          // Marker toggle
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: IconButton(
+              icon: Icon(
+                Icons.flag,
+                size: _dims.iconXS,
+                color: _hasMarkerAt(state.currentPosition)
+                    ? Colors.amber
+                    : Colors.grey[400],
+              ),
+              onPressed: _toggleMarker,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              tooltip: 'Add/remove marker',
+            ),
+          ),
+          SizedBox(width: _dims.paddingXS),
+
+          // Group / ungroup for multi-selection
+          if (hasSelection) ...[
+            IconButton(
+              icon: Icon(
+                Icons.group,
+                size: _dims.iconS,
+                color: Colors.grey[300],
+              ),
+              onPressed: () {
+                ref.read(timelineProvider.notifier).groupSelectedItems();
+                HapticFeedback.selectionClick();
+              },
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              tooltip: 'Group selected',
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.group_off,
+                size: _dims.iconS,
+                color: Colors.grey[300],
+              ),
+              onPressed: () {
+                ref.read(timelineProvider.notifier).ungroupSelectedItems();
+                HapticFeedback.selectionClick();
+              },
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              tooltip: 'Ungroup selected',
+            ),
+          ],
+
+          // Delete selected
+          if (hasSelection)
+            IconButton(
+              icon: Icon(
+                Icons.delete_outline,
+                size: _dims.iconS,
+                color: Colors.red[300],
+              ),
+              onPressed: () {
+                ref.read(timelineProvider.notifier).deleteSelectedItems();
+                HapticFeedback.mediumImpact();
+              },
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              tooltip: 'Delete selected',
+            ),
+
           // Zoom controls - compact
           SizedBox(
             width: 20,
@@ -244,7 +317,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                           color: Colors.orange,
                           items: state.textItems,
                           itemType: TimelineItemType.text,
-                          selectedId: state.selectedItemId,
+                          selectedIds: state.selectedItemIds,
                         ),
 
                       // Image track
@@ -255,7 +328,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                           color: Colors.green,
                           items: state.imageItems,
                           itemType: TimelineItemType.image,
-                          selectedId: state.selectedItemId,
+                          selectedIds: state.selectedItemIds,
                         ),
 
                       // Audio track
@@ -266,7 +339,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                           color: Colors.purple,
                           items: state.audioItems,
                           itemType: TimelineItemType.audio,
-                          selectedId: state.selectedItemId,
+                          selectedIds: state.selectedItemIds,
                         ),
                     ],
                   ),
@@ -297,6 +370,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
           totalDuration: widget.totalDuration,
           trackLabelWidth: _dims.trackLabelWidth,
           fontSize: _dims.fontXS,
+          markers: ref.watch(timelineProvider).markers,
         ),
       ),
     );
@@ -308,7 +382,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     required Color color,
     required List<T> items,
     required TimelineItemType itemType,
-    required String? selectedId,
+    required Set<String> selectedIds,
   }) {
     return Container(
       height: _dims.trackHeight,
@@ -353,7 +427,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                   (item) => _buildTrackItem(
                     item: item,
                     color: color,
-                    isSelected: item.id == selectedId,
+                    isSelected: selectedIds.contains(item.id),
                     itemType: itemType,
                   ),
                 ),
@@ -384,6 +458,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
       top: 0,
       child: GestureDetector(
         onTap: () => _selectItem(item.id, itemType),
+        onLongPress: () => _toggleSelectItem(item.id, itemType),
         onDoubleTap: () => _showEditTimingDialog(item, itemType),
         onPanStart: (details) => _onItemDragStart(item, details, itemType),
         onPanUpdate: (details) => _onItemDragUpdate(details),
@@ -587,6 +662,11 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     _originalStartTime = item.startTime;
     _originalDuration = item.duration;
     _dragMode = _DragMode.move;
+
+    final selectedIds = ref.read(timelineProvider).selectedItemIds;
+    _isMultiDrag =
+        selectedIds.length > 1 && selectedIds.contains(item.id);
+
     HapticFeedback.lightImpact();
   }
 
@@ -597,6 +677,13 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     final timeDelta = Duration(
       milliseconds: (delta / _pixelsPerSecond * 1000).toInt(),
     );
+
+    if (_isMultiDrag) {
+      ref
+          .read(timelineProvider.notifier)
+          .moveSelectedItems(timeDelta);
+      return;
+    }
 
     final newStart = _originalStartTime + timeDelta;
 
@@ -655,48 +742,35 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     _draggingItemId = null;
     _draggingItemType = null;
     _dragMode = _DragMode.none;
+    _isMultiDrag = false;
     HapticFeedback.lightImpact();
   }
 
   void _updateItemTiming(String itemId, Duration newStart, Duration duration) {
     final newEnd = newStart + duration;
+    final state = ref.read(timelineProvider);
 
     switch (_draggingItemType) {
       case TimelineItemType.text:
-        final item = ref
-            .read(timelineProvider)
-            .textItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.textItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateTextItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateTextItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       case TimelineItemType.image:
-        final item = ref
-            .read(timelineProvider)
-            .imageItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.imageItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateImageItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateImageItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       case TimelineItemType.audio:
-        final item = ref
-            .read(timelineProvider)
-            .audioItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.audioItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateAudioItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateAudioItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       default:
         break;
@@ -709,47 +783,40 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     Duration newDuration,
   ) {
     final newEnd = newStart + newDuration;
+    final state = ref.read(timelineProvider);
 
     switch (_draggingItemType) {
       case TimelineItemType.text:
-        final item = ref
-            .read(timelineProvider)
-            .textItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.textItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateTextItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateTextItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       case TimelineItemType.image:
-        final item = ref
-            .read(timelineProvider)
-            .imageItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.imageItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateImageItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateImageItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       case TimelineItemType.audio:
-        final item = ref
-            .read(timelineProvider)
-            .audioItems
-            .firstWhere((i) => i.id == itemId);
+        final item = _findItemInList(state.audioItems, itemId);
+        if (item == null) return;
         ref
             .read(timelineProvider.notifier)
-            .updateAudioItem(
-              itemId,
-              item.copyWith(startTime: newStart, endTime: newEnd),
-            );
+            .updateAudioItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       default:
         break;
     }
+  }
+
+  T? _findItemInList<T extends TimelineItem>(List<T> items, String itemId) {
+    for (final item in items) {
+      if (item.id == itemId) return item;
+    }
+    return null;
   }
 
   // ═══════════════════════════════════════════════════════
@@ -806,6 +873,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     color: Colors.green,
                     onTap: () {
                       Navigator.pop(context);
+                      _pickAndAddImage(currentPosition);
                     },
                   ),
                   _buildCompactAddButton(
@@ -814,6 +882,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     color: Colors.purple,
                     onTap: () {
                       Navigator.pop(context);
+                      _pickAndAddAudio(currentPosition);
                     },
                   ),
                 ],
@@ -923,6 +992,64 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     );
   }
 
+  Future<void> _pickAndAddImage(Duration startTime) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.single.path;
+      if (path == null || path.isEmpty) {
+        _showTimelineError('Could not read the selected image');
+        return;
+      }
+      ref
+          .read(timelineProvider.notifier)
+          .addImageItem(
+            imagePath: path,
+            startTime: startTime,
+            duration: const Duration(seconds: 3),
+          );
+      HapticFeedback.mediumImpact();
+    } catch (e) {
+      _showTimelineError('Failed to add image: $e');
+    }
+  }
+
+  Future<void> _pickAndAddAudio(Duration startTime) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.single.path;
+      if (path == null || path.isEmpty) {
+        _showTimelineError('Could not read the selected audio');
+        return;
+      }
+      ref
+          .read(timelineProvider.notifier)
+          .addAudioItem(
+            audioPath: path,
+            audioDuration: const Duration(seconds: 5),
+            startTime: startTime,
+            title: result.files.single.name,
+          );
+      HapticFeedback.mediumImpact();
+    } catch (e) {
+      _showTimelineError('Failed to add audio: $e');
+    }
+  }
+
+  void _showTimelineError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   void _showEditTimingDialog(TimelineItem item, TimelineItemType type) {
     final startController = TextEditingController(
       text: item.startTime.inSeconds.toString(),
@@ -997,8 +1124,32 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   // ═══════════════════════════════════════════════════════
 
   void _selectItem(String id, TimelineItemType type) {
-    ref.read(timelineProvider.notifier).selectItem(id, type);
+    ref.read(timelineProvider.notifier).selectGroup(id);
     widget.onItemSelect?.call(id);
+    HapticFeedback.selectionClick();
+  }
+
+  void _toggleSelectItem(String id, TimelineItemType type) {
+    ref.read(timelineProvider.notifier).toggleSelectItem(id, type);
+    widget.onItemSelect?.call(id);
+    HapticFeedback.selectionClick();
+  }
+
+  bool _hasMarkerAt(Duration position) {
+    return ref
+        .read(timelineProvider)
+        .markers
+        .any((m) => (m - position).inMilliseconds.abs() < 500);
+  }
+
+  void _toggleMarker() {
+    final notifier = ref.read(timelineProvider.notifier);
+    final position = ref.read(timelineProvider).currentPosition;
+    if (_hasMarkerAt(position)) {
+      notifier.removeMarkerAt(position);
+    } else {
+      notifier.addMarker(position);
+    }
     HapticFeedback.selectionClick();
   }
 
@@ -1036,12 +1187,14 @@ class _TimeRulerPainter extends CustomPainter {
   final Duration totalDuration;
   final double trackLabelWidth;
   final double fontSize;
+  final List<Duration> markers;
 
   _TimeRulerPainter({
     required this.pixelsPerSecond,
     required this.totalDuration,
     required this.trackLabelWidth,
     required this.fontSize,
+    this.markers = const [],
   });
 
   @override
@@ -1076,6 +1229,34 @@ class _TimeRulerPainter extends CustomPainter {
         );
       }
     }
+
+    // Draw markers as amber flags
+    final markerPaint = Paint()
+      ..color = Colors.amber
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+    final flagPaint = Paint()
+      ..color = Colors.amber
+      ..style = PaintingStyle.fill;
+
+    for (final marker in markers) {
+      final x = marker.inMilliseconds / 1000 * pixelsPerSecond +
+          trackLabelWidth;
+      if (x < 0 || x > size.width) continue;
+
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        markerPaint,
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(x, 0)
+          ..lineTo(x + 5, 3)
+          ..lineTo(x, 6),
+        flagPaint,
+      );
+    }
   }
 
   String _formatTime(Duration d) {
@@ -1089,6 +1270,7 @@ class _TimeRulerPainter extends CustomPainter {
     return oldDelegate.pixelsPerSecond != pixelsPerSecond ||
         oldDelegate.totalDuration != totalDuration ||
         oldDelegate.trackLabelWidth != trackLabelWidth ||
-        oldDelegate.fontSize != fontSize;
+        oldDelegate.fontSize != fontSize ||
+        oldDelegate.markers.length != markers.length;
   }
 }

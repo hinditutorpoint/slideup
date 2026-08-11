@@ -206,7 +206,7 @@ class BackgroundExportService {
 
   ExportJob? get currentJob => _currentJob;
   bool get isExporting =>
-      _currentJob != null && _currentJob!.status == ExportStatus.processing;
+      _currentJob != null && _currentJob!.status == ExportJobStatus.running;
   bool get isInitialized => _isInitialized;
 
   // ═══════════════════════════════════════════════════════
@@ -325,7 +325,7 @@ class BackgroundExportService {
     }
 
     // Cancel any existing export
-    if (_currentJob != null && _currentJob!.status == ExportStatus.processing) {
+    if (_currentJob != null && _currentJob!.status == ExportJobStatus.running) {
       await cancelExport();
       await Future.delayed(const Duration(milliseconds: 500));
     }
@@ -972,7 +972,16 @@ String _buildColorFilterIsolate(ColorGradeSettings settings) {
     filters.add('hue=h=${settings.hue}');
   }
 
+  if (settings.chromaKeyEnabled) {
+    filters.add('chromakey=color=0x${_rgbHexIsolate(settings.chromaKeyColor)}:similarity=${settings.chromaKeySimilarity}');
+  }
+
   return filters.isEmpty ? 'null' : filters.join(',');
+}
+
+String _rgbHexIsolate(int argb) {
+  final rgb = argb & 0xFFFFFF;
+  return rgb.toRadixString(16).padLeft(6, '0').toUpperCase();
 }
 
 String _escapePathForShellIsolate(String path) {

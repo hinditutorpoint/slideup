@@ -845,6 +845,116 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
 
           const SizedBox(height: 24),
 
+          // ═══════════════════════════════════════════════════
+          // ✅ CHROMA KEY (GREEN SCREEN)
+          // ═══════════════════════════════════════════════════
+          const Text(
+            'Chroma Key',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: settings.chromaKeyEnabled
+                  ? const Color(0xFF00E676).withValues(alpha: 0.08)
+                  : Colors.white.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: settings.chromaKeyEnabled
+                    ? const Color(0xFF00E676).withValues(alpha: 0.25)
+                    : Colors.white.withValues(alpha: 0.05),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.videocam,
+                      size: 18,
+                      color: settings.chromaKeyEnabled
+                          ? const Color(0xFF00E676)
+                          : Colors.white.withValues(alpha: 0.5),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Remove background color',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ),
+                    Switch(
+                      value: settings.chromaKeyEnabled,
+                      activeTrackColor: const Color(0xFF00E676),
+                      onChanged: (v) => _updateSettings(
+                        settings.copyWith(chromaKeyEnabled: v),
+                      ),
+                    ),
+                  ],
+                ),
+                if (settings.chromaKeyEnabled) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Pick a color to remove',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      _buildChromaColorDot(
+                        settings,
+                        0xFF00FF00,
+                        Colors.green,
+                      ),
+                      _buildChromaColorDot(settings, 0xFF0000FF, Colors.blue),
+                      _buildChromaColorDot(
+                        settings,
+                        0xFFFF0000,
+                        Colors.red,
+                      ),
+                      _buildChromaColorDot(
+                        settings,
+                        0xFF800080,
+                        Colors.purple,
+                      ),
+                      _buildChromaColorDot(
+                        settings,
+                        0xFFFFA500,
+                        Colors.orange,
+                      ),
+                      _buildChromaColorDot(
+                        settings,
+                        0xFFFF69B4,
+                        Colors.pink,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildSliderCard(
+                    'Similarity',
+                    Icons.tune,
+                    settings.chromaKeySimilarity,
+                    0.0,
+                    1.0,
+                    0.2,
+                    const Color(0xFF00E676),
+                    (v) => _updateSettings(
+                      settings.copyWith(chromaKeySimilarity: v),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
           // Color wheel (placeholder)
           Container(
             width: double.infinity,
@@ -889,6 +999,33 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
   // ═══════════════════════════════════════════════════════
   // ✅ SLIDER CARD
   // ═══════════════════════════════════════════════════════
+
+  Widget _buildChromaColorDot(
+    ColorGradeSettings settings,
+    int colorValue,
+    Color color,
+  ) {
+    final isSelected = settings.chromaKeyColor == colorValue;
+    return GestureDetector(
+      onTap: () => _updateSettings(settings.copyWith(chromaKeyColor: colorValue)),
+      child: Container(
+        width: 36,
+        height: 36,
+        margin: const EdgeInsets.only(right: 10),
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.2),
+            width: isSelected ? 3 : 1,
+          ),
+        ),
+        child: isSelected
+            ? const Icon(Icons.check, size: 18, color: Colors.white)
+            : null,
+      ),
+    );
+  }
 
   Widget _buildSliderCard(
     String label,

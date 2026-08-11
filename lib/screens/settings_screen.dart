@@ -152,6 +152,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
 
           SwitchListTile(
+            title: const Text('Ask to Resume Last Position'),
+            subtitle: const Text(
+              'Prompt before resuming playback from last saved position',
+            ),
+            value: settings.askResumeLastPosition,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .setAskResumeLastPosition(value);
+            },
+          ),
+
+          SwitchListTile(
+            title: const Text('Recent History'),
+            subtitle: const Text(
+              'Save videos to recent history when playback ends',
+            ),
+            value: settings.recentHistoryEnabled,
+            onChanged: (value) {
+              ref.read(settingsProvider.notifier).setRecentHistoryEnabled(value);
+            },
+          ),
+
+          SwitchListTile(
             title: const Text('Error Debugging'),
             subtitle: const Text('Show detailed error information'),
             value: settings.errorDebuggingEnabled ?? false,

@@ -64,45 +64,56 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
         duration: const Duration(milliseconds: 200),
         child: IgnorePointer(
           ignoring: !playerState.showControls,
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black54,
-                  Colors.transparent,
-                  Colors.transparent,
-                  Colors.black54,
-                ],
-                stops: [0.0, 0.2, 0.8, 1.0],
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Non-interactive gradient background so gestures (double-tap
+              // seek, drags) pass through to the gesture detector below.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black54,
+                          Colors.transparent,
+                          Colors.transparent,
+                          Colors.black54,
+                        ],
+                        stops: [0.0, 0.2, 0.8, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  _TopBar(
-                    title: currentTitle,
-                    playlist: widget.playlist,
-                    onBack: widget.onBack,
-                    showPiPButton: widget.showPiPButton,
-                    onInteraction: _keepControlsVisible,
-                  ),
-                  const Spacer(),
-                  _CenterPlayButton(
-                    playerState: playerState,
-                    hasPlaylist: widget.playlist.hasMultiple,
-                    onInteraction: _keepControlsVisible,
-                  ),
-                  const Spacer(),
-                  _BottomBar(
-                    playlist: widget.playlist,
-                    playerState: playerState,
-                    onInteraction: _keepControlsVisible,
-                  ),
-                ],
+              SafeArea(
+                child: Column(
+                  children: [
+                    _TopBar(
+                      title: currentTitle,
+                      playlist: widget.playlist,
+                      onBack: widget.onBack,
+                      showPiPButton: widget.showPiPButton,
+                      onInteraction: _keepControlsVisible,
+                    ),
+                    const Spacer(),
+                    _CenterPlayButton(
+                      playerState: playerState,
+                      hasPlaylist: widget.playlist.hasMultiple,
+                      onInteraction: _keepControlsVisible,
+                    ),
+                    const Spacer(),
+                    _BottomBar(
+                      playlist: widget.playlist,
+                      playerState: playerState,
+                      onInteraction: _keepControlsVisible,
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       );

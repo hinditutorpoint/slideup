@@ -90,54 +90,99 @@ class SettingsService {
   // ---------------- View mode ----------------
 
   Future<bool> getIsGridView() async {
-    return _box.get(_keyViewMode, defaultValue: 'grid') == 'grid';
+    try {
+      return _box.get(_keyViewMode, defaultValue: 'grid') == 'grid';
+    } catch (e) {
+      debugPrint('Error loading view mode: $e');
+      return true;
+    }
   }
 
   Future<void> setIsGridView(bool isGrid) async {
-    await _box.put(_keyViewMode, isGrid ? 'grid' : 'list');
+    try {
+      await _box.put(_keyViewMode, isGrid ? 'grid' : 'list');
+    } catch (e) {
+      debugPrint('Error saving view mode: $e');
+    }
   }
 
   // ---------------- Last location ----------------
 
   Future<String?> getLastLocation() async {
-    return _box.get(_keyLastLocation) as String?;
+    try {
+      return _box.get(_keyLastLocation) as String?;
+    } catch (e) {
+      debugPrint('Error loading last location: $e');
+      return null;
+    }
   }
 
   Future<void> setLastLocation(String path) async {
-    await _box.put(_keyLastLocation, path);
+    try {
+      await _box.put(_keyLastLocation, path);
+    } catch (e) {
+      debugPrint('Error saving last location: $e');
+    }
   }
 
   // ---------------- Hidden files ----------------
 
   Future<bool> getShowHiddenFiles() async {
-    return _box.get(_keyShowHiddenFiles, defaultValue: false) as bool;
+    try {
+      return _box.get(_keyShowHiddenFiles, defaultValue: false) as bool;
+    } catch (e) {
+      debugPrint('Error loading show hidden files: $e');
+      return false;
+    }
   }
 
   Future<void> setShowHiddenFiles(bool show) async {
-    await _box.put(_keyShowHiddenFiles, show);
+    try {
+      await _box.put(_keyShowHiddenFiles, show);
+    } catch (e) {
+      debugPrint('Error saving show hidden files: $e');
+    }
   }
 
   // ---------------- Sorting ----------------
 
   Future<SortBy> getSortBy() async {
-    final value = _box.get(_keySortBy, defaultValue: SortBy.name.name);
-    return SortBy.values.firstWhere((e) => e.name == value);
+    try {
+      final value = _box.get(_keySortBy, defaultValue: SortBy.name.name);
+      return SortBy.values.firstWhere((e) => e.name == value);
+    } catch (e) {
+      debugPrint('Error loading sort by: $e');
+      return SortBy.name;
+    }
   }
 
   Future<void> setSortBy(SortBy sortBy) async {
-    await _box.put(_keySortBy, sortBy.name);
+    try {
+      await _box.put(_keySortBy, sortBy.name);
+    } catch (e) {
+      debugPrint('Error saving sort by: $e');
+    }
   }
 
   Future<SortOrder> getSortOrder() async {
-    final value = _box.get(
-      _keySortOrder,
-      defaultValue: SortOrder.ascending.name,
-    );
-    return SortOrder.values.firstWhere((e) => e.name == value);
+    try {
+      final value = _box.get(
+        _keySortOrder,
+        defaultValue: SortOrder.ascending.name,
+      );
+      return SortOrder.values.firstWhere((e) => e.name == value);
+    } catch (e) {
+      debugPrint('Error loading sort order: $e');
+      return SortOrder.ascending;
+    }
   }
 
   Future<void> setSortOrder(SortOrder order) async {
-    await _box.put(_keySortOrder, order.name);
+    try {
+      await _box.put(_keySortOrder, order.name);
+    } catch (e) {
+      debugPrint('Error saving sort order: $e');
+    }
   }
 }
 

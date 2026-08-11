@@ -7,6 +7,7 @@ import '../models/thumbnail_file.dart';
 import 'video_providers.dart';
 import '../../../../models/media_file.dart';
 import '../../../../services/database_service.dart';
+import '../models/video_item.dart';
 
 enum MetadataViewMode { grid, list }
 
@@ -30,6 +31,9 @@ class VideoMetadataState {
   final Set<String> likedFiles;
   final Set<String> favoriteFiles;
   final Set<String> likedThumbnails;
+  final List<VideoItem> relatedItems;
+  final bool isLoadingRelated;
+  final String? relatedError;
 
   const VideoMetadataState({
     this.isLoading = false,
@@ -38,6 +42,9 @@ class VideoMetadataState {
     this.likedFiles = const {},
     this.favoriteFiles = const {},
     this.likedThumbnails = const {},
+    this.relatedItems = const [],
+    this.isLoadingRelated = false,
+    this.relatedError,
   });
 
   /// Get all video files
@@ -76,6 +83,9 @@ class VideoMetadataState {
   /// Get thumbnails count
   int get thumbnailsCount => allThumbnails.length;
 
+  /// Get related items count
+  int get relatedItemsCount => relatedItems.length;
+
   /// Get best quality video file
   VideoFile? get bestQualityFile {
     if (allVideoFiles.isEmpty) return null;
@@ -89,6 +99,9 @@ class VideoMetadataState {
     Set<String>? likedFiles,
     Set<String>? favoriteFiles,
     Set<String>? likedThumbnails,
+    List<VideoItem>? relatedItems,
+    bool? isLoadingRelated,
+    String? relatedError,
   }) {
     return VideoMetadataState(
       isLoading: isLoading ?? this.isLoading,
@@ -97,6 +110,9 @@ class VideoMetadataState {
       likedFiles: likedFiles ?? this.likedFiles,
       favoriteFiles: favoriteFiles ?? this.favoriteFiles,
       likedThumbnails: likedThumbnails ?? this.likedThumbnails,
+      relatedItems: relatedItems ?? this.relatedItems,
+      isLoadingRelated: isLoadingRelated ?? this.isLoadingRelated,
+      relatedError: relatedError,
     );
   }
 }
@@ -119,17 +135,52 @@ class VideoMetadataNotifier extends StateNotifier<VideoMetadataState> {
       final metadata = VideoMetadata.fromJson(metadataMap);
 
       // Load persistent favorite data from database
-      final favoriteFiles = await _loadFavoriteFilesFromDatabase();
+      final favoriteVideoFiles = await _loadFavoriteFilesFromDatabase();
       final favoriteThumbnails = await _loadFavoriteThumbnailsFromDatabase();
+
+      // Merge both into favoriteFiles since isThumbnailFavorite and isFileFavorite
+      // both check favoriteFiles
+      final allFavorites = <String>{
+        ...favoriteVideoFiles,
+        ...favoriteThumbnails,
+      };
 
       state = state.copyWith(
         isLoading: false,
         metadata: metadata,
-        favoriteFiles: favoriteFiles,
-        likedThumbnails: favoriteThumbnails,
+        favoriteFiles: allFavorites,
       );
+
+      // Automatically load related items
+      loadRelatedItems(metadata);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: _getErrorMessage(e));
+    }
+  }
+
+  Future<void> loadRelatedItems([VideoMetadata? meta]) async {
+    final metadata = meta ?? state.metadata;
+    if (metadata == null) return;
+
+    state = state.copyWith(isLoadingRelated: true, relatedError: null);
+
+    try {
+      final response = await _repository.getRelatedVideos(
+        identifier: identifier,
+        collection: metadata.collection,
+        subject: metadata.subject,
+        creator: metadata.creator,
+      );
+
+      state = state.copyWith(
+        isLoadingRelated: false,
+        relatedItems: response.items,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoadingRelated: false,
+        relatedError: 'Failed to load related items',
+      );
     }
   }
 

@@ -6,6 +6,8 @@ class AppSettings {
   final bool videoPopupEnabled;
   final bool backgroundAudioEnabled;
   final bool autoPlayNext;
+  final bool askResumeLastPosition;
+  final bool recentHistoryEnabled;
   final String defaultVideoQuality;
   final String downloadLocation;
   final String? speechService;
@@ -16,6 +18,8 @@ class AppSettings {
     this.videoPopupEnabled = false,
     this.backgroundAudioEnabled = true,
     this.autoPlayNext = true,
+    this.askResumeLastPosition = false,
+    this.recentHistoryEnabled = true,
     this.defaultVideoQuality = 'Auto',
     this.downloadLocation = '/storage/emulated/0/Download',
     this.speechService,
@@ -27,6 +31,8 @@ class AppSettings {
     bool? videoPopupEnabled,
     bool? backgroundAudioEnabled,
     bool? autoPlayNext,
+    bool? askResumeLastPosition,
+    bool? recentHistoryEnabled,
     String? defaultVideoQuality,
     String? downloadLocation,
     String? speechService,
@@ -38,6 +44,9 @@ class AppSettings {
       backgroundAudioEnabled:
           backgroundAudioEnabled ?? this.backgroundAudioEnabled,
       autoPlayNext: autoPlayNext ?? this.autoPlayNext,
+      askResumeLastPosition:
+          askResumeLastPosition ?? this.askResumeLastPosition,
+      recentHistoryEnabled: recentHistoryEnabled ?? this.recentHistoryEnabled,
       defaultVideoQuality: defaultVideoQuality ?? this.defaultVideoQuality,
       downloadLocation: downloadLocation ?? this.downloadLocation,
       speechService: speechService ?? this.speechService,
@@ -74,6 +83,14 @@ class SettingsNotifier extends Notifier<AppSettings> {
           defaultValue: true,
         ),
         autoPlayNext: _settingsBox.get('autoPlayNext', defaultValue: true),
+        askResumeLastPosition: _settingsBox.get(
+          'askResumeLastPosition',
+          defaultValue: false,
+        ),
+        recentHistoryEnabled: _settingsBox.get(
+          'recentHistoryEnabled',
+          defaultValue: true,
+        ),
         errorDebuggingEnabled: _settingsBox.get(
           'errorDebuggingEnabled',
           defaultValue: false,
@@ -121,6 +138,18 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await _ensureInitialized();
     await _settingsBox.put('autoPlayNext', enabled);
     state = state.copyWith(autoPlayNext: enabled);
+  }
+
+  Future<void> setAskResumeLastPosition(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('askResumeLastPosition', enabled);
+    state = state.copyWith(askResumeLastPosition: enabled);
+  }
+
+  Future<void> setRecentHistoryEnabled(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('recentHistoryEnabled', enabled);
+    state = state.copyWith(recentHistoryEnabled: enabled);
   }
 
   Future<void> setErrorDebuggingEnabled(bool enabled) async {

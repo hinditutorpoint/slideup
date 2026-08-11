@@ -753,6 +753,140 @@ class AudioEditService {
   }
 
   // ═══════════════════════════════════════════════════════
+  // ✅ BASS BOOST
+  // ═══════════════════════════════════════════════════════
+
+  Future<Result<String>> applyBassBoost({
+    required String inputPath,
+    double gain = 5.0,
+    double frequency = 100,
+    AudioFormat format = AudioFormat.mp3,
+    int bitrate = 192,
+    String? outputPath,
+    void Function(double)? onProgress,
+  }) async {
+    if (_isProcessing) {
+      return Result.failure(
+        AudioEditError.invalidInput('Another operation in progress'),
+      );
+    }
+
+    final validationResult = await _validateInputFile(inputPath);
+    if (validationResult.isFailure) {
+      return Result.failure(validationResult.error!);
+    }
+
+    _startProcessing();
+
+    return SafeAsync.run(
+      () async {
+        final ext = _getAudioExtension(format);
+        final outputResult = await _getOutputPath('bass_boosted_audio', ext);
+        if (outputResult.isFailure) {
+          throw outputResult.error!;
+        }
+        final output = outputPath ?? outputResult.requireData;
+
+        final command =
+            '-y -i "$inputPath" '
+            '-af "bass=g=$gain:f=$frequency" '
+            '${_getAudioCodec(format, bitrate)} "$output"';
+
+        debugPrint('🔊 Bass boost: $command');
+
+        final durationResult = await _getAudioDuration(inputPath);
+        _setupProgressCallback(durationResult.getOrNull(), onProgress);
+
+        _currentSession = await FFmpegKit.execute(command);
+        final returnCode = await _currentSession?.getReturnCode();
+        _clearProgressCallback();
+
+        if (_isCancelled) {
+          await _cleanupFile(output);
+          throw AudioEditError.cancelled();
+        }
+
+        if (ReturnCode.isSuccess(returnCode)) {
+          debugPrint('✅ Bass boosted: $output');
+          return output;
+        }
+
+        await _cleanupFile(output);
+        throw AudioEditError.processingFailed('Bass boost failed');
+      },
+      operationName: 'applyBassBoost',
+      timeout: _defaultTimeout,
+    ).whenComplete(() => _stopProcessing());
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ TREBLE BOOST
+  // ═══════════════════════════════════════════════════════
+
+  Future<Result<String>> applyTrebleBoost({
+    required String inputPath,
+    double gain = 5.0,
+    double frequency = 10000,
+    AudioFormat format = AudioFormat.mp3,
+    int bitrate = 192,
+    String? outputPath,
+    void Function(double)? onProgress,
+  }) async {
+    if (_isProcessing) {
+      return Result.failure(
+        AudioEditError.invalidInput('Another operation in progress'),
+      );
+    }
+
+    final validationResult = await _validateInputFile(inputPath);
+    if (validationResult.isFailure) {
+      return Result.failure(validationResult.error!);
+    }
+
+    _startProcessing();
+
+    return SafeAsync.run(
+      () async {
+        final ext = _getAudioExtension(format);
+        final outputResult = await _getOutputPath('treble_boosted_audio', ext);
+        if (outputResult.isFailure) {
+          throw outputResult.error!;
+        }
+        final output = outputPath ?? outputResult.requireData;
+
+        final command =
+            '-y -i "$inputPath" '
+            '-af "treble=g=$gain:f=$frequency" '
+            '${_getAudioCodec(format, bitrate)} "$output"';
+
+        debugPrint('🔊 Treble boost: $command');
+
+        final durationResult = await _getAudioDuration(inputPath);
+        _setupProgressCallback(durationResult.getOrNull(), onProgress);
+
+        _currentSession = await FFmpegKit.execute(command);
+        final returnCode = await _currentSession?.getReturnCode();
+        _clearProgressCallback();
+
+        if (_isCancelled) {
+          await _cleanupFile(output);
+          throw AudioEditError.cancelled();
+        }
+
+        if (ReturnCode.isSuccess(returnCode)) {
+          debugPrint('✅ Treble boosted: $output');
+          return output;
+        }
+
+        await _cleanupFile(output);
+        throw AudioEditError.processingFailed('Treble boost failed');
+      },
+      operationName: 'applyTrebleBoost',
+      timeout: _defaultTimeout,
+    ).whenComplete(() => _stopProcessing());
+  }
+
+  // ═══════════════════════════════════════════════════════
   // ✅ ADJUST VOLUME
   // ═══════════════════════════════════════════════════════
 

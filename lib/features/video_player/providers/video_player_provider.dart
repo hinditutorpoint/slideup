@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../models/media_file.dart';
+import '../../../providers/media_provider.dart';
 import '../models/video_player_state.dart';
 import '../models/player_settings.dart';
 import '../models/player_media.dart';
@@ -113,11 +116,53 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
 
   Future<void> releasePlayer() async {
     try {
+      await _addCurrentToRecent();
       await _service.stop();
       _currentPlaylist = null;
       state = const VideoPlayerState();
     } catch (e) {
       debugPrint('❌ Release player error: $e');
+    }
+  }
+
+  /// Save the currently playing video to recent history on close/exit.
+  /// Works for any source (media files, playlists, network URLs).
+  Future<void> _addCurrentToRecent() async {
+    try {
+      final enabled = Hive.box('settings').get(
+        'recentHistoryEnabled',
+        defaultValue: true,
+      ) as bool;
+      if (!enabled) return;
+
+      final url = state.currentUrl;
+      if (url.isEmpty) return;
+
+      final current = currentMedia;
+      final isNetwork = url.startsWith('http://') || url.startsWith('https://');
+      final file = MediaFile(
+        id: isNetwork
+            ? url
+            : (state.currentFileId ?? current?.id ?? url),
+        name: current?.title ?? state.currentTitle,
+        path: url,
+        type: MediaType.video,
+        size: current?.metadata?['size'] as int? ?? 0,
+        dateModified:
+            DateTime.tryParse(
+              current?.metadata?['dateModified'] as String? ?? '',
+            ) ??
+            DateTime.now(),
+        parentFolder: current?.metadata?['parentFolder'] as String?,
+        duration: current?.duration?.inMilliseconds,
+        lastPosition: state.position.inSeconds > 0
+            ? state.position.inMilliseconds
+            : null,
+      );
+
+      await ref.read(mediaProvider.notifier).addToRecent(file);
+    } catch (e) {
+      debugPrint('⚠️ Failed to save recent history: $e');
     }
   }
 
@@ -337,6 +382,7 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
   Future<void> stop() async {
     if (isDisposed) return;
     try {
+      await _addCurrentToRecent();
       await service.stop();
     } catch (e) {
       debugPrint('❌ Stop error: $e');
