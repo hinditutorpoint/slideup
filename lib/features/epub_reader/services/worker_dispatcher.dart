@@ -8,7 +8,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:path/path.dart' as path;
-import 'package:connectivity_plus/connectivity_plus.dart';
 
 // Import the service to access Constants and Models
 import 'background_service.dart';
@@ -376,30 +375,95 @@ Future<bool> _executeCleanupTask() async {
   }
 }
 
-/// Execute sync task
+/// Execute sync task — local-only: consolidates Hive reading-progress data
+/// into a human-readable JSON snapshot file on device storage.
 Future<bool> _executeSyncTask() async {
   try {
-    debugPrint('Executing sync task');
+    debugPrint('📂 Executing local sync task');
 
-    // Check connectivity
-    final connectivity = await Connectivity().checkConnectivity();
-    if (connectivity.contains(ConnectivityResult.none)) {
-      debugPrint('No network, skipping sync');
-      return true;
-    }
-
-    // Open Hive boxes
+    // Initialise Hive (safe to call multiple times)
     await Hive.initFlutter();
     final progressBox = await Hive.openBox(AppConstants.hiveProgressBox);
 
-    // TODO: Implement actual sync logic here (to cloud / backend, etc.)
+    // Build a lightweight snapshot of every stored reading-progress entry
+    final snapshot = <Map<String, dynamic>>[];
+
+    for (final key in progressBox.keys) {
+      try {
+        final raw = progressBox.get(key);
+        if (raw == null) continue;
+
+        // The box stores ReadingProgress serialised as a Map or via Hive adapter.
+        // We extract only the fields we need for a compact sync log.
+        if (raw is Map) {
+          final data = Map<String, dynamic>.from(raw);
+          snapshot.add({
+            'bookId': data['bookId'] ?? key.toString(),
+            'chapterIndex': data['chapterIndex'] ?? 0,
+            'overallProgress': data['overallProgress'] ?? 0.0,
+            'totalReadingTimeSeconds': data['totalReadingTimeSeconds'] ?? 0,
+            'bookmarksCount': (data['bookmarks'] as List?)?.length ?? 0,
+            'highlightsCount': (data['highlights'] as List?)?.length ?? 0,
+            'notesCount': (data['notes'] as List?)?.length ?? 0,
+            'isFinished': data['isFinished'] ?? false,
+            'lastUpdatedAt': data['lastUpdatedAt']?.toString() ??
+                DateTime.now().toIso8601String(),
+          });
+        }
+      } catch (e) {
+        debugPrint('⚠️ Skipping malformed progress entry for key $key: $e');
+      }
+    }
 
     await progressBox.close();
 
-    debugPrint('Sync task completed');
+    // Write the snapshot to a local sync log file
+    final appDir = await getApplicationDocumentsDirectory();
+    final syncDir = Directory(path.join(appDir.path, 'epub_sync'));
+    await syncDir.create(recursive: true);
+
+    final syncFile = File(path.join(syncDir.path, 'reading_progress_sync.json'));
+
+    final syncPayload = {
+      'syncedAt': DateTime.now().toIso8601String(),
+      'entryCount': snapshot.length,
+      'entries': snapshot,
+    };
+
+    // Write as formatted JSON (dart:convert)
+    final jsonLines = StringBuffer();
+    jsonLines.writeln('{');
+    jsonLines.writeln('  "syncedAt": "${syncPayload['syncedAt']}",');
+    jsonLines.writeln('  "entryCount": ${syncPayload['entryCount']},');
+    jsonLines.writeln('  "entries": [');
+    final entries = snapshot;
+    for (int i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      final comma = i < entries.length - 1 ? ',' : '';
+      jsonLines.writeln('    {');
+      jsonLines.writeln('      "bookId": "${e['bookId']}",');
+      jsonLines.writeln('      "chapterIndex": ${e['chapterIndex']},');
+      jsonLines.writeln('      "overallProgress": ${e['overallProgress']},');
+      jsonLines.writeln(
+          '      "totalReadingTimeSeconds": ${e['totalReadingTimeSeconds']},');
+      jsonLines.writeln('      "bookmarksCount": ${e['bookmarksCount']},');
+      jsonLines.writeln('      "highlightsCount": ${e['highlightsCount']},');
+      jsonLines.writeln('      "notesCount": ${e['notesCount']},');
+      jsonLines.writeln('      "isFinished": ${e['isFinished']},');
+      jsonLines.writeln('      "lastUpdatedAt": "${e['lastUpdatedAt']}"');
+      jsonLines.writeln('    }$comma');
+    }
+    jsonLines.writeln('  ]');
+    jsonLines.writeln('}');
+
+    await syncFile.writeAsString(jsonLines.toString());
+
+    debugPrint(
+      '✅ Local sync complete — ${snapshot.length} entries → ${syncFile.path}',
+    );
     return true;
   } catch (e) {
-    debugPrint('Sync task error: $e');
+    debugPrint('❌ Sync task error: $e');
     return false;
   }
 }

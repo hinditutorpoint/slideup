@@ -46,7 +46,6 @@ class EpubContentView extends ConsumerStatefulWidget {
 
 class _EpubContentViewState extends ConsumerState<EpubContentView> {
   late ScrollController _scrollController;
-  final GlobalKey _contentKey = GlobalKey();
 
   // Selection state
   String? _selectedText;
@@ -138,6 +137,13 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
     try {
       final theme = _getThemeColors();
 
+      final contentWidgets = <Widget>[
+        _buildChapterTitle(theme),
+        const SizedBox(height: 24),
+        ..._buildChapterContent(theme, constraints),
+        SizedBox(height: constraints.maxHeight * 0.3),
+      ];
+
       return Container(
         color: theme.backgroundColor,
         child: SelectionArea(
@@ -149,34 +155,20 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
             onLongPressStart: _handleLongPressStart,
             onLongPressMoveUpdate: _handleLongPressMove,
             onLongPressEnd: _handleLongPressEnd,
-            child: SingleChildScrollView(
+            child: CustomScrollView(
               controller: _scrollController,
               physics: const BouncingScrollPhysics(),
-              padding: EdgeInsets.symmetric(
-                horizontal: widget.settings.margin,
-                vertical: 16,
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: constraints.maxHeight,
-                  minWidth: constraints.maxWidth - (widget.settings.margin * 2),
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: widget.settings.margin,
+                    vertical: 16,
+                  ),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate(contentWidgets),
+                  ),
                 ),
-                child: Column(
-                  key: _contentKey,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Chapter title
-                    _buildChapterTitle(theme),
-                    const SizedBox(height: 24),
-
-                    // Chapter content
-                    _buildChapterContent(theme, constraints),
-
-                    // Bottom padding for comfortable reading
-                    SizedBox(height: constraints.maxHeight * 0.3),
-                  ],
-                ),
-              ),
+              ],
             ),
           ),
         ),
@@ -204,7 +196,10 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
     );
   }
 
-  Widget _buildChapterContent(_ThemeColors theme, BoxConstraints constraints) {
+  List<Widget> _buildChapterContent(
+    _ThemeColors theme,
+    BoxConstraints constraints,
+  ) {
     try {
       final content =
           widget.translatedText ??
@@ -213,19 +208,14 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
           '';
 
       if (content.isEmpty) {
-        return _buildEmptyContent(theme);
+        return [_buildEmptyContent(theme)];
       }
 
       // Parse and render HTML content
-      final widgets = _parseHtmlContent(content, theme, constraints);
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: widgets,
-      );
+      return _parseHtmlContent(content, theme, constraints);
     } catch (e) {
       debugPrint('Build chapter content error: $e');
-      return _buildPlainTextContent(theme);
+      return [_buildPlainTextContent(theme)];
     }
   }
 

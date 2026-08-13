@@ -179,11 +179,15 @@ class MediaFile {
       final int size = stats.size;
       final DateTime modified = stats.modified;
 
+      final bool isSlock = ext == '.slock';
+
       // Determine MediaType based on extension
       MediaType type = MediaType.other;
       DocumentType? docType;
 
-      if (_isVideo(ext)) {
+      if (isSlock) {
+        type = MediaType.other;
+      } else if (_isVideo(ext)) {
         type = MediaType.video;
       } else if (_isAudio(ext)) {
         type = MediaType.audio;
@@ -206,7 +210,7 @@ class MediaFile {
         documentType: docType,
         parentFolder: file.parent.path,
         // Defaults for nullable fields
-        isLocked: false,
+        isLocked: isSlock,
         isSelected: false,
         isFavorite: false,
       );

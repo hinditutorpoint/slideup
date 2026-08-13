@@ -341,20 +341,20 @@ class AppTheme {
         inversePrimary: primary,
       ),
 
-      // App Bar Theme
+      // App Bar Theme (Premium Sleek Design)
       appBarTheme: AppBarTheme(
         elevation: 0,
-        scrolledUnderElevation: 2,
+        scrolledUnderElevation: 3,
         backgroundColor: background,
         surfaceTintColor: primary,
         centerTitle: false,
-        iconTheme: IconThemeData(color: textPrimary, size: 24),
-        actionsIconTheme: IconThemeData(color: textPrimary, size: 24),
+        iconTheme: IconThemeData(color: textPrimary, size: 22),
+        actionsIconTheme: IconThemeData(color: textPrimary, size: 22),
         titleTextStyle: TextStyle(
           color: textPrimary,
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
+          fontSize: 19,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.3,
         ),
         systemOverlayStyle: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
@@ -694,13 +694,23 @@ class AppTheme {
         textStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
       ),
 
-      // Popup Menu Theme
+      // Popup Menu Theme (Slim & Compact)
       popupMenuTheme: PopupMenuThemeData(
-        color: surface,
-        surfaceTintColor: primary,
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        textStyle: TextStyle(color: textPrimary),
+        color: card,
+        elevation: 6,
+        shadowColor: Colors.black.withValues(alpha: 0.2),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: dividerColor, width: 0.8),
+        ),
+        menuPadding: const EdgeInsets.symmetric(vertical: 4),
+        labelTextStyle: WidgetStatePropertyAll(
+          TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: textPrimary,
+          ),
+        ),
       ),
 
       // Text Theme

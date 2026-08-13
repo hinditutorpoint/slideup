@@ -63,66 +63,40 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrapApp() async {
-  // Ensure the binding is initialized in the SAME zone as runApp
-  // (otherwise Flutter throws "Zone mismatch").
   WidgetsFlutterBinding.ensureInitialized();
-  // ------------------------------------------------------------
-  // Workmanager: MUST be initialized in main on Android/iOS
-  // ------------------------------------------------------------
-  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-    try {
-      await Workmanager().initialize(callbackDispatcher);
-      debugPrint('Workmanager initialized in main()');
-    } catch (e, st) {
-      debugPrint('Workmanager init failed in main: $e\n$st');
-    }
-  } else {
-    debugPrint(
-      'Workmanager not supported on this platform; skipping initialization.',
-    );
-  }
 
   await Hive.initFlutter();
   await Hive.openBox('settingsBox');
   await Hive.openBox('settings');
-  // Step 1: Enums first (no dependencies)
+
   Hive
-    // Step 1: Existing enums
-    ..registerAdapter(LinkTypeAdapter()) // typeId: 6
-    ..registerAdapter(AnchorTypeAdapter()) // typeId: 8
-    ..registerAdapter(DownloadStatusAdapter()) // typeId: 10
-    ..registerAdapter(HighlightColorAdapter()) // typeId: 16
-    ..registerAdapter(NoteTypeAdapter()) // typeId: 17
-    ..registerAdapter(TranslationProviderAdapter()) // typeId: 21
-    ..registerAdapter(TranslationDisplayModeAdapter()) // typeId: 22
-    // NEW: Model download enums
-    ..registerAdapter(ModelDownloadStatusAdapter()) // typeId: 23
-    ..registerAdapter(SherpaModelTypeAdapter()) // typeId: 24
-    // Step 2: Existing simple classes
-    ..registerAdapter(ChapterImageAdapter()) // typeId: 4
-    ..registerAdapter(ChapterLinkAdapter()) // typeId: 5
-    ..registerAdapter(ChapterAnchorAdapter()) // typeId: 7
-    ..registerAdapter(TocEntryAdapter()) // typeId: 2
-    ..registerAdapter(EpubChapterMetaAdapter()) // typeId: 1
-    ..registerAdapter(BookmarkAdapter()) // typeId: 12
-    ..registerAdapter(HighlightAdapter()) // typeId: 13
-    ..registerAdapter(NoteAdapter()) // typeId: 14
-    ..registerAdapter(ReadingSessionAdapter()) // typeId: 15
-    ..registerAdapter(TextTranslationAdapter()) // typeId: 18
-    ..registerAdapter(ChapterTranslationAdapter()) // typeId: 19
-    ..registerAdapter(TranslationSettingsAdapter()) // typeId: 20
-    // Step 3: Existing complex classes
-    ..registerAdapter(EpubChapterAdapter()) // typeId: 3
-    ..registerAdapter(EpubBookAdapter()) // typeId: 0
-    ..registerAdapter(ReadingProgressAdapter()) // typeId: 11
-    ..registerAdapter(DownloadTaskAdapter()) // typeId: 9
-    // NEW: Model download class
-    ..registerAdapter(DownloadedModelAdapter()) // typeId: 25
+    ..registerAdapter(LinkTypeAdapter())
+    ..registerAdapter(AnchorTypeAdapter())
+    ..registerAdapter(DownloadStatusAdapter())
+    ..registerAdapter(HighlightColorAdapter())
+    ..registerAdapter(NoteTypeAdapter())
+    ..registerAdapter(TranslationProviderAdapter())
+    ..registerAdapter(TranslationDisplayModeAdapter())
+    ..registerAdapter(ModelDownloadStatusAdapter())
+    ..registerAdapter(SherpaModelTypeAdapter())
+    ..registerAdapter(ChapterImageAdapter())
+    ..registerAdapter(ChapterLinkAdapter())
+    ..registerAdapter(ChapterAnchorAdapter())
+    ..registerAdapter(TocEntryAdapter())
+    ..registerAdapter(EpubChapterMetaAdapter())
+    ..registerAdapter(BookmarkAdapter())
+    ..registerAdapter(HighlightAdapter())
+    ..registerAdapter(NoteAdapter())
+    ..registerAdapter(ReadingSessionAdapter())
+    ..registerAdapter(TextTranslationAdapter())
+    ..registerAdapter(ChapterTranslationAdapter())
+    ..registerAdapter(TranslationSettingsAdapter())
+    ..registerAdapter(EpubChapterAdapter())
+    ..registerAdapter(EpubBookAdapter())
+    ..registerAdapter(ReadingProgressAdapter())
+    ..registerAdapter(DownloadTaskAdapter())
+    ..registerAdapter(DownloadedModelAdapter())
     ..registerAdapter(TtsAudioCacheAdapter());
-
-  await DatabaseService.instance.database;
-
-  await notification_service.NotificationService().initialize();
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -157,12 +131,8 @@ Future<void> _bootstrapApp() async {
     ),
   );
 
-  await VideoPlayerInit.initialize();
-
-  // Initialize intent handler BEFORE running app
-  await IntentHandlerService.initialize();
-
-  await BackgroundChapterGenerator.instance.initialize();
+  // Non-blocking background initializations for instant app launch
+  unawaited(_initBackgroundServices());
 
   runApp(
     ProviderScope(
@@ -170,6 +140,46 @@ Future<void> _bootstrapApp() async {
       child: const SlideupMediaPlayerApp(),
     ),
   );
+}
+
+Future<void> _initBackgroundServices() async {
+  try {
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      await Workmanager().initialize(callbackDispatcher);
+    }
+  } catch (e) {
+    debugPrint('Workmanager init error: $e');
+  }
+
+  try {
+    await DatabaseService.instance.database;
+  } catch (e) {
+    debugPrint('Database init error: $e');
+  }
+
+  try {
+    await notification_service.NotificationService().initialize();
+  } catch (e) {
+    debugPrint('Notification init error: $e');
+  }
+
+  try {
+    await VideoPlayerInit.initialize();
+  } catch (e) {
+    debugPrint('VideoPlayerInit error: $e');
+  }
+
+  try {
+    await IntentHandlerService.initialize();
+  } catch (e) {
+    debugPrint('IntentHandler error: $e');
+  }
+
+  try {
+    await BackgroundChapterGenerator.instance.initialize();
+  } catch (e) {
+    debugPrint('BackgroundChapterGenerator error: $e');
+  }
 }
 
 void _logGlobalError(String message) {

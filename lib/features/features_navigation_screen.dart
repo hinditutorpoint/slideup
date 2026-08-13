@@ -3,12 +3,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:slideup/features/documents/utils/reader_utils.dart';
+import 'package:slideup/features/txt_reader/utils/reader_utils.dart'
+    as txt_reader_utils;
+import '../screens/main_screen.dart';
 
-import '../features/epub_reader/downloaded_epub_catalogue.dart';
 import '../features/txt_reader/screens/text_downloads_screen.dart';
 import '../features/documents/screens/pdf_search_screen.dart';
-import '../features/documents/widgets/downloaded_pdf_widget.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
+import '../features/documents/widgets/reading_history_widget.dart'
+    show ReadingHistoryScreen;
 
 class FeaturesNavigationScreen extends ConsumerStatefulWidget {
   const FeaturesNavigationScreen({super.key});
@@ -37,6 +40,17 @@ class _FeaturesNavigationScreenState
     super.dispose();
   }
 
+  void _handleBack() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+      );
+    }
+  }
+
   void _onTabTapped(int index) {
     setState(() {
       _currentIndex = index;
@@ -47,19 +61,42 @@ class _FeaturesNavigationScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(),
-        children: const [
-          HomeTab(),
-          PdfSearchScreen(),
-          DownloadedEpubCatalogue(),
-          TextDownloadsScreen(),
-          DownloadedPdfWidget(),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        body: PageView(
+          controller: _pageController,
+          physics: const NeverScrollableScrollPhysics(),
+          children: const [
+            HomeTab(),
+            PdfSearchScreen(),
+            TextDownloadsScreen(
+              filter: txt_reader_utils.PdfFileFilter.epub,
+              libraryTitle: 'EPUB Library',
+              pickExtensions: ['epub'],
+              addSheetTitle: 'Add EPUB File',
+              addSheetUrlHint: 'https://example.com/document.epub',
+              emptyDownloadedSubtitle:
+                  'Your downloaded EPUB files will appear here',
+            ),
+            TextDownloadsScreen(),
+            TextDownloadsScreen(
+              filter: txt_reader_utils.PdfFileFilter.pdf,
+              libraryTitle: 'PDF Library',
+              pickExtensions: ['pdf'],
+              addSheetTitle: 'Add PDF File',
+              addSheetUrlHint: 'https://example.com/document.pdf',
+              emptyDownloadedSubtitle:
+                  'Your downloaded PDF files will appear here',
+            ),
+          ],
+        ),
+        bottomNavigationBar: _buildBottomNav(),
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
@@ -286,28 +323,7 @@ class HomeTab extends StatelessWidget {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Icon(
-              Icons.menu_book_rounded,
-              size: 48,
-              color: Theme.of(context).hintColor,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'No recent reading activity',
-              style: TextStyle(color: Theme.of(context).hintColor),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Start reading to see your progress here',
-              style: TextStyle(
-                color: Theme.of(context).hintColor,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
+        child: _ContinueReadingSection(),
       ),
     );
   }
@@ -435,7 +451,11 @@ class HomeTab extends StatelessWidget {
   }
 
   void _showRecentFiles(BuildContext context) {
-    // Show recent files
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const ReadingHistoryScreen(),
+      ),
+    );
   }
 }
 
@@ -703,6 +723,234 @@ class _AddUrlSheetState extends State<_AddUrlSheet> {
               ),
             ),
             const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ContinueReadingSection extends StatefulWidget {
+  const _ContinueReadingSection();
+
+  @override
+  State<_ContinueReadingSection> createState() =>
+      _ContinueReadingSectionState();
+}
+
+class _ContinueReadingSectionState extends State<_ContinueReadingSection> {
+  final ReaderStorageManager _storageManager = ReaderStorageManager();
+  final DownloadLibraryManager _libraryManager = DownloadLibraryManager();
+
+  List<ReadingPosition> _positions = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      await _storageManager.initialize();
+      final recentIds = await _storageManager.getRecentReads();
+      final positions = <ReadingPosition>[];
+      for (final id in recentIds) {
+        final position = await _storageManager.getReadingPosition(id);
+        if (position != null) positions.add(position);
+      }
+      if (mounted) {
+        setState(() {
+          _positions = positions;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _openDocument(ReadingPosition position) async {
+    final title =
+        (position.metadata?['title'] as String?) ??
+        DocumentUtils.extractTitleFromUrl(position.identifier);
+
+    String? localPath;
+    try {
+      final items = await _libraryManager.listDownloads();
+      for (final item in items) {
+        if (item.id == position.identifier ||
+            item.sourceUrl == position.identifier) {
+          final file = await _libraryManager.getFileForItem(item);
+          if (await file.exists()) {
+            localPath = file.path;
+          }
+          break;
+        }
+      }
+    } catch (_) {}
+
+    localPath ??= (position.identifier.startsWith('/') ||
+            position.identifier.startsWith('file://'))
+        ? position.identifier.replaceFirst('file://', '')
+        : null;
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => UnifiedReaderScreen(
+          documentUrl: localPath ?? position.identifier,
+          title: title,
+          identifier: position.identifier,
+          source: localPath != null ? 'local' : 'web',
+        ),
+      ),
+    );
+
+    _loadHistory();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_positions.isEmpty) {
+      return Column(
+        children: [
+          Icon(
+            Icons.menu_book_rounded,
+            size: 48,
+            color: Theme.of(context).hintColor,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'No recent reading activity',
+            style: TextStyle(color: Theme.of(context).hintColor),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Start reading to see your progress here',
+            style: TextStyle(
+              color: Theme.of(context).hintColor,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final position in _positions.take(4))
+          _ContinueReadingTile(
+            position: position,
+            onTap: () => _openDocument(position),
+          ),
+      ],
+    );
+  }
+}
+
+class _ContinueReadingTile extends StatelessWidget {
+  final ReadingPosition position;
+  final VoidCallback onTap;
+
+  const _ContinueReadingTile({
+    required this.position,
+    required this.onTap,
+  });
+
+  IconData get _icon {
+    switch (DocumentUtils.detectDocumentType(position.identifier)) {
+      case DocumentType.pdf:
+        return Icons.picture_as_pdf;
+      case DocumentType.epub:
+        return Icons.auto_stories_rounded;
+      case DocumentType.txt:
+        return Icons.description_rounded;
+      case DocumentType.unknown:
+        return Icons.menu_book_rounded;
+    }
+  }
+
+  Color get _color {
+    switch (DocumentUtils.detectDocumentType(position.identifier)) {
+      case DocumentType.pdf:
+        return Colors.red;
+      case DocumentType.epub:
+        return Colors.purple;
+      case DocumentType.txt:
+        return Colors.blue;
+      case DocumentType.unknown:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final title =
+        (position.metadata?['title'] as String?) ??
+        DocumentUtils.extractTitleFromUrl(position.identifier);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: _color.withValues(alpha: 0.12),
+              child: Icon(_icon, color: _color, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: (position.progress.clamp(0.0, 1.0)),
+                      minHeight: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Page ${position.page} • ${(position.progress * 100).round()}%',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.hintColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: theme.hintColor,
+            ),
           ],
         ),
       ),

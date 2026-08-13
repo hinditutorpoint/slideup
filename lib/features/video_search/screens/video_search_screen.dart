@@ -38,6 +38,10 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
     super.initState();
     _scrollController.addListener(_onScroll);
     WakelockPlus.enable();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(videoSearchProvider.notifier).loadTodayArchive();
+    });
   }
 
   @override
@@ -384,62 +388,78 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
     // Video items need different aspect ratio (16:9 + info)
     final aspectRatio = ResponsiveHelper.isMobile(context) ? 0.75 : 0.85;
 
-    return GridView.builder(
+    return CustomScrollView(
       controller: _scrollController,
-      padding: padding,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        childAspectRatio: aspectRatio,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: state.items.length + (state.hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index >= state.items.length) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(strokeWidth: 2),
+      slivers: [
+        SliverPadding(
+          padding: padding,
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              childAspectRatio: aspectRatio,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
             ),
-          );
-        }
-
-        final item = state.items[index];
-        return VideoGridItem(
-          item: item,
-          onTap: () => _openVideo(item),
-          onSave: () => _saveVideo(item),
-          onLike: () => _toggleLike(item),
-          onShare: () => _shareVideo(item),
-        );
-      },
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final item = state.items[index];
+                return VideoGridItem(
+                  item: item,
+                  onTap: () => _openVideo(item),
+                  onSave: () => _saveVideo(item),
+                  onLike: () => _toggleLike(item),
+                  onShare: () => _shareVideo(item),
+                );
+              },
+              childCount: state.items.length,
+            ),
+          ),
+        ),
+        if (state.hasMore)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
   Widget _buildListView(VideoSearchState state) {
-    return ListView.builder(
+    return CustomScrollView(
       controller: _scrollController,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: state.items.length + (state.hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index >= state.items.length) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(strokeWidth: 2),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final item = state.items[index];
+                return VideoListItem(
+                  item: item,
+                  onTap: () => _openVideo(item),
+                  onSave: () => _saveVideo(item),
+                  onLike: () => _toggleLike(item),
+                  onShare: () => _shareVideo(item),
+                );
+              },
+              childCount: state.items.length,
             ),
-          );
-        }
-
-        final item = state.items[index];
-        return VideoListItem(
-          item: item,
-          onTap: () => _openVideo(item),
-          onSave: () => _saveVideo(item),
-          onLike: () => _toggleLike(item),
-          onShare: () => _shareVideo(item),
-        );
-      },
+          ),
+        ),
+        if (state.hasMore)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

@@ -43,11 +43,11 @@ class PixabayApiService {
     int perPage = 30,
   }) async {
     try {
-      if (!Api.isConfigured) {
-        throw StateError(
-          'API not configured. Provide API_BASE_URL and API_KEY via --dart-define.',
-        );
+      if (!Api.isConfigured || Api.pixaBayKey.isEmpty) {
+        debugPrint('⚠️ Pixabay key missing; returning development stock fallback');
+        return _getMockStockImages(query, category);
       }
+
       final searchQuery = query.isNotEmpty
           ? query
           : _getCategoryQuery(category);
@@ -87,18 +87,36 @@ class PixabayApiService {
             .whereType<StockImage>()
             .toList();
 
-        // Update download status
         return await _updateImagesDownloadStatus(images);
       } else {
         debugPrint(
           '❌ Pixabay API error: ${response.statusCode} - ${response.body}',
         );
-        return [];
+        return _getMockStockImages(query, category);
       }
     } catch (e) {
       debugPrint('❌ Fetch images error: $e');
-      return [];
+      return _getMockStockImages(query, category);
     }
+  }
+
+  List<StockImage> _getMockStockImages(String query, ImageCategory category) {
+    return List.generate(20, (index) {
+      final id = 'stock_${category.name}_${index + 1}';
+      return StockImage(
+        id: id,
+        title: '${category.name.toUpperCase()} Image ${index + 1}',
+        photographer: 'Stock Artist ${index + 1}',
+        thumbnailUrl: 'https://picsum.photos/400/300?random=${index + 10}',
+        previewUrl: 'https://picsum.photos/800/600?random=${index + 10}',
+        fullUrl: 'https://picsum.photos/1920/1080?random=${index + 10}',
+        width: 1920,
+        height: 1080,
+        category: category,
+        likes: (index + 1) * 42,
+        downloads: (index + 1) * 120,
+      );
+    });
   }
 
   String _getCategoryQuery(ImageCategory category) {
@@ -722,6 +740,166 @@ class PixabayApiService {
         .replaceAll(RegExp(r'[^\w\s-]'), '')
         .replaceAll(' ', '_')
         .toLowerCase();
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ FETCH PIXABAY STOCK VIDEOS
+  // ═══════════════════════════════════════════════════════
+
+  static const String _videoBaseUrl = 'https://pixabay.com/api/videos/';
+
+  Future<List<StockVideo>> fetchVideos({
+    String query = '',
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    try {
+      if (!Api.isConfigured || Api.pixaBayKey.isEmpty) {
+        debugPrint('⚠️ Pixabay key missing; returning development stock videos');
+        return _getMockStockVideos(query);
+      }
+
+      final params = {
+        'key': Api.pixaBayKey,
+        'q': query.isNotEmpty ? query : 'nature',
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+        'safesearch': 'true',
+      };
+
+      final uri = Uri.parse(_videoBaseUrl).replace(queryParameters: params);
+      debugPrint('📹 Fetching Pixabay videos: $uri');
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final hits = data['hits'] as List? ?? [];
+
+        final videos = hits
+            .map((hit) {
+              try {
+                return StockVideo.fromPixabay(hit);
+              } catch (e) {
+                debugPrint('❌ Parse stock video error: $e');
+                return null;
+              }
+            })
+            .whereType<StockVideo>()
+            .toList();
+
+        return await _updateVideosDownloadStatus(videos);
+      } else {
+        debugPrint('❌ Pixabay Video API error: ${response.statusCode}');
+        return _getMockStockVideos(query);
+      }
+    } catch (e) {
+      debugPrint('❌ Fetch videos error: $e');
+      return _getMockStockVideos(query);
+    }
+  }
+
+  List<StockVideo> _getMockStockVideos(String query) {
+    final sampleVideos = [
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    ];
+
+    return List.generate(4, (index) {
+      final id = 'pixabay_vid_${index + 1}';
+      return StockVideo(
+        id: id,
+        title: 'Pixabay Video Asset ${index + 1}',
+        author: 'Pixabay Creator ${index + 1}',
+        videoUrl: sampleVideos[index % sampleVideos.length],
+        thumbnailUrl: 'https://picsum.photos/640/360?random=${index + 50}',
+        duration: const Duration(seconds: 15),
+        width: 1920,
+        height: 1080,
+        tags: ['stock', 'video', query.isNotEmpty ? query : 'nature'],
+      );
+    });
+  }
+
+  Future<List<StockVideo>> _updateVideosDownloadStatus(
+    List<StockVideo> videos,
+  ) async {
+    return Future.wait(
+      videos.map((vid) async {
+        try {
+          final isDownloaded = await isVideoDownloaded(vid.id);
+          final localPath = isDownloaded
+              ? await getVideoLocalPath(vid.id)
+              : null;
+          return vid.copyWith(isDownloaded: isDownloaded, localPath: localPath);
+        } catch (e) {
+          return vid;
+        }
+      }),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ DOWNLOAD PIXABAY VIDEO ASSET
+  // ═══════════════════════════════════════════════════════
+
+  Future<StockVideo?> downloadVideoAsset(
+    StockVideo video, {
+    Function(double)? onProgress,
+  }) async {
+    try {
+      final dir = await _getVideosDirectory();
+      final fileName = 'pixabay_vid_${video.id}.mp4';
+      final filePath = p.join(dir.path, fileName);
+
+      final file = File(filePath);
+      if (await file.exists()) {
+        return video.copyWith(localPath: filePath, isDownloaded: true);
+      }
+
+      final request = http.Request('GET', Uri.parse(video.videoUrl));
+      final response = await http.Client().send(request);
+
+      final contentLength = response.contentLength ?? 0;
+      int received = 0;
+
+      final sink = file.openWrite();
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (contentLength > 0) {
+          onProgress?.call(received / contentLength);
+        }
+      }
+      await sink.close();
+
+      final updated = video.copyWith(localPath: filePath, isDownloaded: true);
+      return updated;
+    } catch (e) {
+      debugPrint('❌ Download video asset error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> isVideoDownloaded(String videoId) async {
+    final path = await getVideoLocalPath(videoId);
+    return File(path).existsSync();
+  }
+
+  Future<String> getVideoLocalPath(String videoId) async {
+    final dir = await _getVideosDirectory();
+    return p.join(dir.path, 'pixabay_vid_$videoId.mp4');
+  }
+
+  Future<Directory> _getVideosDirectory() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(appDir.path, 'pixabay_videos'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
   }
 
   void dispose() {

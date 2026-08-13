@@ -165,6 +165,18 @@
                 <data android:mimeType="application/pdf"/>
             </intent-filter>
 
+            <!-- .slock Locked Files (Open With SlideUp) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="file"/>
+                <data android:scheme="content"/>
+                <data android:host="*"/>
+                <data android:pathPattern=".*\\.slock"/>
+                <data android:mimeType="*/*"/>
+            </intent-filter>
+
             <!-- Multiple file sharing -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE"/>

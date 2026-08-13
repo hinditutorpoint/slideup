@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:path/path.dart' as path;
 import 'recent_files_screen.dart';
 import 'videos_screen.dart';
@@ -27,9 +28,11 @@ import '../features/features_navigation_screen.dart';
 import '../features/video_search/screens/video_search_screen.dart';
 import '../features/video_player/providers/video_player_provider.dart';
 import '../providers/theme_provider.dart';
+import '../providers/media_provider.dart';
 import '../core/theme/app_theme.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
 import '../features/video_editor/video_editor_screen.dart';
+import '../features/private_browser/private_browser_screen.dart';
 
 // Quick action model
 class QuickAction {
@@ -114,32 +117,19 @@ class _MainScreenState extends ConsumerState<MainScreen>
   }
 
   Future<void> _checkAuthentication() async {
-    final hasPassword = await SecurityService.instance.hasAppPassword();
+    final hasLock = await SecurityService.instance.hasAppLock();
 
-    if (hasPassword && mounted) {
-      final canUseBiometric = await SecurityService.instance.canUseBiometric();
-      final biometricEnabled = await SecurityService.instance
-          .isBiometricEnabled();
+    if (hasLock && mounted) {
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(isSetup: false),
+          fullscreenDialog: true,
+        ),
+      );
 
-      bool authenticated = false;
-
-      if (canUseBiometric && biometricEnabled) {
-        authenticated = await SecurityService.instance
-            .authenticateWithBiometric();
-      }
-
-      if (!authenticated && mounted) {
-        final result = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const AuthScreen(isSetup: false),
-            fullscreenDialog: true,
-          ),
-        );
-
-        if (result != true && mounted) {
-          Navigator.of(context).pop();
-        }
+      if (result != true && mounted) {
+        SystemNavigator.pop();
       }
     }
   }
@@ -328,71 +318,432 @@ class _MainScreenState extends ConsumerState<MainScreen>
 
   // ==================== APP BAR ====================
 
+  Widget _buildSlimAppBarMenuItem({
+    required IconData icon,
+    required String title,
+  }) {
+    return SizedBox(
+      height: 36,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: Colors.grey[700]),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   PreferredSizeWidget _buildAppBar(ThemeData theme, ColorScheme colorScheme) {
     return AppBar(
       elevation: 0,
       scrolledUnderElevation: 2,
-      leading: _isSearchExpanded
-          ? IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: _collapseSearch,
-            )
-          : IconButton(
-              icon: const Icon(Icons.menu_rounded),
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+      leading: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            icon: Icon(
+              _isSearchExpanded ? Icons.arrow_back_rounded : Icons.menu_rounded,
+              size: 20,
             ),
-      title: _isSearchExpanded
-          ? _buildSearchField(colorScheme)
-          : Text(
-              _destinations[_selectedIndex].label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-      actions: _isSearchExpanded
-          ? null
-          : [
-              IconButton(
-                icon: const Icon(Icons.search_rounded),
-                onPressed: _expandSearch,
-                tooltip: 'Search',
-              ),
-              _buildNotificationBadge(colorScheme),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert_rounded),
-                tooltip: 'More options',
-                onSelected: _handleMenuAction,
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'sort',
-                    child: ListTile(
-                      leading: Icon(Icons.sort),
-                      title: Text('Sort by'),
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
+            padding: EdgeInsets.zero,
+            onPressed: _isSearchExpanded
+                ? _collapseSearch
+                : () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+        ),
+      ),
+      title: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        child: _isSearchExpanded
+            ? _buildSearchField(colorScheme)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [colorScheme.primary, colorScheme.secondary],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 16,
+                      color: Colors.white,
                     ),
                   ),
-                  const PopupMenuItem(
-                    value: 'view',
-                    child: ListTile(
-                      leading: Icon(Icons.grid_view),
-                      title: Text('View mode'),
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'refresh',
-                    child: ListTile(
-                      leading: Icon(Icons.refresh),
-                      title: Text('Refresh'),
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      _destinations[_selectedIndex].label,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        letterSpacing: 0.3,
+                      ),
                     ),
                   ),
                 ],
               ),
-            ],
+      ),
+      actions: _buildAppBarActions(colorScheme),
     );
+  }
+
+  List<Widget> _buildAppBarActions(ColorScheme colorScheme) {
+    if (_isSearchExpanded) return [];
+
+    final actions = <Widget>[];
+
+    // Search button (common across tabs)
+    actions.add(
+      IconButton(
+        icon: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.search_rounded, size: 18),
+        ),
+        onPressed: _expandSearch,
+        tooltip: 'Search',
+      ),
+    );
+
+    // Tab-specific action icon
+    switch (_selectedIndex) {
+      case 0: // Recent
+        actions.add(
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delete_outline_rounded, size: 18),
+            ),
+            onPressed: () async {
+              await ref.read(mediaProvider.notifier).clearRecent();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Recent history cleared')),
+                );
+              }
+            },
+            tooltip: 'Clear History',
+          ),
+        );
+        break;
+      case 1: // Videos
+        actions.add(
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.movie_edit, size: 18),
+            ),
+            onPressed: _openVideoEditor,
+            tooltip: 'Video Editor',
+          ),
+        );
+        break;
+      case 2: // Music
+        actions.add(
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.playlist_play_rounded, size: 18),
+            ),
+            onPressed: () => _navigateTo(const PlaylistsScreen()),
+            tooltip: 'Playlists',
+          ),
+        );
+        break;
+      case 3: // Docs
+        actions.add(
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.auto_stories_rounded, size: 18),
+            ),
+            onPressed: () => _navigateTo(const FeaturesNavigationScreen()),
+            tooltip: 'Books & Docs Archive',
+          ),
+        );
+        break;
+      case 4: // Files
+        actions.add(
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.folder_special_rounded, size: 18),
+            ),
+            onPressed: () => _navigateTo(const ExtractedFilesScreen()),
+            tooltip: 'Extracted Files',
+          ),
+        );
+        break;
+    }
+
+    // Notifications Badge
+    actions.add(_buildNotificationBadge(colorScheme));
+
+    // Tab-specific Popup Menu
+    actions.add(
+      PopupMenuButton<String>(
+        icon: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.more_vert_rounded, size: 18),
+        ),
+        tooltip: 'More options',
+        onSelected: (value) => _handleTabMenuAction(value),
+        itemBuilder: (context) => _buildTabMenuItems(_selectedIndex),
+      ),
+    );
+
+    actions.add(const SizedBox(width: 6));
+    return actions;
+  }
+
+  List<PopupMenuEntry<String>> _buildTabMenuItems(int tabIndex) {
+    switch (tabIndex) {
+      case 0: // Recent
+        return [
+          PopupMenuItem(
+            value: 'sort',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.sort_rounded,
+              title: 'Sort by',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'view',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.grid_view_rounded,
+              title: 'View mode',
+            ),
+          ),
+          const PopupMenuDivider(height: 8),
+          PopupMenuItem(
+            value: 'clear_recent',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.cleaning_services_rounded,
+              title: 'Clear Recent History',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'refresh',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.refresh_rounded,
+              title: 'Refresh',
+            ),
+          ),
+        ];
+      case 1: // Videos
+        return [
+          PopupMenuItem(
+            value: 'video_search',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.travel_explore_rounded,
+              title: 'Online Video Search',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'video_editor',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.movie_edit,
+              title: 'Video Editor Studio',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'sort',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.sort_rounded,
+              title: 'Sort Videos',
+            ),
+          ),
+          const PopupMenuDivider(height: 8),
+          PopupMenuItem(
+            value: 'refresh',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.refresh_rounded,
+              title: 'Refresh Videos',
+            ),
+          ),
+        ];
+      case 2: // Music
+        return [
+          PopupMenuItem(
+            value: 'playlists',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.queue_music_rounded,
+              title: 'My Playlists',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'sort',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.sort_rounded,
+              title: 'Sort Tracks',
+            ),
+          ),
+          const PopupMenuDivider(height: 8),
+          PopupMenuItem(
+            value: 'refresh',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.refresh_rounded,
+              title: 'Refresh Audio Library',
+            ),
+          ),
+        ];
+      case 3: // Docs
+        return [
+          PopupMenuItem(
+            value: 'books_archive',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.book_rounded,
+              title: 'Books Archive',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'sort',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.sort_rounded,
+              title: 'Sort Documents',
+            ),
+          ),
+          const PopupMenuDivider(height: 8),
+          PopupMenuItem(
+            value: 'refresh',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.refresh_rounded,
+              title: 'Refresh Documents',
+            ),
+          ),
+        ];
+      case 4: // Files
+      default:
+        return [
+          PopupMenuItem(
+            value: 'extracted',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.unarchive_rounded,
+              title: 'Extracted Files',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'sort',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.sort_rounded,
+              title: 'Sort Files',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'view',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.grid_view_rounded,
+              title: 'View Mode',
+            ),
+          ),
+          const PopupMenuDivider(height: 8),
+          PopupMenuItem(
+            value: 'refresh',
+            height: 36,
+            child: _buildSlimAppBarMenuItem(
+              icon: Icons.refresh_rounded,
+              title: 'Refresh File List',
+            ),
+          ),
+        ];
+    }
+  }
+
+  void _handleTabMenuAction(String value) {
+    switch (value) {
+      case 'sort':
+        _showSortOptions();
+        break;
+      case 'view':
+        _toggleViewMode();
+        break;
+      case 'clear_recent':
+        ref.read(mediaProvider.notifier).clearRecent();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Recent history cleared')),
+        );
+        break;
+      case 'video_search':
+        _navigateTo(const VideoSearchScreen());
+        break;
+      case 'video_editor':
+        _openVideoEditor();
+        break;
+      case 'playlists':
+        _navigateTo(const PlaylistsScreen());
+        break;
+      case 'books_archive':
+        _navigateTo(const FeaturesNavigationScreen());
+        break;
+      case 'extracted':
+        _navigateTo(const ExtractedFilesScreen());
+        break;
+      case 'refresh':
+        setState(() {});
+        break;
+    }
   }
 
   Widget _buildSearchField(ColorScheme colorScheme, {double? width}) {
@@ -495,43 +846,41 @@ class _MainScreenState extends ConsumerState<MainScreen>
   // ==================== BOTTOM NAV ====================
 
   Widget _buildBottomNav(ColorScheme colorScheme) {
-    return Container(
-      decoration: BoxDecoration(
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _onDestinationSelected,
-        animationDuration: const Duration(milliseconds: 400),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: _destinations
-            .map(
-              (d) => NavigationDestination(
-                icon: Icon(d.icon),
-                selectedIcon: Icon(d.selectedIcon),
-                label: d.label,
-                tooltip: d.tooltip,
-              ),
-            )
-            .toList(),
-      ),
+    return CurvedNavigationBar(
+      index: _selectedIndex,
+      height: 60.0,
+      items: _destinations.map((d) {
+        final isSelected = _destinations.indexOf(d) == _selectedIndex;
+        return Icon(
+          isSelected ? d.selectedIcon : d.icon,
+          size: 26,
+          color: isSelected
+              ? colorScheme.onPrimary
+              : colorScheme.onSurface.withValues(alpha: 0.7),
+        );
+      }).toList(),
+      color: colorScheme.surface,
+      buttonBackgroundColor: colorScheme.primary,
+      backgroundColor: Colors.transparent,
+      animationCurve: Curves.easeInOutCubic,
+      animationDuration: const Duration(milliseconds: 350),
+      onTap: _onDestinationSelected,
     );
   }
 
   // ==================== FAB ====================
 
-  Widget _buildFAB(ColorScheme colorScheme) {
-    return FloatingActionButton.extended(
+  Widget? _buildFAB(ColorScheme colorScheme) {
+    // Hide global Quick Actions FAB on Files (tab 4) and Docs (tab 3) to prevent overlapping FABs
+    if (_selectedIndex == 3 || _selectedIndex == 4) {
+      return null;
+    }
+
+    return FloatingActionButton.small(
       heroTag: 'main_fab',
       onPressed: _showQuickActions,
-      icon: const Icon(Icons.add_rounded),
-      label: const Text('Quick Actions'),
+      tooltip: 'Quick Actions',
+      child: const Icon(Icons.add_rounded, size: 20),
     );
   }
 
@@ -612,6 +961,15 @@ class _MainScreenState extends ConsumerState<MainScreen>
                       subtitle: 'Trim, effects & export',
                       onTap: _openVideoEditor,
                     ),
+                    _DrawerItem(
+                      icon: Icons.privacy_tip_outlined,
+                      title: 'Private Browser',
+                      subtitle: 'Incognito web browsing',
+                      badge: 'NEW',
+                      badgeColor: colorScheme.tertiary,
+                      onTap: () =>
+                          _navigateTo(const PrivateBrowserScreen()),
+                    ),
                   ],
                 ),
                 const Divider(indent: 16, endIndent: 16),
@@ -655,10 +1013,10 @@ class _MainScreenState extends ConsumerState<MainScreen>
     return Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
-        20,
-        MediaQuery.paddingOf(context).top + 24,
-        20,
-        24,
+        16,
+        MediaQuery.paddingOf(context).top + 12,
+        16,
+        14,
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -668,40 +1026,53 @@ class _MainScreenState extends ConsumerState<MainScreen>
         ),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // App Logo
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.play_circle_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
+          // Compact Row: Left Icon, Right Text
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.play_circle_rounded,
+                  size: 28,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Slideup',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    Text(
+                      'Media Player',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'Slideup',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const Text(
-            'Media Player',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           // Storage indicator
           _buildStorageIndicator(),
         ],
@@ -1181,20 +1552,6 @@ class _MainScreenState extends ConsumerState<MainScreen>
     if (query.trim().isEmpty) return;
     // Implement search
     _collapseSearch();
-  }
-
-  void _handleMenuAction(String action) {
-    switch (action) {
-      case 'sort':
-        _showSortOptions();
-        break;
-      case 'view':
-        _toggleViewMode();
-        break;
-      case 'refresh':
-        // Refresh current screen
-        break;
-    }
   }
 
   void _showSortOptions() {

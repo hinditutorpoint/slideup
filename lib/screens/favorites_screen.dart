@@ -9,6 +9,7 @@ import '../features/video_player/video_player_launcher.dart';
 import '../helpers/audio_playback_helper.dart';
 import 'pdf_viewer_screen.dart';
 import 'image_viewer_screen.dart';
+import 'main_screen.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
@@ -51,28 +52,46 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen>
     super.dispose();
   }
 
+  void _handleBack() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (_isSelectionMode) _buildSelectionBar(),
-            _buildTabBar(),
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildAllFavoritesTab(),
-                  _buildVideoFavoritesTab(),
-                  _buildAudioFavoritesTab(),
-                  _buildImageFavoritesTab(),
-                  _buildDocumentFavoritesTab(),
-                ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        appBar: _buildAppBar(),
+        body: SafeArea(
+          child: Column(
+            children: [
+              if (_isSelectionMode) _buildSelectionBar(),
+              _buildTabBar(),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildAllFavoritesTab(),
+                    _buildVideoFavoritesTab(),
+                    _buildAudioFavoritesTab(),
+                    _buildImageFavoritesTab(),
+                    _buildDocumentFavoritesTab(),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -136,6 +155,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen>
     }
 
     return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back_rounded),
+        onPressed: _handleBack,
+      ),
       title: const Text('Favorites'),
       actions: [
         IconButton(

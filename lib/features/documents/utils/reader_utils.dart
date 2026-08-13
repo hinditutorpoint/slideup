@@ -1260,7 +1260,11 @@ class DownloadLibraryManager {
     }
 
     final dir = await downloadsDirectory;
-    final ext = normalized.contains('.epub') ? 'epub' : 'pdf';
+    final ext = normalized.contains('.epub')
+        ? 'epub'
+        : normalized.contains('.txt')
+            ? 'txt'
+            : 'pdf';
     final fileName = _suggestFileName(title, id, ext: ext);
     final outFile = File('${dir.path}/$fileName');
 

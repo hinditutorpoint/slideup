@@ -212,9 +212,8 @@ class VideoEditorNotifier extends StateNotifier<VideoEditorState> {
 
       final videoInfo = infoResult.requireData;
 
-      // Create project
+      // Create project with automatic incremental naming (Project 1, Project 2, etc.)
       final projectResult = await _projectNotifier.createProject(
-        name: 'Untitled Project',
         videoPath: videoPath,
         videoDuration: videoInfo.duration,
       );
@@ -244,6 +243,39 @@ class VideoEditorNotifier extends StateNotifier<VideoEditorState> {
 
       debugPrint('✅ Video loaded: ${videoInfo.resolution}');
     }, operationName: 'loadVideo').whenComplete(() {
+      if (state.isLoading) {
+        state = state.copyWith(isLoading: false);
+      }
+    });
+  }
+
+  Future<Result<void>> createBlankProject({
+    String? name,
+    Duration defaultDuration = const Duration(seconds: 10),
+  }) async {
+    state = state.copyWith(isLoading: true);
+
+    return SafeAsync.run(() async {
+      final projectResult = await _projectNotifier.createBlankProject(
+        name: name,
+        defaultDuration: defaultDuration,
+      );
+
+      if (projectResult.isFailure) {
+        throw projectResult.error!;
+      }
+
+      _timelineNotifier.loadFromProject(projectResult.requireData);
+
+      state = state.copyWith(
+        isLoading: false,
+        videoInfo: null,
+        thumbnails: const [],
+        previewColorGrade: const ColorGradeSettings(),
+      );
+
+      debugPrint('✅ Blank project created successfully');
+    }, operationName: 'createBlankProject').whenComplete(() {
       if (state.isLoading) {
         state = state.copyWith(isLoading: false);
       }

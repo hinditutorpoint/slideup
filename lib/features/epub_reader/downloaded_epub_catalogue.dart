@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../documents/utils/reader_utils.dart' as doc_utils;
 import 'models/epub_book.dart';
 import 'providers/epub_provider.dart';
 import 'widgets/active_downloads_tab.dart';
@@ -164,7 +166,7 @@ class _DownloadedEpubCatalogueState
     }
   }
 
-  void _handleUrl(String url) {
+  Future<void> _handleUrl(String url) async {
     // Check if already downloading
     final downloadState = ref.read(downloadProvider);
     final existing = downloadState.tasks.any((t) => t.url == url);
@@ -174,7 +176,25 @@ class _DownloadedEpubCatalogueState
       return;
     }
 
-    // Check if already in library
+    // Check if already in the SHARED library (downloads_index.json)
+    try {
+      final shared = await doc_utils.DownloadLibraryManager().getItemByUrl(url);
+      if (shared != null) {
+        final file =
+            await doc_utils.DownloadLibraryManager().getFileForItem(shared);
+        if (await file.exists()) {
+          final result = await ref
+              .read(libraryProvider.notifier)
+              .addBookFromFile(file.path);
+          if (result.isSuccess && mounted) {
+            _tabController.animateTo(1); // Switch to library tab
+          }
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Check if already in EPUB library
     final libraryState = ref.read(libraryProvider);
     final book = libraryState.books.cast<EpubBook?>().firstWhere(
       (b) => b?.sourceUrl == url,
@@ -202,13 +222,35 @@ class _DownloadedEpubCatalogueState
     }
   }
 
-  void _startDownload(String url, String title) {
-    final bookId = 'book_${DateTime.now().millisecondsSinceEpoch}';
-    ref
-        .read(downloadProvider.notifier)
-        .startDownload(url: url, bookId: bookId, fileName: '$title.epub');
-    _tabController.animateTo(0); // Switch to downloads tab
-    _enableWakelock();
+  Future<void> _startDownload(String url, String title) async {
+    try {
+      _enableWakelock();
+
+      final item = await doc_utils.DownloadLibraryManager().downloadAndSave(
+        url: url,
+        title: title,
+        downloader: doc_utils.DioPdfDownloader(),
+        cancelToken: CancelToken(),
+        thumbnailUrl: widget.coverUrl,
+      );
+      final file = await doc_utils.DownloadLibraryManager().getFileForItem(
+        item,
+      );
+
+      if (!mounted) return;
+
+      // Add to EPUB reader library so it can be opened
+      await ref.read(libraryProvider.notifier).addBookFromFile(file.path);
+      _tabController.animateTo(1); // Switch to library
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to download')));
+      }
+    } finally {
+      _disableWakelock();
+    }
   }
 
   String _extractTitle(String url) {

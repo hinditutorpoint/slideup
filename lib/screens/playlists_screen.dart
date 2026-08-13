@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/playlist.dart';
 import '../providers/playlist_provider.dart';
 import 'playlist_detail_screen.dart';
+import 'main_screen.dart';
 import '../services/security_service.dart';
 
 class PlaylistsScreen extends ConsumerStatefulWidget {
@@ -36,55 +37,73 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
     super.dispose();
   }
 
+  void _handleBack() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final playlists = ref.watch(playlistsProvider);
 
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: SafeArea(
-        child: playlists.when(
-          data: (playlistList) {
-            // Filter playlists based on search
-            final filteredList = _searchQuery.isEmpty
-                ? playlistList
-                : playlistList
-                      .where(
-                        (p) =>
-                            p.name.toLowerCase().contains(
-                              _searchQuery.toLowerCase(),
-                            ) ||
-                            (p.description?.toLowerCase().contains(
-                                  _searchQuery.toLowerCase(),
-                                ) ??
-                                false),
-                      )
-                      .toList();
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        appBar: _buildAppBar(),
+        body: SafeArea(
+          child: playlists.when(
+            data: (playlistList) {
+              // Filter playlists based on search
+              final filteredList = _searchQuery.isEmpty
+                  ? playlistList
+                  : playlistList
+                        .where(
+                          (p) =>
+                              p.name.toLowerCase().contains(
+                                _searchQuery.toLowerCase(),
+                              ) ||
+                              (p.description?.toLowerCase().contains(
+                                    _searchQuery.toLowerCase(),
+                                  ) ??
+                                  false),
+                        )
+                        .toList();
 
-            if (playlistList.isEmpty) {
-              return _buildEmptyState();
-            }
+              if (playlistList.isEmpty) {
+                return _buildEmptyState();
+              }
 
-            if (filteredList.isEmpty) {
-              return _buildNoResultsState();
-            }
+              if (filteredList.isEmpty) {
+                return _buildNoResultsState();
+              }
 
-            return Column(
-              children: [
-                _buildStatsBar(playlistList),
-                Expanded(
-                  child: _isGridView
-                      ? _buildGridView(filteredList)
-                      : _buildListView(filteredList),
-                ),
-              ],
-            );
-          },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, stack) => _buildErrorState(error.toString()),
+              return Column(
+                children: [
+                  _buildStatsBar(playlistList),
+                  Expanded(
+                    child: _isGridView
+                        ? _buildGridView(filteredList)
+                        : _buildListView(filteredList),
+                  ),
+                ],
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, stack) => _buildErrorState(error.toString()),
+          ),
         ),
+        floatingActionButton: _buildFAB(),
       ),
-      floatingActionButton: _buildFAB(),
     );
   }
 
@@ -128,6 +147,10 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
     }
 
     return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back_rounded),
+        onPressed: _handleBack,
+      ),
       title: const Text('Playlists'),
       actions: [
         IconButton(

@@ -1113,6 +1113,18 @@ class ReaderStorageManager {
 
   // ========== Clear All ==========
 
+  Future<void> clearReadingProgress() async {
+    if (!_initialized) await initialize();
+    _positionsCache = {};
+    _recentReadsCache = [];
+    try {
+      await _positionsBox.clear();
+      await _recentBox.delete('list');
+    } catch (e) {
+      debugPrint('⚠️ Failed to clear reading progress: $e');
+    }
+  }
+
   Future<void> clearAllData() async {
     if (!_initialized) await initialize();
 
@@ -1474,6 +1486,14 @@ class DownloadLibraryManager {
     if (_loaded) return;
     await _loadIndex();
     _loaded = true;
+  }
+
+  /// Re-read the index from disk (used when downloads were added outside
+  /// this manager instance, e.g. by the documents DownloadLibraryManager).
+  Future<void> reload() async {
+    _items.clear();
+    _loaded = false;
+    await initialize();
   }
 
   Future<void> _loadIndex() async {

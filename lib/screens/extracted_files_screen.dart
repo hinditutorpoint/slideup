@@ -6,6 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:uuid/uuid.dart';
 import '../widgets/empty_state_widget.dart';
 import 'image_viewer_screen.dart';
+import 'main_screen.dart';
 import '../models/media_file.dart';
 
 class ExtractedFilesScreen extends StatefulWidget {
@@ -224,21 +225,42 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Extracted Files'),
-        elevation: 0,
-        actions: [
-          PopupMenuButton(
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                onTap: () async => await _deleteAllFiles(),
-                child: const Text('Delete All Files'),
-              ),
-            ],
+    void handleBack() {
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context);
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const MainScreen()),
+        );
+      }
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        handleBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: handleBack,
           ),
-        ],
-      ),
+          title: const Text('Extracted Files'),
+          elevation: 0,
+          actions: [
+            PopupMenuButton(
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  onTap: () async => await _deleteAllFiles(),
+                  child: const Text('Delete All Files'),
+                ),
+              ],
+            ),
+          ],
+        ),
       body: Column(
         children: [
           // Category tabs
@@ -338,8 +360,9 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildCategoryChip(String label, String? category) {
     final isSelected = _selectedCategory == category;

@@ -1,0 +1,77 @@
+name: SlideUp Release Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build, Test & Release Compact APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 💙 Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: 🚀 Auto-Increment Build Number in pubspec.yaml
+        run: |
+          VERSION_LINE=$(grep 'version:' pubspec.yaml)
+          echo "Current Version: $VERSION_LINE"
+          BUILD_NUM=${GITHUB_RUN_NUMBER}
+          sed -i "s/version: \([0-9]*\.[0-9]*\.[0-9]*\).*/version: \1+$BUILD_NUM/" pubspec.yaml
+          echo "Updated Version: $(grep 'version:' pubspec.yaml)"
+
+      - name: 📦 Install Dependencies
+        run: flutter pub get
+
+      - name: 🔍 Static Analysis
+        run: flutter analyze --no-fatal-warnings
+
+      - name: 🧹 Clean Build Cache
+        run: flutter clean
+
+      - name: 🔨 Build Compact Split-per-ABI APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: 📦 Build AppBundle for Google Play
+        run: flutter build appbundle --release
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: slideup-release-apks
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/bundle/release/*.aab
+          retention-days: 30
+
+      - name: 🚀 Create GitHub Release (On Tag Push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/bundle/release/*.aab
+          name: SlideUp Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

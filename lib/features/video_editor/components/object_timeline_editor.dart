@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/timeline_provider.dart';
+import '../sheets/transition_sheet.dart';
+import '../sheets/pixabay_video_picker_sheet.dart';
 
 class _CompactDims {
   final double screenHeight;
@@ -100,6 +102,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   Widget build(BuildContext context) {
     final timelineState = ref.watch(timelineProvider);
     final hasItems =
+        timelineState.primaryVideoClips.isNotEmpty ||
         timelineState.textItems.isNotEmpty ||
         timelineState.imageItems.isNotEmpty ||
         timelineState.audioItems.isNotEmpty;
@@ -309,6 +312,10 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                         child: _buildTimeRuler(),
                       ),
 
+                      // Primary Magnetic Video Track
+                      if (state.primaryVideoClips.isNotEmpty)
+                        _buildPrimaryMagneticTrack(state.primaryVideoClips),
+
                       // Text track
                       if (state.textItems.isNotEmpty)
                         _buildTrack(
@@ -372,6 +379,177 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
           fontSize: _dims.fontXS,
           markers: ref.watch(timelineProvider).markers,
         ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ PRIMARY MAGNETIC TRACK RENDERER
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildPrimaryMagneticTrack(List<PrimaryVideoClip> clips) {
+    Duration offset = Duration.zero;
+
+    return Container(
+      height: _dims.trackHeight + 6,
+      margin: EdgeInsets.only(top: _dims.trackSpacing),
+      child: Row(
+        children: [
+          // Track label
+          Container(
+            width: _dims.trackLabelWidth,
+            padding: EdgeInsets.symmetric(horizontal: _dims.paddingXS),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.video_collection,
+                  size: _dims.iconXS,
+                  color: Colors.blueAccent,
+                ),
+                SizedBox(width: _dims.paddingXS),
+                Expanded(
+                  child: Text(
+                    'Video',
+                    style: TextStyle(
+                      fontSize: _dims.fontXS,
+                      color: Colors.blueAccent,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Track content
+          Expanded(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Background track line
+                Container(
+                  height: _dims.trackHeight + 6,
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+
+                // Sequential Clip Blocks & Inter-Clip Transition Node Buttons
+                ...List.generate(clips.length, (index) {
+                  final clip = clips[index];
+                  final clipStart = offset;
+                  final startX =
+                      clipStart.inMilliseconds / 1000 * _pixelsPerSecond;
+                  final width = math.max(
+                    _dims.minItemWidth,
+                    clip.effectiveDuration.inMilliseconds /
+                        1000 *
+                        _pixelsPerSecond,
+                  );
+
+                  final t = clip.transitionOut;
+                  offset += clip.effectiveDuration;
+                  if (t.hasTransition && index < clips.length - 1) {
+                    offset -= t.duration;
+                  }
+
+                  final isLast = index == clips.length - 1;
+
+                  return Positioned(
+                    left: startX,
+                    top: 0,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Magnetic video clip block
+                        Container(
+                          width: width,
+                          height: _dims.trackHeight + 6,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.blueAccent.withValues(alpha: 0.55),
+                                Colors.indigo.withValues(alpha: 0.45),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.blueAccent,
+                              width: 1.0,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.movie_outlined,
+                                size: _dims.iconXS,
+                                color: Colors.white70,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  'Clip ${index + 1}',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: _dims.fontXS,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Inter-clip transition (+) button
+                        if (!isLast)
+                          GestureDetector(
+                            onTap: () {
+                              TransitionSheet.show(
+                                context,
+                                ref,
+                                clipIndex: index,
+                                current: t,
+                              );
+                            },
+                            child: Container(
+                              width: 22,
+                              height: 22,
+                              margin: const EdgeInsets.symmetric(horizontal: 2),
+                              decoration: BoxDecoration(
+                                color: t.hasTransition
+                                    ? const Color(0xFF6C63FF)
+                                    : Colors.white24,
+                                shape: BoxShape.circle,
+                                boxShadow: t.hasTransition
+                                    ? [
+                                        BoxShadow(
+                                          color: const Color(0xFF6C63FF)
+                                              .withValues(alpha: 0.5),
+                                          blurRadius: 4,
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  t.hasTransition ? t.type.emoji : '➕',
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -874,6 +1052,15 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     onTap: () {
                       Navigator.pop(context);
                       _pickAndAddImage(currentPosition);
+                    },
+                  ),
+                  _buildCompactAddButton(
+                    icon: Icons.movie_creation,
+                    label: 'Stock Video',
+                    color: const Color(0xFF6C63FF),
+                    onTap: () {
+                      Navigator.pop(context);
+                      PixabayVideoPickerSheet.show(context);
                     },
                   ),
                   _buildCompactAddButton(

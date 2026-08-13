@@ -7,6 +7,7 @@ import '../services/file_operations_service.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/settings_service.dart';
+import '../services/database_service.dart';
 import '../services/thumbnail_service.dart';
 import '../widgets/text_viewer_widget.dart';
 import '../widgets/file_thumbnail_widget.dart';
@@ -18,6 +19,8 @@ import 'image_viewer_screen.dart';
 import '../features/video_player/video_player_launcher.dart';
 import '../features/video_editor/video_editor_screen.dart';
 import '../helpers/audio_playback_helper.dart';
+import '../services/security_service.dart';
+import 'auth_screen.dart';
 import 'package:open_filex/open_filex.dart';
 
 class FileBrowserScreen extends ConsumerStatefulWidget {
@@ -209,6 +212,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
           },
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.favorite_rounded, color: Colors.pink),
+            onPressed: () => _addSelectedToFavorites(state, notifier),
+            tooltip: 'Add to Favorites',
+          ),
           IconButton(
             icon: const Icon(Icons.select_all),
             onPressed: () => notifier.selectAll(),
@@ -729,12 +737,19 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                name,
-                style: const TextStyle(fontSize: 12),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
+              FutureBuilder<String>(
+                future: SecurityService.instance.getOriginalFileName(entity.path),
+                builder: (context, nameSnapshot) {
+                  final displayName = nameSnapshot.data ?? name;
+                  final isSlock = entity.path.endsWith('.slock');
+                  return Text(
+                    isSlock ? '🔒 $displayName' : displayName,
+                    style: const TextStyle(fontSize: 12),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  );
+                },
               ),
               if (!isDirectory)
                 Text(
@@ -756,13 +771,16 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   ) {
     final name = path.basename(entity.path);
     final isDirectory = entity is Directory;
+    final isSlock = entity.path.endsWith('.slock');
 
     String? subtitle;
     if (!isDirectory) {
       try {
         final size = _getFileSize(entity);
         final modified = _getModifiedDate(entity);
-        subtitle = '${_formatFileSize(size)} • $modified';
+        subtitle = isSlock
+            ? '🔒 Locked Vault File • ${_formatFileSize(size)}'
+            : '${_formatFileSize(size)} • $modified';
       } catch (e) {
         subtitle = 'Unknown size';
       }
@@ -785,27 +803,49 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
             ),
           isDirectory
               ? const Icon(Icons.folder, color: Colors.amber, size: 32)
-              : FileThumbnailWidget(
-                  mediaFile: _entityToMediaFile(entity),
-                  size: 32,
-                ),
+              : isSlock
+                  ? Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.pink.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.lock_rounded,
+                        color: Colors.pink,
+                        size: 20,
+                      ),
+                    )
+                  : FileThumbnailWidget(
+                      mediaFile: _entityToMediaFile(entity),
+                      size: 32,
+                    ),
         ],
       ),
-      title: Text(
-        name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+      title: FutureBuilder<String>(
+        future: SecurityService.instance.getOriginalFileName(entity.path),
+        builder: (context, nameSnapshot) {
+          final displayName = nameSnapshot.data ?? name;
+          return Text(
+            displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: isSlock ? Colors.pink[700] : null,
+            ),
+          );
+        },
       ),
       subtitle: subtitle != null ? Text(subtitle) : null,
-      trailing: !isDirectory && !state.isSelectionMode
+      trailing: !state.isSelectionMode
           ? PopupMenuButton<String>(
               onSelected: (value) => _handleFileAction(value, entity, notifier),
               itemBuilder: (context) => _buildFileMenuItems(entity),
               icon: const Icon(Icons.more_vert),
             )
-          : isDirectory && !state.isSelectionMode
-          ? const Icon(Icons.chevron_right)
           : null,
       onTap: () => _onEntityTap(entity, notifier, state),
       onLongPress: () => notifier.toggleSelection(entity),
@@ -1111,14 +1151,26 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     }
   }
 
-  void _onEntityTap(
+  Future<void> _onEntityTap(
     FileSystemEntity entity,
     FileBrowserNotifier notifier,
     FileBrowserState state,
-  ) {
+  ) async {
     if (state.isSelectionMode) {
       notifier.toggleSelection(entity);
       return;
+    }
+
+    final isLocked = await SecurityService.instance.isFileLocked(entity.path);
+    if (isLocked) {
+      if (!mounted) return;
+      final authenticated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(isSetup: false),
+        ),
+      );
+      if (authenticated != true) return;
     }
 
     if (entity is Directory) {
@@ -1198,7 +1250,37 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   }
 
   Future<void> _openFile(File file) async {
-    final extension = path.extension(file.path).toLowerCase();
+    File targetFile = file;
+
+    if (file.path.endsWith('.slock')) {
+      if (!mounted) return;
+      final lockType =
+          await SecurityService.instance.getFileLockType(file.path);
+      if (!mounted) return;
+      final authenticated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => AuthScreen(
+            isSetup: false,
+            initialLockType: lockType,
+          ),
+        ),
+      );
+
+      if (authenticated != true) return;
+
+      final tempFile =
+          await SecurityService.instance.createTempDecryptedCopy(file.path);
+      if (tempFile == null || !await tempFile.exists()) {
+        _showSnackBar('Failed to open locked file');
+        return;
+      }
+      targetFile = tempFile;
+    }
+
+    String extension = path.extension(targetFile.path).toLowerCase();
+
+    if (!mounted) return;
 
     try {
       // Video files
@@ -1220,7 +1302,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.hls',
         '.mpd',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(file, MediaType.video);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.video);
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -1237,7 +1319,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.m4a',
         '.ogg',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(file, MediaType.audio);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.audio);
         AudioPlaybackHelper.playAudio(ref, mediaFile, [
           mediaFile,
         ], startIndex: 0);
@@ -1253,7 +1335,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.tiff',
         '.svg',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(file, MediaType.image);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.image);
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -1265,7 +1347,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       // PDF files
       else if (extension == '.pdf') {
         final mediaFile = _createMediaFileFromFile(
-          file,
+          targetFile,
           MediaType.document,
           DocumentType.pdf,
         );
@@ -1293,13 +1375,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => TextViewerWidget(filePath: file.path),
+            builder: (context) => TextViewerWidget(filePath: targetFile.path),
           ),
         );
       }
       // Other files - try to open with external app
       else {
-        await OpenFilex.open(file.path);
+        await OpenFilex.open(targetFile.path);
       }
     } catch (e) {
       _showSnackBar('Failed to open file: $e');
@@ -1311,6 +1393,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     MediaType type, [
     DocumentType? documentType,
   ]) {
+    final isLocked = file.path.toLowerCase().endsWith('.slock');
     return MediaFile(
       id: file.path,
       name: path.basename(file.path),
@@ -1322,11 +1405,50 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       dateModified: file.lastModifiedSync(),
       dateAdded: DateTime.now(),
       parentFolder: path.dirname(file.path),
+      isLocked: isLocked,
+    );
+  }
+
+  Widget _buildSlimMenuItem({
+    required IconData icon,
+    required String title,
+    Color? color,
+  }) {
+    return SizedBox(
+      height: 36,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: color ?? Colors.grey[700]),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   List<PopupMenuEntry<String>> _buildFileMenuItems(FileSystemEntity entity) {
     final extension = path.extension(entity.path).toLowerCase();
+    final isVideo = [
+      '.mp4',
+      '.mkv',
+      '.avi',
+      '.mov',
+      '.wmv',
+      '.flv',
+      '.webm',
+      '.ts',
+      '.3gp',
+      '.mpeg',
+      '.m4v',
+    ].contains(extension);
     final isMedia = [
       '.mp4',
       '.mkv',
@@ -1348,83 +1470,98 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     final isPDF = extension == '.pdf';
     final isText = ['.txt', '.html', '.htm', '.xml'].contains(extension);
 
+    bool isLocked = extension == '.slock';
+    if (!isLocked && entity is Directory) {
+      try {
+        isLocked = entity
+            .listSync(recursive: true)
+            .any((e) => e.path.endsWith('.slock'));
+      } catch (_) {}
+    }
+
     return [
       if (isMedia || isPDF || isText)
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'open',
-          child: ListTile(
-            leading: Icon(Icons.open_in_new, size: 20),
-            title: Text('Open'),
-            dense: true,
+          height: 36,
+          child: _buildSlimMenuItem(icon: Icons.open_in_new, title: 'Open'),
+        ),
+      if (isVideo)
+        PopupMenuItem(
+          value: 'edit_with_editor',
+          height: 36,
+          child: _buildSlimMenuItem(
+            icon: Icons.video_settings,
+            title: 'Edit with Editor',
+            color: const Color(0xFF6C63FF),
           ),
         ),
-      if (isMedia)
-        const PopupMenuItem(
+      if (isMedia && !isVideo)
+        PopupMenuItem(
           value: 'edit',
-          child: ListTile(
-            leading: Icon(Icons.edit, size: 20),
-            title: Text('Edit'),
-            dense: true,
-          ),
+          height: 36,
+          child: _buildSlimMenuItem(icon: Icons.edit, title: 'Edit'),
         ),
       if (isPDF)
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'preview',
-          child: ListTile(
-            leading: Icon(Icons.preview, size: 20),
-            title: Text('Preview'),
-            dense: true,
-          ),
+          height: 36,
+          child: _buildSlimMenuItem(icon: Icons.preview, title: 'Preview'),
         ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
+      const PopupMenuDivider(height: 8),
+      PopupMenuItem(
         value: 'copy',
-        child: ListTile(
-          leading: Icon(Icons.copy, size: 20),
-          title: Text('Copy'),
-          dense: true,
-        ),
+        height: 36,
+        child: _buildSlimMenuItem(icon: Icons.copy, title: 'Copy'),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'cut',
-        child: ListTile(
-          leading: Icon(Icons.cut, size: 20),
-          title: Text('Cut'),
-          dense: true,
-        ),
+        height: 36,
+        child: _buildSlimMenuItem(icon: Icons.cut, title: 'Cut'),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'rename',
-        child: ListTile(
-          leading: Icon(Icons.edit, size: 20),
-          title: Text('Rename'),
-          dense: true,
-        ),
+        height: 36,
+        child: _buildSlimMenuItem(icon: Icons.edit, title: 'Rename'),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'share',
-        child: ListTile(
-          leading: Icon(Icons.share, size: 20),
-          title: Text('Share'),
-          dense: true,
+        height: 36,
+        child: _buildSlimMenuItem(icon: Icons.share, title: 'Share'),
+      ),
+      PopupMenuItem(
+        value: 'favorite',
+        height: 36,
+        child: _buildSlimMenuItem(
+          icon: Icons.favorite_border_rounded,
+          title: 'Add / Remove Favorite',
+          color: Colors.pink,
         ),
       ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
+      const PopupMenuDivider(height: 8),
+      PopupMenuItem(
         value: 'properties',
-        child: ListTile(
-          leading: Icon(Icons.info, size: 20),
-          title: Text('Properties'),
-          dense: true,
+        height: 36,
+        child: _buildSlimMenuItem(icon: Icons.info, title: 'Properties'),
+      ),
+      const PopupMenuDivider(height: 8),
+      PopupMenuItem(
+        value: 'lock',
+        height: 36,
+        child: _buildSlimMenuItem(
+          icon: isLocked ? Icons.lock_open : Icons.lock_outline,
+          title: isLocked ? 'Unlock (Vault)' : 'Lock (Vault)',
+          color: const Color(0xFF6C63FF),
         ),
       ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
+      const PopupMenuDivider(height: 8),
+      PopupMenuItem(
         value: 'delete',
-        child: ListTile(
-          leading: Icon(Icons.delete, size: 20, color: Colors.red),
-          title: Text('Delete', style: TextStyle(color: Colors.red)),
-          dense: true,
+        height: 36,
+        child: _buildSlimMenuItem(
+          icon: Icons.delete,
+          title: 'Delete',
+          color: Colors.red,
         ),
       ),
     ];
@@ -1463,15 +1600,81 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       case 'share':
         _shareSelectedFiles([entity]);
         break;
+      case 'favorite':
+        await _toggleFavoriteEntity(entity);
+        break;
       case 'properties':
         _showFileProperties(entity);
         break;
       case 'delete':
         _confirmDeleteSingle(entity, notifier);
         break;
+      case 'lock':
+        await _toggleLockEntity(entity, notifier);
+        break;
+      case 'edit_with_editor':
       case 'edit':
         _confirmEditSingle(entity, notifier);
         break;
+    }
+  }
+
+  Future<void> _toggleFavoriteEntity(FileSystemEntity entity) async {
+    try {
+      final db = DatabaseService.instance;
+      final existing = await db.getMediaFileByPath(entity.path);
+
+      if (existing != null && existing.isFavorite) {
+        final updated = existing.copyWith(isFavorite: false);
+        await db.updateMediaFile(updated);
+        _showSnackBar('Removed from Favorites');
+      } else {
+        MediaFile mediaFile;
+        if (existing != null) {
+          mediaFile = existing.copyWith(isFavorite: true);
+        } else {
+          final ext = path.extension(entity.path).toLowerCase();
+          mediaFile = _createMediaFileFromFile(
+            entity is File ? entity : File(entity.path),
+            _getMediaTypeFromExtension(ext),
+          ).copyWith(isFavorite: true);
+        }
+        await db.insertMediaFiles([mediaFile]);
+        _showSnackBar('Added to Favorites');
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('Error toggling favorite: $e');
+      _showSnackBar('Failed to update Favorites');
+    }
+  }
+
+  Future<void> _addSelectedToFavorites(
+    FileBrowserState state,
+    FileBrowserNotifier notifier,
+  ) async {
+    try {
+      final db = DatabaseService.instance;
+      int count = 0;
+      for (final entity in state.selectedEntities) {
+        final existing = await db.getMediaFileByPath(entity.path);
+        if (existing != null) {
+          await db.updateMediaFile(existing.copyWith(isFavorite: true));
+        } else {
+          final ext = path.extension(entity.path).toLowerCase();
+          final mediaFile = _createMediaFileFromFile(
+            entity is File ? entity : File(entity.path),
+            _getMediaTypeFromExtension(ext),
+          ).copyWith(isFavorite: true);
+          await db.insertMediaFiles([mediaFile]);
+        }
+        count++;
+      }
+      notifier.clearSelection();
+      _showSnackBar('$count item(s) added to Favorites');
+      setState(() {});
+    } catch (e) {
+      debugPrint('Error adding selection to favorites: $e');
     }
   }
 
@@ -1486,6 +1689,82 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
           builder: (context) => VideoEditorScreen(videoPath: entity.path),
         ),
       );
+    }
+  }
+
+  Future<void> _toggleLockEntity(
+    FileSystemEntity entity,
+    FileBrowserNotifier notifier,
+  ) async {
+    final isDirectory = entity is Directory;
+    final isLocked = await SecurityService.instance.isFileLocked(entity.path);
+
+    if (isLocked) {
+      if (!mounted) return;
+      final fileLockType =
+          await SecurityService.instance.getFileLockType(entity.path);
+      if (!mounted) return;
+      final authenticated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => AuthScreen(
+            isSetup: false,
+            initialLockType: fileLockType,
+          ),
+        ),
+      );
+
+      if (authenticated == true) {
+        await SecurityService.instance.unlockEntityWithSlock(entity);
+        final currentDir = ref.read(fileBrowserProvider).currentDirectory;
+        if (currentDir != null) {
+          await notifier.navigateToDirectory(currentDir);
+        }
+        if (mounted) {
+          _showSnackBar(
+            isDirectory
+                ? 'Folder unlocked from Vault (restored extensions)'
+                : 'File unlocked from Vault (restored extension)',
+          );
+          setState(() {});
+        }
+      }
+    } else {
+      final hasLock = await SecurityService.instance.hasAppLock();
+      if (!hasLock) {
+        if (!mounted) return;
+        final created = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const AuthScreen(isSetup: true),
+          ),
+        );
+        if (created != true) return;
+      }
+
+      if (!mounted) return;
+      final authenticated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(isSetup: false),
+        ),
+      );
+
+      if (authenticated == true) {
+        await SecurityService.instance.lockEntityWithSlock(entity, 'LOCKED');
+        final currentDir = ref.read(fileBrowserProvider).currentDirectory;
+        if (currentDir != null) {
+          await notifier.navigateToDirectory(currentDir);
+        }
+        if (mounted) {
+          _showSnackBar(
+            isDirectory
+                ? 'Folder locked in Vault (.slock files)'
+                : 'File locked in Vault (.slock file)',
+          );
+          setState(() {});
+        }
+      }
     }
   }
 
@@ -1753,114 +2032,99 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     }
   }
 
-  /// Updated _showAddMenu method with Play All functionality
-  /// Updated responsive _showAddMenu method
+  /// Updated responsive & compact _showAddMenu method
   void _showAddMenu(FileBrowserState state, FileBrowserNotifier notifier) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      isScrollControlled: true, // Important for responsive behavior
+      isScrollControlled: true,
       constraints: BoxConstraints(
-        maxHeight:
-            MediaQuery.of(context).size.height * 0.8, // Max 80% of screen
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
       ),
-      builder: (context) => LayoutBuilder(
-        builder: (context, constraints) {
-          final screenHeight = MediaQuery.of(context).size.height;
-          final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-          final availableHeight =
-              screenHeight - keyboardHeight - 100; // Leave some padding
-
-          return Container(
-            constraints: BoxConstraints(maxHeight: availableHeight),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.1),
-                  offset: const Offset(0, -2),
-                  blurRadius: 8,
-                ),
-              ],
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(16),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.1),
+              offset: const Offset(0, -2),
+              blurRadius: 8,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Handle bar
-                Container(
-                  margin: const EdgeInsets.only(top: 12, bottom: 8),
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[400],
-                    borderRadius: BorderRadius.circular(2),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_open_rounded,
+                    color: Theme.of(context).primaryColor,
+                    size: 20,
                   ),
-                ),
-
-                // Title
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.folder_open,
-                        color: Theme.of(context).primaryColor,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Folder Actions',
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close),
-                        iconSize: 20,
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Scrollable content
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.only(bottom: 20),
-                    child: Column(
-                      children: [
-                        // Play All Section
-                        _buildPlayAllSection(context),
-
-                        // Quick Actions Section
-                        _buildQuickActionsSection(context, state, notifier),
-
-                        // File Operations Section (if clipboard has items)
-                        if (FileOperationsService.instance.hasClipboard)
-                          _buildFileOperationsSection(context, notifier),
-
-                        // Advanced Actions Section
-                        _buildAdvancedActionsSection(context, state, notifier),
-                      ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Folder Actions',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
                     ),
                   ),
-                ),
-              ],
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 18),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
             ),
-          );
-        },
+            const Divider(height: 1),
+
+            // Scrollable content
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  children: [
+                    _buildPlayAllSection(context),
+                    _buildQuickActionsSection(context, state, notifier),
+                    if (FileOperationsService.instance.hasClipboard)
+                      _buildFileOperationsSection(context, notifier),
+                    _buildAdvancedActionsSection(context, state, notifier),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  /// Build Play All Media Section
+  /// Build Play All Media Section (Compact)
   Widget _buildPlayAllSection(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: FutureBuilder<String>(
         future: _getMediaCountInfo(),
         builder: (context, snapshot) {
@@ -1870,21 +2134,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
           return Container(
             decoration: BoxDecoration(
-              gradient: hasMedia
-                  ? LinearGradient(
-                      colors: [
-                        Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                        Theme.of(context).primaryColor.withValues(alpha: 0.05),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : null,
-              color: hasMedia ? null : Colors.grey[50],
-              borderRadius: BorderRadius.circular(16),
+              color: hasMedia
+                  ? Theme.of(context).primaryColor.withValues(alpha: 0.08)
+                  : Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: hasMedia
-                    ? Theme.of(context).primaryColor.withValues(alpha: 0.3)
+                    ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
                     : Colors.grey[300]!,
                 width: 1,
               ),
@@ -1892,7 +2148,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(12),
                 onTap: hasMedia
                     ? () {
                         Navigator.pop(context);
@@ -1900,55 +2156,45 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                       }
                     : null,
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
                           color: hasMedia
                               ? Theme.of(context).primaryColor
                               : Colors.grey[400],
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: hasMedia
-                              ? [
-                                  BoxShadow(
-                                    color: Theme.of(
-                                      context,
-                                    ).primaryColor.withValues(alpha: 0.3),
-                                    offset: const Offset(0, 2),
-                                    blurRadius: 8,
-                                  ),
-                                ]
-                              : null,
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Icon(
+                        child: const Icon(
                           Icons.play_arrow_rounded,
                           color: Colors.white,
-                          size: 28,
+                          size: 20,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
                               'Play All Media',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
-                                fontSize: 16,
+                                fontSize: 13,
                                 color: hasMedia ? null : Colors.grey[600],
                               ),
                             ),
-                            const SizedBox(height: 4),
                             Text(
                               mediaInfo,
                               style: TextStyle(
                                 color: hasMedia
                                     ? Theme.of(context).primaryColor
                                     : Colors.grey[500],
-                                fontSize: 13,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -1957,7 +2203,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                       ),
                       if (hasMedia)
                         Icon(
-                          Icons.arrow_forward_ios_rounded,
+                          Icons.chevron_right_rounded,
                           size: 18,
                           color: Theme.of(context).primaryColor,
                         ),
@@ -1979,24 +2225,25 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     FileBrowserNotifier notifier,
   ) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: Text(
               'Quick Actions',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                  ),
             ),
           ),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.grey[200]!),
             ),
             child: Column(
@@ -2052,24 +2299,25 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     FileBrowserNotifier notifier,
   ) {
     return Container(
-      margin: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: Text(
               'Clipboard',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                  ),
             ),
           ),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.grey[200]!),
             ),
             child: _buildActionTile(
@@ -2099,24 +2347,25 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     FileBrowserNotifier notifier,
   ) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: Text(
               'Advanced',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                  ),
             ),
           ),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.grey[200]!),
             ),
             child: Column(
@@ -2136,7 +2385,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                 _buildActionTile(
                   context: context,
                   icon: Icons.cleaning_services_rounded,
-                  iconColor: Colors.red,
+                  iconColor: Colors.teal,
                   title: 'Clear Cache',
                   subtitle: 'Clear thumbnail cache',
                   onTap: () async {
@@ -2165,7 +2414,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     );
   }
 
-  /// Build individual action tile
+  /// Build individual compact action tile
   Widget _buildActionTile({
     required BuildContext context,
     required IconData icon,
@@ -2179,49 +2428,44 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       color: Colors.transparent,
       child: InkWell(
         onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: enabled ? iconColor : Colors.grey[300],
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(icon, color: Colors.white, size: 20),
+                child: Icon(icon, color: Colors.white, size: 16),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       title,
                       style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
                         color: enabled ? null : Colors.grey[500],
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: enabled ? Colors.grey[600] : Colors.grey[400],
-                        fontSize: 13,
+                    if (subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
-              if (enabled)
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 16,
-                  color: Colors.grey[400],
-                ),
             ],
           ),
         ),
@@ -2348,11 +2592,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         ],
 
         // Main FAB
-        FloatingActionButton(
+        FloatingActionButton.small(
           heroTag: 'add',
           onPressed: () => _showAddMenu(state, notifier),
           tooltip: 'More Actions',
-          child: const Icon(Icons.add_rounded),
+          child: const Icon(Icons.add_rounded, size: 20),
         ),
       ],
     );

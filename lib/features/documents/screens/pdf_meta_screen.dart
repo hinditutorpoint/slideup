@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../../../core/constants/archive_constants.dart';
 import '../../../../core/utils/responsive_helper.dart';
 import '../../../../shared/widgets/error_widget.dart';
 import '../../../../shared/widgets/loading_widget.dart';
@@ -18,7 +18,9 @@ import '../providers/pdf_metadata_provider.dart';
 import '../widgets/pdf_file_grid_item.dart';
 import '../widgets/pdf_file_list_item.dart';
 import '../widgets/downloaded_pdf_widget.dart';
+import '../utils/reader_utils.dart' as doc_utils;
 import 'unified_reader_screen.dart';
+import '../../private_browser/private_browser_screen.dart';
 
 // ========== REUSE EXISTING WIDGETS ==========
 import '../widgets/reading_history_widget.dart' show ReadingHistoryWidget;
@@ -606,16 +608,15 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
 
   Future<void> _downloadFile(PdfFile file) async {
     try {
-      await ref
-          .read(downloadsProvider.notifier)
-          .startDownload(
-            identifier: '${_identifier}_${file.name.hashCode}',
-            title: '${widget.item.title} - ${file.displayName}',
-            url: file.getUrl(_identifier),
-            mediaType: ArchiveConstants.mediaTypePdf,
-            thumbnailUrl: widget.item.thumbnailUrl,
-          );
-      _showSnackBar('Download started: ${file.displayName}');
+      final url = file.getUrl(_identifier);
+      await doc_utils.DownloadLibraryManager().downloadAndSave(
+        url: url,
+        title: '${widget.item.title} - ${file.displayName}',
+        downloader: doc_utils.DioPdfDownloader(),
+        cancelToken: CancelToken(),
+        thumbnailUrl: widget.item.thumbnailUrl,
+      );
+      _showSnackBar('Downloaded to library: ${file.displayName}');
     } catch (e) {
       _showSnackBar('Failed to start download');
     }
@@ -639,7 +640,78 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
   }
 
   Future<void> _viewImage(ThumbnailFile thumb) async {
-    // TODO: Implement image viewer
+    final imageUrl = thumb.getUrl(_identifier);
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  fit: BoxFit.contain,
+                  placeholder: (context, url) => const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                  errorWidget: (context, url, error) => const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.broken_image, size: 64, color: Colors.white54),
+                      SizedBox(height: 12),
+                      Text(
+                        'Failed to load image',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              left: 16,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 16,
+              child: IconButton(
+                icon: const Icon(Icons.download, color: Colors.white, size: 28),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _downloadImage(thumb);
+                },
+              ),
+            ),
+            Positioned(
+              bottom: 24,
+              left: 20,
+              right: 20,
+              child: Text(
+                thumb.displayName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _downloadImage(ThumbnailFile thumb) async {
@@ -686,7 +758,17 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
   }
 
   Future<void> _openUrl(String url) async {
-    // TODO: Implement URL launcher
+    if (url.trim().isEmpty) return;
+    try {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PrivateBrowserScreen(initialUrl: url),
+        ),
+      );
+    } catch (e) {
+      _showSnackBar('Failed to open link');
+    }
   }
 
   Future<void> _shareItem() async {

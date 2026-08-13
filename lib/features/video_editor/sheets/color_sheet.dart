@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart';
+import '../../../widgets/color_wheel_widget.dart';
 
 // ═══════════════════════════════════════════════════════
 // ✅ COLOR SHEET (YouCut Style with Preview)
@@ -20,6 +21,8 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _showComparison = false;
+  double _filterIntensity = 1.0;
+  ColorGradeSettings? _activePresetSettings;
 
   @override
   void initState() {
@@ -528,6 +531,10 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
 
     return GestureDetector(
       onTap: () {
+        setState(() {
+          _activePresetSettings = preset.settings;
+          _filterIntensity = 1.0;
+        });
         ref
             .read(videoEditorProvider.notifier)
             .setPreviewColorGrade(preset.settings);
@@ -620,9 +627,9 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
                   color: const Color(0xFFFF6B6B).withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                  '100%',
-                  style: TextStyle(
+                child: Text(
+                  '${(_filterIntensity * 100).round()}%',
+                  style: const TextStyle(
                     color: Color(0xFFFF6B6B),
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -642,14 +649,39 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
               overlayColor: const Color(0xFFFF6B6B).withValues(alpha: 0.2),
             ),
             child: Slider(
-              value: 1.0,
+              value: _filterIntensity,
               onChanged: (value) {
-                // TODO: Implement intensity adjustment
+                setState(() => _filterIntensity = value);
+                final base = _activePresetSettings ?? settings;
+                final scaled = _scaleColorSettings(base, value);
+                _updateSettings(scaled);
               },
             ),
           ),
         ],
       ),
+    );
+  }
+
+  ColorGradeSettings _scaleColorSettings(
+    ColorGradeSettings base,
+    double factor,
+  ) {
+    return base.copyWith(
+      brightness: base.brightness * factor,
+      contrast: 1.0 + (base.contrast - 1.0) * factor,
+      saturation: 1.0 + (base.saturation - 1.0) * factor,
+      hue: base.hue * factor,
+      red: 1.0 + (base.red - 1.0) * factor,
+      green: 1.0 + (base.green - 1.0) * factor,
+      blue: 1.0 + (base.blue - 1.0) * factor,
+      temperature: base.temperature * factor,
+      tint: base.tint * factor,
+      vibrance: base.vibrance * factor,
+      highlights: base.highlights * factor,
+      shadows: base.shadows * factor,
+      whites: base.whites * factor,
+      blacks: base.blacks * factor,
     );
   }
 
@@ -738,6 +770,45 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text(
+            'Color Wheel Grading',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ColorWheelWidget(
+              initialColor: Color.fromRGBO(
+                (settings.red * 127.5).clamp(0, 255).toInt(),
+                (settings.green * 127.5).clamp(0, 255).toInt(),
+                (settings.blue * 127.5).clamp(0, 255).toInt(),
+                1.0,
+              ),
+              wheelSize: 220,
+              onColorChanged: (color) {
+                final newRed = (color.r * 2.0).clamp(0.0, 2.0);
+                final newGreen = (color.g * 2.0).clamp(0.0, 2.0);
+                final newBlue = (color.b * 2.0).clamp(0.0, 2.0);
+                _updateSettings(
+                  settings.copyWith(
+                    red: newRed,
+                    green: newGreen,
+                    blue: newBlue,
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
           _buildSliderCard(
             'Saturation',
             Icons.water_drop,

@@ -252,13 +252,26 @@ class TimelineExportService {
             await _getDefaultOutputPath(config.preset.extension);
 
         // Build FFmpeg command
-        final commandResult = await _buildTimelineCommand(
-          config: config,
-          tempDir: tempDir!,
-          outputPath: outputPath, // Pass output path
-          onProgress: onProgress,
-          onStageChange: onStageChange,
-        );
+        // Route to the Hybrid Magnetic Timeline xfade pipeline when the
+        // project has primaryVideoClips; otherwise use legacy single-clip path.
+        Result<String> commandResult;
+        if (config.project.isMagneticMode) {
+          commandResult = await _buildMagneticTrackCommand(
+            config: config,
+            tempDir: tempDir!,
+            outputPath: outputPath,
+            onProgress: onProgress,
+            onStageChange: onStageChange,
+          );
+        } else {
+          commandResult = await _buildTimelineCommand(
+            config: config,
+            tempDir: tempDir!,
+            outputPath: outputPath,
+            onProgress: onProgress,
+            onStageChange: onStageChange,
+          );
+        }
 
         if (commandResult.isFailure) {
           throw commandResult.error!;
@@ -404,6 +417,348 @@ class TimelineExportService {
 
       debugPrint('✅ Output file created: ${fileSize ~/ 1024} KB');
     }, operationName: '_executeFFmpegCommand');
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ HYBRID MAGNETIC TIMELINE – XFADE EXPORT PIPELINE
+  // ═══════════════════════════════════════════════════════
+
+  /// Builds the FFmpeg command for Hybrid Magnetic Timeline mode.
+  ///
+  /// Strategy:
+  /// - If all clips are "Cut" (no transitions) → fast `concat` demuxer path.
+  /// - Otherwise → `xfade` filter_complex pipeline with overlay compositing.
+  Future<Result<String>> _buildMagneticTrackCommand({
+    required TimelineExportConfig config,
+    required Directory tempDir,
+    required String outputPath,
+    void Function(double)? onProgress,
+    void Function(ExportStage)? onStageChange,
+  }) async {
+    return SafeAsync.run(() async {
+      final project = config.project;
+      final preset = config.preset;
+      final clips = project.primaryVideoClips;
+
+      _emitStage(ExportStage.processingVideo, onStageChange);
+      onProgress?.call(0.1);
+
+      // Fast path: no transitions, use concat demuxer
+      final allCuts = clips.every(
+        (c) => c.transitionOut.type == TransitionType.none,
+      );
+
+      if (allCuts) {
+        return _buildConcatDemuxerCommand(
+          clips: clips,
+          project: project,
+          preset: preset,
+          tempDir: tempDir,
+          outputPath: outputPath,
+          config: config,
+          onProgress: onProgress,
+          onStageChange: onStageChange,
+        );
+      }
+
+      // xfade path: build -filter_complex with xfade between clips
+      final inputs = <String>[];
+      int inputIndex = 0;
+
+      for (final clip in clips) {
+        final path = _escapePath(clip.videoPath);
+        final startSec = clip.trimStart.inMilliseconds / 1000.0;
+        final endSec = clip.trimEnd.inMilliseconds / 1000.0;
+        inputs.add('-ss $startSec -to $endSec -i $path');
+        inputIndex++;
+      }
+
+      // Audio/image overlay inputs
+      final audioItems = config.includeAudioTracks
+          ? project.audioItems
+          : <AudioTimelineItem>[];
+      final imageItems = config.includeImageOverlays
+          ? project.imageItems
+          : <ImageTimelineItem>[];
+
+      final audioInputIndices = <String, int>{};
+      for (final item in audioItems) {
+        if (item.audioPath.isNotEmpty && File(item.audioPath).existsSync()) {
+          inputs.add('-i ${_escapePath(item.audioPath)}');
+          audioInputIndices[item.id] = inputIndex++;
+        }
+      }
+
+      final imageInputIndices = <String, int>{};
+      for (final item in imageItems) {
+        if (item.imagePath.isNotEmpty && File(item.imagePath).existsSync()) {
+          inputs.add('-loop 1 -t 1 -i ${_escapePath(item.imagePath)}');
+          imageInputIndices[item.id] = inputIndex++;
+        }
+      }
+
+      _emitStage(ExportStage.renderingOverlays, onStageChange);
+      onProgress?.call(0.4);
+
+      final filters = <String>[];
+      final targetWidth = preset.width ?? 1920;
+      final targetHeight = preset.height ?? 1080;
+
+      // Scale each clip to target resolution
+      for (int i = 0; i < clips.length; i++) {
+        filters.add(
+          '[$i:v]scale=$targetWidth:$targetHeight:'
+          'force_original_aspect_ratio=decrease,'
+          'pad=$targetWidth:$targetHeight:(ow-iw)/2:(oh-ih)/2,'
+          'setsar=1,format=yuv420p[v${i}s]',
+        );
+      }
+
+      // Chain xfade filters
+      String videoStream = '[v0s]';
+      Duration offset = clips[0].effectiveDuration;
+
+      for (int i = 0; i < clips.length - 1; i++) {
+        final transition = clips[i].transitionOut;
+        final nextStream = '[v${i + 1}s]';
+        final outLabel = i == clips.length - 2 ? '[vmain]' : '[xf$i]';
+        final offsetSec = offset.inMilliseconds / 1000.0;
+
+        if (transition.hasTransition) {
+          final xfadeName = transition.type.ffmpegName ?? 'fade';
+          final durationSec = transition.duration.inMilliseconds / 1000.0;
+          filters.add(
+            '$videoStream${nextStream}xfade='
+            'transition=$xfadeName:'
+            'duration=$durationSec:'
+            'offset=${(offsetSec - durationSec).clamp(0.0, double.infinity)}'
+            '$outLabel',
+          );
+          offset += clips[i + 1].effectiveDuration - transition.duration;
+        } else {
+          // Simple concat for this boundary
+          filters.add('$videoStream${nextStream}concat=n=2:v=1:a=0$outLabel');
+          offset += clips[i + 1].effectiveDuration;
+        }
+        videoStream = outLabel;
+      }
+
+      // Color grading on final combined stream
+      if (config.applyColorGrading && !project.colorGrade.isDefault) {
+        final colorFilter = _buildColorGradeFilter(project.colorGrade);
+        if (colorFilter.isNotEmpty) {
+          filters.add('$videoStream$colorFilter[graded]');
+          videoStream = '[graded]';
+        }
+      }
+
+      // Image overlays
+      if (imageItems.isNotEmpty && config.includeImageOverlays) {
+        videoStream = _buildImageOverlaysSimplified(
+          baseStream: videoStream,
+          imageItems: imageItems,
+          imageInputIndices: imageInputIndices,
+          filters: filters,
+          targetWidth: targetWidth,
+          targetHeight: targetHeight,
+        );
+      }
+
+      // Text overlays
+      if (project.textItems.isNotEmpty && config.includeTextOverlays) {
+        videoStream = _buildTextOverlaysSimplified(
+          baseStream: videoStream,
+          textItems: project.textItems,
+          filters: filters,
+          targetWidth: targetWidth,
+          targetHeight: targetHeight,
+        );
+      }
+
+      filters.add('${videoStream}format=yuv420p[vout]');
+
+      _emitStage(ExportStage.mixingAudio, onStageChange);
+      onProgress?.call(0.7);
+
+      // Audio: mix original audio from all clips + overlay audio tracks
+      final audioFilters = <String>[];
+      for (int i = 0; i < clips.length; i++) {
+        audioFilters.add('[$i:a]');
+      }
+      final audioMixCount = clips.length + audioItems.length;
+      for (final entry in audioInputIndices.entries) {
+        final item = audioItems.firstWhere((a) => a.id == entry.key);
+        final delaySec = item.startTime.inMilliseconds;
+        audioFilters.add('[${entry.value}:a]adelay=$delaySec|$delaySec');
+      }
+      if (audioMixCount > 1) {
+        filters.add(
+          '${audioFilters.join('')}amix=inputs=$audioMixCount:duration=first'
+          ':normalize=0[aout]',
+        );
+      }
+
+      // Assemble command
+      final commandParts = ['-y'];
+      commandParts.addAll(inputs);
+      commandParts.add('-filter_complex "${filters.join(';')}"');
+      commandParts.add('-map "[vout]"');
+      if (!preset.removeAudio) {
+        commandParts.add(
+          audioMixCount > 1 ? '-map "[aout]"' : '-map 0:a?',
+        );
+      }
+      commandParts.add('-c:v libx264 -preset medium -crf 23');
+      if (preset.bitrate != null) {
+        commandParts
+          ..add('-maxrate ${preset.bitrate}k')
+          ..add('-bufsize ${preset.bitrate! * 2}k');
+      }
+      if (preset.fps != null) {
+        commandParts.add('-r ${preset.fps}');
+      }
+      if (!preset.removeAudio) {
+        commandParts.add(
+          '-c:a aac -b:a ${preset.audioBitrate ?? 128}k',
+        );
+      }
+      commandParts.add('-movflags +faststart');
+      commandParts.add(_escapePath(outputPath));
+      return commandParts.join(' ');
+    }, operationName: '_buildMagneticTrackCommand');
+  }
+
+  /// Fast-path export using FFmpeg concat demuxer (no re-encode when
+  /// all clips share the same codec/resolution as the output preset).
+  Future<String> _buildConcatDemuxerCommand({
+    required List<PrimaryVideoClip> clips,
+    required VideoProject project,
+    required ExportPreset preset,
+    required Directory tempDir,
+    required String outputPath,
+    required TimelineExportConfig config,
+    void Function(double)? onProgress,
+    void Function(ExportStage)? onStageChange,
+  }) async {
+    // Write concat list file
+    final listFile = File(p.join(tempDir.path, 'concat_list.txt'));
+    final buffer = StringBuffer();
+    for (final clip in clips) {
+      buffer.writeln("file '${clip.videoPath.replaceAll("'", "'\\''")}'");
+      final startSec = clip.trimStart.inMilliseconds / 1000.0;
+      buffer.writeln('inpoint $startSec');
+      final endSec = clip.trimEnd.inMilliseconds / 1000.0;
+      buffer.writeln('outpoint $endSec');
+    }
+    await listFile.writeAsString(buffer.toString());
+
+    _emitStage(ExportStage.renderingOverlays, onStageChange);
+    onProgress?.call(0.5);
+
+    final overlayFilters = <String>[];
+    int inputIndex = 1; // 0 = concat output
+    final imageItems = config.includeImageOverlays
+        ? project.imageItems
+        : <ImageTimelineItem>[];
+    final audioItems = config.includeAudioTracks
+        ? project.audioItems
+        : <AudioTimelineItem>[];
+    final imageInputIndices = <String, int>{};
+    final audioInputIndices = <String, int>{};
+
+    final extraInputs = <String>[];
+    for (final item in imageItems) {
+      if (item.imagePath.isNotEmpty && File(item.imagePath).existsSync()) {
+        extraInputs.add('-loop 1 -t 1 -i ${_escapePath(item.imagePath)}');
+        imageInputIndices[item.id] = inputIndex++;
+      }
+    }
+    for (final item in audioItems) {
+      if (item.audioPath.isNotEmpty && File(item.audioPath).existsSync()) {
+        extraInputs.add('-i ${_escapePath(item.audioPath)}');
+        audioInputIndices[item.id] = inputIndex++;
+      }
+    }
+
+    final targetWidth = preset.width ?? 1920;
+    final targetHeight = preset.height ?? 1080;
+
+    String videoStream = '[v0concat]';
+    overlayFilters.add(
+      '[0:v]scale=$targetWidth:$targetHeight:'
+      'force_original_aspect_ratio=decrease,'
+      'pad=$targetWidth:$targetHeight:(ow-iw)/2:(oh-ih)/2[v0concat]',
+    );
+
+    if (imageItems.isNotEmpty && config.includeImageOverlays) {
+      videoStream = _buildImageOverlaysSimplified(
+        baseStream: videoStream,
+        imageItems: imageItems,
+        imageInputIndices: imageInputIndices,
+        filters: overlayFilters,
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+      );
+    }
+    if (project.textItems.isNotEmpty && config.includeTextOverlays) {
+      videoStream = _buildTextOverlaysSimplified(
+        baseStream: videoStream,
+        textItems: project.textItems,
+        filters: overlayFilters,
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+      );
+    }
+    overlayFilters.add('${videoStream}format=yuv420p[vout]');
+
+    String? audioStream;
+    if (!preset.removeAudio) {
+      audioStream = _buildAudioMixSimplified(
+        mainVideoIndex: 0,
+        audioItems: audioItems,
+        audioInputIndices: audioInputIndices,
+        filters: overlayFilters,
+        project: project,
+      );
+    }
+
+    final commandParts = [
+      '-y',
+      '-f concat -safe 0 -i ${_escapePath(listFile.path)}',
+      ...extraInputs,
+    ];
+
+    if (overlayFilters.isNotEmpty) {
+      commandParts.add('-filter_complex "${overlayFilters.join(';')}"');
+      commandParts.add('-map "[vout]"');
+      if (audioStream != null && !preset.removeAudio) {
+        final isRawInputRef =
+            RegExp(r'^\[\d+:[a-zA-Z]+\]$').hasMatch(audioStream);
+        commandParts.add(
+          isRawInputRef
+              ? '-map ${audioStream.substring(1, audioStream.length - 1)}'
+              : '-map "$audioStream"',
+        );
+      }
+    } else {
+      commandParts.add('-map 0:v -map 0:a?');
+    }
+
+    commandParts.add('-c:v libx264 -preset medium -crf 23');
+    if (preset.bitrate != null) {
+      commandParts
+        ..add('-maxrate ${preset.bitrate}k')
+        ..add('-bufsize ${preset.bitrate! * 2}k');
+    }
+    if (preset.fps != null) commandParts.add('-r ${preset.fps}');
+    if (!preset.removeAudio) {
+      commandParts.add('-c:a aac -b:a ${preset.audioBitrate ?? 128}k');
+    }
+    commandParts.add('-movflags +faststart');
+    commandParts.add(_escapePath(outputPath));
+
+    debugPrint('⚡ Concat demuxer command: ${commandParts.join(' ')}');
+    return commandParts.join(' ');
   }
 
   // ═══════════════════════════════════════════════════════

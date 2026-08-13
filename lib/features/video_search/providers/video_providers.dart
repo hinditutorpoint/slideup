@@ -135,7 +135,7 @@ class VideoSearchNotifier extends Notifier<VideoSearchState> {
     }
   }
 
-  Future<void> loadMore() async {
+Future<void> loadMore() async {
     if (state.isLoadingMore || !state.hasMore || state.query.isEmpty) {
       return;
     }
@@ -207,6 +207,16 @@ class VideoSearchNotifier extends Notifier<VideoSearchState> {
     if (state.query.isNotEmpty) {
       await search(state.query, filter: state.filter);
     }
+  }
+
+  /// Load all Hindi movies from the Archive.
+  Future<void> loadTodayArchive() async {
+    final query =
+        'mediatype:movies AND '
+        '(language:hindi OR language:hin OR title:"hindi dubbed" '
+        'OR title:hindi OR description:"hindi dubbed" OR description:hindi '
+        'OR subject:"hindi dubbed" OR subject:hindi)';
+    await search(query);
   }
 
   void clearError() {

@@ -665,12 +665,69 @@ class TranslationApiService {
     return chunks.where((c) => c.trim().isNotEmpty).toList();
   }
 
+  /// Splits [text] into sentences using an NLP-aware heuristic tokenizer.
+  ///
+  /// Protects abbreviations (Mr., Dr., etc.), decimal numbers, and ellipsis
+  /// before splitting on real sentence boundaries. Uses allMatches instead
+  /// of lookbehind (unsupported in Dart's regexp engine for these patterns).
   List<String> _splitIntoSentences(String text) {
-    final pattern = RegExp(r'[^.!?।॥\n]+[.!?।॥]*\s*|\n+', multiLine: true);
-    return pattern
-        .allMatches(text)
-        .map((m) => m.group(0)!)
-        .where((s) => s.trim().isNotEmpty)
+    if (text.trim().isEmpty) return [];
+
+    const dotPh = '\x00D\x00';
+    const ellPh = '\x00E\x00';
+
+    // Step 1: protect common abbreviations from being treated as boundaries.
+    const abbrs = [
+      'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'Sr', 'Jr', 'Rev', 'Gen',
+      'Sgt', 'Cpl', 'Pvt', 'Capt', 'Lt', 'Col', 'Maj', 'Brig', 'Adm',
+      'etc', 'vs', 'cf', 'al', 'ibid', 'viz',
+      'vol', 'no', 'approx', 'dept', 'est', 'fig', 'ref', 'avg',
+      'St', 'Ave', 'Blvd', 'Rd', 'Ln', 'Mt', 'Ft',
+      'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug', 'Sep',
+      'Oct', 'Nov', 'Dec',
+    ];
+
+    String s = text;
+    for (final abbr in abbrs) {
+      final esc = RegExp.escape(abbr);
+      s = s.replaceAllMapped(
+        RegExp('\\b$esc\\.(?=\\s|\\d)', caseSensitive: false),
+        (_) => '$abbr$dotPh',
+      );
+    }
+    // Compound abbreviations like e.g. and i.e.
+    s = s
+        .replaceAll('e.g.', 'e${dotPh}g$dotPh')
+        .replaceAll('i.e.', 'i${dotPh}e$dotPh');
+
+    // Step 2: protect decimal numbers (3.14, v1.5, etc.).
+    s = s.replaceAllMapped(
+      RegExp(r'(\d+)\.(\d+)'),
+      (m) => '${m.group(1)}$dotPh${m.group(2)}',
+    );
+
+    // Step 3: protect ellipsis.
+    s = s.replaceAll('...', ellPh);
+
+    // Step 4: walk boundary positions — no lookbehind needed.
+    // A boundary: sentence-terminator, optional closing quote, whitespace,
+    // then an uppercase letter or digit (start of next sentence).
+    final boundary = RegExp(r'[.!?।॥]["\u2019\u201D\)]?\s+(?=[A-Z\d])');
+
+    final result = <String>[];
+    int pos = 0;
+    for (final m in boundary.allMatches(s)) {
+      final seg = s.substring(pos, m.start + 1).trim();
+      if (seg.isNotEmpty) result.add(seg);
+      pos = m.end;
+    }
+    final tail = s.substring(pos).trim();
+    if (tail.isNotEmpty) result.add(tail);
+
+    // Step 5: restore placeholders.
+    return result
+        .map((r) => r.replaceAll(dotPh, '.').replaceAll(ellPh, '...'))
+        .where((r) => r.isNotEmpty)
         .toList();
   }
 

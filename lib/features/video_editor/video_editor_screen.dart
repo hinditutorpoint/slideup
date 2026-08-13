@@ -23,6 +23,7 @@ import 'sheets/effects_sheet.dart';
 import 'sheets/image_picker_sheet.dart';
 import 'sheets/image_edit_sheet.dart';
 import 'sheets/merge_sheet.dart';
+import 'sheets/pixabay_video_picker_sheet.dart';
 import 'tabs/ai_tab.dart';
 
 // ═══════════════════════════════════════════════════════
@@ -1526,17 +1527,94 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.video_library_outlined, color: Colors.grey[600], size: 64),
-          const SizedBox(height: 20),
-          Text(
-            'No video loaded',
-            style: TextStyle(fontSize: 16, color: Colors.grey[400]),
+          Icon(
+            Icons.video_library_outlined,
+            color: const Color(0xFF6C63FF),
+            size: 64,
           ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _pickVideo,
-            icon: const Icon(Icons.add),
-            label: const Text('Select Video'),
+          const SizedBox(height: 16),
+          const Text(
+            'Start a New Video Project',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Choose how you would like to start editing',
+            style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Start Blank Canvas Project
+              ElevatedButton.icon(
+                onPressed: () {
+                  ref
+                      .read(videoEditorProvider.notifier)
+                      .createBlankProject();
+                  HapticFeedback.mediumImpact();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6C63FF),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.auto_awesome, size: 20),
+                label: const Text(
+                  'Blank Project',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Import Video Clip
+              OutlinedButton.icon(
+                onPressed: _pickVideo,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white38),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.video_call, size: 20),
+                label: const Text('Import Video'),
+              ),
+              const SizedBox(width: 12),
+
+              // Stock Pixabay Video
+              OutlinedButton.icon(
+                onPressed: () => PixabayVideoPickerSheet.show(context),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0xFF6C63FF)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.movie_creation_outlined,
+                    size: 20, color: Color(0xFF6C63FF)),
+                label: const Text('Stock Videos'),
+              ),
+            ],
           ),
         ],
       ),

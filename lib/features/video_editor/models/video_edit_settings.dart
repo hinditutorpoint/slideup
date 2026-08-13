@@ -70,6 +70,94 @@ enum ExportStatus {
   cancelled,
 }
 
+// ═══════════════════════════════════════════════════════
+// ✅ TRANSITION TYPE (Hybrid Magnetic Timeline)
+// ═══════════════════════════════════════════════════════
+
+enum TransitionType {
+  none,
+  crossfade,
+  dissolve,
+  fadeToBlack,
+  wipeLeft,
+  wipeRight,
+  slideUp,
+  slideDown,
+  zoomIn,
+}
+
+extension TransitionTypeExt on TransitionType {
+  /// FFmpeg xfade transition name (null means simple concat)
+  String? get ffmpegName {
+    switch (this) {
+      case TransitionType.none:
+        return null;
+      case TransitionType.crossfade:
+        return 'fade';
+      case TransitionType.dissolve:
+        return 'dissolve';
+      case TransitionType.fadeToBlack:
+        return 'fadeblack';
+      case TransitionType.wipeLeft:
+        return 'wipeleft';
+      case TransitionType.wipeRight:
+        return 'wiperight';
+      case TransitionType.slideUp:
+        return 'slideup';
+      case TransitionType.slideDown:
+        return 'slidedown';
+      case TransitionType.zoomIn:
+        return 'zoomin';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case TransitionType.none:
+        return 'Cut';
+      case TransitionType.crossfade:
+        return 'Crossfade';
+      case TransitionType.dissolve:
+        return 'Dissolve';
+      case TransitionType.fadeToBlack:
+        return 'Fade to Black';
+      case TransitionType.wipeLeft:
+        return 'Wipe Left';
+      case TransitionType.wipeRight:
+        return 'Wipe Right';
+      case TransitionType.slideUp:
+        return 'Slide Up';
+      case TransitionType.slideDown:
+        return 'Slide Down';
+      case TransitionType.zoomIn:
+        return 'Zoom In';
+    }
+  }
+
+  String get emoji {
+    switch (this) {
+      case TransitionType.none:
+        return '✂️';
+      case TransitionType.crossfade:
+        return '🌅';
+      case TransitionType.dissolve:
+        return '💧';
+      case TransitionType.fadeToBlack:
+        return '⚫';
+      case TransitionType.wipeLeft:
+        return '◀️';
+      case TransitionType.wipeRight:
+        return '▶️';
+      case TransitionType.slideUp:
+        return '⬆️';
+      case TransitionType.slideDown:
+        return '⬇️';
+      case TransitionType.zoomIn:
+        return '🔍';
+    }
+  }
+}
+
 enum MusicCategory {
   all,
   beats,
@@ -434,6 +522,182 @@ class ColorGradeSettings {
   );
 
   static const ColorGradeSettings defaultSettings = ColorGradeSettings();
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ CLIP TRANSITION MODEL (Hybrid Magnetic Timeline)
+// ═══════════════════════════════════════════════════════
+
+@immutable
+class ClipTransition {
+  final TransitionType type;
+  final Duration duration;
+
+  const ClipTransition({
+    this.type = TransitionType.none,
+    this.duration = const Duration(milliseconds: 700),
+  });
+
+  static const ClipTransition none = ClipTransition();
+
+  bool get hasTransition => type != TransitionType.none;
+
+  ClipTransition copyWith({TransitionType? type, Duration? duration}) {
+    return ClipTransition(
+      type: type ?? this.type,
+      duration: duration ?? this.duration,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.index,
+    'duration': duration.inMilliseconds,
+  };
+
+  factory ClipTransition.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return ClipTransition.none;
+    try {
+      return ClipTransition(
+        type: _safeEnum(
+          TransitionType.values,
+          json['type'],
+          TransitionType.none,
+        ),
+        duration: Duration(
+          milliseconds: (json['duration'] as num?)?.toInt() ?? 700,
+        ),
+      );
+    } catch (e) {
+      return ClipTransition.none;
+    }
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ClipTransition &&
+        other.type == type &&
+        other.duration == duration;
+  }
+
+  @override
+  int get hashCode => Object.hash(type, duration);
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ PRIMARY VIDEO CLIP (Hybrid Magnetic Timeline)
+// ═══════════════════════════════════════════════════════
+
+@immutable
+class PrimaryVideoClip {
+  final String id;
+  final String videoPath;
+  final Duration sourceDuration;
+  final Duration trimStart;
+  final Duration trimEnd;
+  /// Transition that plays AFTER this clip (before the next clip)
+  final ClipTransition transitionOut;
+  final Uint8List? thumbnail;
+
+  const PrimaryVideoClip({
+    required this.id,
+    required this.videoPath,
+    required this.sourceDuration,
+    this.trimStart = Duration.zero,
+    Duration? trimEnd,
+    this.transitionOut = ClipTransition.none,
+    this.thumbnail,
+  }) : trimEnd = trimEnd ?? sourceDuration;
+
+  Duration get effectiveDuration {
+    try {
+      final end = trimEnd;
+      final start = trimStart;
+      if (end <= start) return Duration.zero;
+      return end - start;
+    } catch (_) {
+      return Duration.zero;
+    }
+  }
+
+  PrimaryVideoClip copyWith({
+    String? id,
+    String? videoPath,
+    Duration? sourceDuration,
+    Duration? trimStart,
+    Duration? trimEnd,
+    ClipTransition? transitionOut,
+    Uint8List? thumbnail,
+  }) {
+    return PrimaryVideoClip(
+      id: id ?? this.id,
+      videoPath: videoPath ?? this.videoPath,
+      sourceDuration: sourceDuration ?? this.sourceDuration,
+      trimStart: trimStart ?? this.trimStart,
+      trimEnd: trimEnd ?? this.trimEnd,
+      transitionOut: transitionOut ?? this.transitionOut,
+      thumbnail: thumbnail ?? this.thumbnail,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'videoPath': videoPath,
+    'sourceDuration': sourceDuration.inMilliseconds,
+    'trimStart': trimStart.inMilliseconds,
+    'trimEnd': trimEnd.inMilliseconds,
+    'transitionOut': transitionOut.toJson(),
+  };
+
+  factory PrimaryVideoClip.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return PrimaryVideoClip(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        videoPath: '',
+        sourceDuration: Duration.zero,
+      );
+    }
+    try {
+      final sourceDuration = Duration(
+        milliseconds:
+            (json['sourceDuration'] as num?)?.toInt() ?? 0,
+      );
+      return PrimaryVideoClip(
+        id:
+            json['id']?.toString() ??
+            DateTime.now().millisecondsSinceEpoch.toString(),
+        videoPath: json['videoPath']?.toString() ?? '',
+        sourceDuration: sourceDuration,
+        trimStart: Duration(
+          milliseconds: (json['trimStart'] as num?)?.toInt() ?? 0,
+        ),
+        trimEnd: json['trimEnd'] != null
+            ? Duration(
+                milliseconds: (json['trimEnd'] as num).toInt(),
+              )
+            : sourceDuration,
+        transitionOut: ClipTransition.fromJson(
+          json['transitionOut'] as Map<String, dynamic>?,
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ PrimaryVideoClip.fromJson error: $e');
+      return PrimaryVideoClip(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        videoPath: '',
+        sourceDuration: Duration.zero,
+      );
+    }
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PrimaryVideoClip && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2685,6 +2949,11 @@ class VideoProject {
   final Uint8List? thumbnail;
   final List<Duration> markers;
 
+  // ── Hybrid Magnetic Timeline ──────────────────────────
+  /// Ordered list of primary video clips on the magnetic track.
+  /// When empty, the legacy [videoPath] single-clip mode is used.
+  final List<PrimaryVideoClip> primaryVideoClips;
+
   VideoProject({
     required this.id,
     required this.name,
@@ -2702,6 +2971,7 @@ class VideoProject {
     DateTime? modifiedAt,
     this.thumbnail,
     this.markers = const [],
+    this.primaryVideoClips = const [],
   }) : trimEnd = trimEnd ?? videoDuration,
        createdAt = createdAt ?? DateTime.now(),
        modifiedAt = modifiedAt ?? DateTime.now();
@@ -2714,6 +2984,50 @@ class VideoProject {
       return Duration.zero;
     }
   }
+
+  // ── Hybrid Magnetic Timeline helpers ─────────────────
+
+  /// Total duration of the magnetic primary track (sum of all clip durations
+  /// minus the shared transition overlap time).
+  Duration get magneticTrackDuration {
+    try {
+      if (primaryVideoClips.isEmpty) return effectiveDuration;
+      Duration total = Duration.zero;
+      for (int i = 0; i < primaryVideoClips.length; i++) {
+        total += primaryVideoClips[i].effectiveDuration;
+        // Subtract transition overlap (all clips except last)
+        if (i < primaryVideoClips.length - 1) {
+          final t = primaryVideoClips[i].transitionOut;
+          if (t.hasTransition) total -= t.duration;
+        }
+      }
+      return total < Duration.zero ? Duration.zero : total;
+    } catch (_) {
+      return effectiveDuration;
+    }
+  }
+
+  /// Calculates the absolute start time of [clipId] on the magnetic track.
+  Duration getClipStartTime(String clipId) {
+    try {
+      Duration start = Duration.zero;
+      for (int i = 0; i < primaryVideoClips.length; i++) {
+        final clip = primaryVideoClips[i];
+        if (clip.id == clipId) return start;
+        start += clip.effectiveDuration;
+        if (i < primaryVideoClips.length - 1) {
+          final t = clip.transitionOut;
+          if (t.hasTransition) start -= t.duration;
+        }
+      }
+      return Duration.zero;
+    } catch (_) {
+      return Duration.zero;
+    }
+  }
+
+  /// Returns whether the project uses the new magnetic multi-clip mode.
+  bool get isMagneticMode => primaryVideoClips.isNotEmpty;
 
   double get trimStartPercent {
     try {
@@ -2778,6 +3092,7 @@ class VideoProject {
     DateTime? modifiedAt,
     Uint8List? thumbnail,
     List<Duration>? markers,
+    List<PrimaryVideoClip>? primaryVideoClips,
   }) {
     return VideoProject(
       id: id ?? this.id,
@@ -2796,6 +3111,7 @@ class VideoProject {
       modifiedAt: modifiedAt ?? DateTime.now(),
       thumbnail: thumbnail ?? this.thumbnail,
       markers: markers ?? this.markers,
+      primaryVideoClips: primaryVideoClips ?? this.primaryVideoClips,
     );
   }
 
@@ -2815,6 +3131,7 @@ class VideoProject {
     'createdAt': createdAt.toIso8601String(),
     'modifiedAt': modifiedAt.toIso8601String(),
     'markers': markers.map((e) => e.inMilliseconds).toList(),
+    'primaryVideoClips': primaryVideoClips.map((e) => e.toJson()).toList(),
   };
 
   factory VideoProject.fromJson(Map<String, dynamic>? json) {
@@ -2864,6 +3181,10 @@ class VideoProject {
         createdAt: _parseDateTime(json['createdAt']),
         modifiedAt: _parseDateTime(json['modifiedAt']),
         markers: _parseMarkerList(json['markers']),
+        primaryVideoClips: _parseList<PrimaryVideoClip>(
+          json['primaryVideoClips'],
+          PrimaryVideoClip.fromJson,
+        ),
       );
     } catch (e) {
       debugPrint('❌ VideoProject.fromJson error: $e');
@@ -3275,5 +3596,102 @@ List<T> _parseList<T>(
     return value.map((e) => factory(e as Map<String, dynamic>?)).toList();
   } catch (e) {
     return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ STOCK VIDEO MODEL (Pixabay Video Asset)
+// ═══════════════════════════════════════════════════════
+
+class StockVideo {
+  final String id;
+  final String title;
+  final String author;
+  final String videoUrl;
+  final String thumbnailUrl;
+  final Duration duration;
+  final int width;
+  final int height;
+  final bool isDownloaded;
+  final String? localPath;
+  final List<String> tags;
+
+  const StockVideo({
+    required this.id,
+    required this.title,
+    required this.author,
+    required this.videoUrl,
+    required this.thumbnailUrl,
+    required this.duration,
+    required this.width,
+    required this.height,
+    this.isDownloaded = false,
+    this.localPath,
+    this.tags = const [],
+  });
+
+  StockVideo copyWith({
+    String? id,
+    String? title,
+    String? author,
+    String? videoUrl,
+    String? thumbnailUrl,
+    Duration? duration,
+    int? width,
+    int? height,
+    bool? isDownloaded,
+    String? localPath,
+    List<String>? tags,
+  }) {
+    return StockVideo(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      author: author ?? this.author,
+      videoUrl: videoUrl ?? this.videoUrl,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      duration: duration ?? this.duration,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      isDownloaded: isDownloaded ?? this.isDownloaded,
+      localPath: localPath ?? this.localPath,
+      tags: tags ?? this.tags,
+    );
+  }
+
+  factory StockVideo.fromPixabay(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const StockVideo(
+        id: '',
+        title: 'Unknown',
+        author: 'Unknown',
+        videoUrl: '',
+        thumbnailUrl: '',
+        duration: Duration.zero,
+        width: 1920,
+        height: 1080,
+      );
+    }
+    final tags = _parseTags(json['tags']);
+    final videosObj = json['videos'] as Map<String, dynamic>? ?? {};
+    final mediumVid = videosObj['medium'] as Map<String, dynamic>? ??
+        videosObj['small'] as Map<String, dynamic>? ??
+        videosObj['large'] as Map<String, dynamic>? ?? {};
+
+    final pictureId = json['picture_id']?.toString() ?? '';
+    final thumb = pictureId.isNotEmpty
+        ? 'https://i.vimeocdn.com/video/${pictureId}_640x360.jpg'
+        : 'https://picsum.photos/640/360';
+
+    return StockVideo(
+      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: tags.isNotEmpty ? tags.first : 'Stock Video',
+      author: json['user']?.toString() ?? 'Pixabay Artist',
+      videoUrl: mediumVid['url']?.toString() ?? '',
+      thumbnailUrl: thumb,
+      duration: Duration(seconds: (json['duration'] as num? ?? 10).toInt()),
+      width: (mediumVid['width'] as num? ?? 1920).toInt(),
+      height: (mediumVid['height'] as num? ?? 1080).toInt(),
+      tags: tags,
+    );
   }
 }

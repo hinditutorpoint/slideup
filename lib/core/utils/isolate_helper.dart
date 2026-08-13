@@ -59,7 +59,7 @@ class IsolateMessage<T> {
 class _IsolateTaskMessage<T, R> {
   final String taskId;
   final T data;
-  final R Function(T) computation;
+  final Function computation;
   R? result;
 
   _IsolateTaskMessage(this.taskId, this.data, this.computation);
@@ -119,7 +119,8 @@ class ManagedIsolate {
     receivePort.listen((message) {
       if (message is _IsolateTaskMessage) {
         try {
-          final result = message.computation(message.data);
+          final Function fn = message.computation;
+          final result = fn(message.data);
           mainSendPort.send(
             IsolateMessage<dynamic>(
               taskId: message.taskId,

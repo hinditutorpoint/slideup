@@ -7,6 +7,7 @@ import '../models/recent_file.dart';
 import '../services/database_service.dart';
 import '../services/file_scanner_service.dart';
 import '../services/permission_service.dart';
+import '../services/security_service.dart';
 import 'package:uuid/uuid.dart';
 
 // Media Provider
@@ -47,6 +48,15 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
 
   Future<void> addToRecent(MediaFile file, {Duration? lastPosition}) async {
     if (!_isRecentHistoryEnabled()) return;
+    if (file.isLocked ||
+        file.path.toLowerCase().endsWith('.slock') ||
+        file.id.toLowerCase().endsWith('.slock')) {
+      return;
+    }
+
+    final isLockedInService =
+        await SecurityService.instance.isFileLocked(file.path);
+    if (isLockedInService) return;
 
     final recent = RecentFile(
       id: _uuid.v4(),

@@ -67,8 +67,8 @@ class _AppLifecycleHandlerState extends ConsumerState<AppLifecycleHandler>
 
   Future<void> _relockOnResume() async {
     try {
-      final hasPassword = await SecurityService.instance.hasAppPassword();
-      if (!hasPassword) return;
+      final hasLock = await SecurityService.instance.hasAppLock();
+      if (!hasLock) return;
 
       final navigator = rootNavigatorKey.currentState;
       if (navigator == null || !navigator.mounted) return;
@@ -79,18 +79,7 @@ class _AppLifecycleHandlerState extends ConsumerState<AppLifecycleHandler>
         return;
       }
 
-      final canUseBiometric = await SecurityService.instance.canUseBiometric();
-      final biometricEnabled = await SecurityService.instance
-          .isBiometricEnabled();
-
-      bool authenticated = false;
-
-      if (canUseBiometric && biometricEnabled) {
-        authenticated = await SecurityService.instance
-            .authenticateWithBiometric();
-      }
-
-      if (!authenticated && navigator.mounted) {
+      if (navigator.mounted) {
         await navigator.push(
           MaterialPageRoute(
             settings: const RouteSettings(name: '/auth'),

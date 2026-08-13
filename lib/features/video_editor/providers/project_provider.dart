@@ -112,23 +112,70 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     }
   }
 
+  /// Generates an incremental project name like "Project 1", "Project 2", "Project 3"...
+  String getNextIncrementalProjectName([String prefix = 'Project']) {
+    try {
+      final existingProjects = state.allProjects;
+      int maxNumber = 0;
+      final regex = RegExp('^${RegExp.escape(prefix)}\\s*(\\d+)\$', caseSensitive: false);
+
+      for (final project in existingProjects) {
+        final match = regex.firstMatch(project.name.trim());
+        if (match != null) {
+          final numStr = match.group(1);
+          if (numStr != null) {
+            final val = int.tryParse(numStr);
+            if (val != null && val > maxNumber) {
+              maxNumber = val;
+            }
+          }
+        }
+      }
+
+      if (maxNumber == 0) {
+        maxNumber = existingProjects.length;
+      }
+
+      return '$prefix ${maxNumber + 1}';
+    } catch (_) {
+      return '$prefix 1';
+    }
+  }
+
   // ═══════════════════════════════════════════════════════
   // ✅ CREATE PROJECT
   // ═══════════════════════════════════════════════════════
 
   Future<Result<VideoProject>> createProject({
-    required String name,
+    String? name,
     required String videoPath,
     required Duration videoDuration,
   }) async {
     return SafeAsync.run(() async {
+      final resolvedName = (name == null ||
+              name.trim().isEmpty ||
+              name == 'Untitled Project' ||
+              name == 'Untitled' ||
+              name == 'New Project')
+          ? getNextIncrementalProjectName()
+          : name.trim();
+
       final project = VideoProject(
         id: _uuid.v4(),
-        name: name,
+        name: resolvedName,
         videoPath: videoPath,
         videoDuration: videoDuration,
         createdAt: DateTime.now(),
         modifiedAt: DateTime.now(),
+        primaryVideoClips: videoPath.isNotEmpty
+            ? [
+                PrimaryVideoClip(
+                  id: _uuid.v4(),
+                  videoPath: videoPath,
+                  sourceDuration: videoDuration,
+                ),
+              ]
+            : const [],
       );
 
       state = state.copyWith(currentProject: project, lastSaved: null);
@@ -139,6 +186,17 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
 
       return project;
     }, operationName: 'createProject');
+  }
+
+  Future<Result<VideoProject>> createBlankProject({
+    String? name,
+    Duration defaultDuration = const Duration(seconds: 10),
+  }) async {
+    return createProject(
+      name: name,
+      videoPath: '',
+      videoDuration: defaultDuration,
+    );
   }
 
   // ═══════════════════════════════════════════════════════

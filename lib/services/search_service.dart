@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import '../models/media_file.dart';
+import 'supported_extensions_service.dart';
 
 class SearchService {
   static final SearchService instance = SearchService._();
@@ -29,6 +30,9 @@ class SearchService {
         followLinks: false,
       )) {
         if (entity is File) {
+          if (!SupportedExtensionsService.instance.isFileSupported(entity.path)) {
+            continue;
+          }
           final mediaFile = await _checkFileMatch(
             entity,
             searchQuery,

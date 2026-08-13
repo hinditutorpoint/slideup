@@ -46,6 +46,14 @@ class _FileThumbnailWidgetState extends State<FileThumbnailWidget> {
   Future<void> _loadThumbnail() async {
     if (!mounted) return;
 
+    if (widget.mediaFile.isLocked || widget.mediaFile.path.endsWith('.slock')) {
+      setState(() {
+        _isLoading = false;
+        _hasError = true;
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _hasError = false;
@@ -90,6 +98,10 @@ class _FileThumbnailWidgetState extends State<FileThumbnailWidget> {
 
   Widget _buildDefaultIcon() {
     final extension = path.extension(widget.mediaFile.path).toLowerCase();
+    if (widget.mediaFile.isLocked || extension == '.slock') {
+      return Icon(Icons.lock, color: const Color(0xFF6C63FF), size: widget.size * 0.6);
+    }
+
     IconData iconData;
     Color iconColor;
 

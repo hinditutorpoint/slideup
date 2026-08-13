@@ -26,6 +26,10 @@ class TimelineState {
   final Set<String> hiddenItems;
   final List<Duration> markers;
 
+  // ── Hybrid Magnetic Timeline ──────────────────────────
+  /// Ordered sequence of primary video clips on the magnetic track.
+  final List<PrimaryVideoClip> primaryVideoClips;
+
   const TimelineState({
     this.textItems = const [],
     this.imageItems = const [],
@@ -40,6 +44,7 @@ class TimelineState {
     this.lockedItems = const {},
     this.hiddenItems = const {},
     this.markers = const [],
+    this.primaryVideoClips = const [],
   });
 
   List<TimelineItem> get allItems {
@@ -89,6 +94,7 @@ class TimelineState {
     Set<String>? lockedItems,
     Set<String>? hiddenItems,
     List<Duration>? markers,
+    List<PrimaryVideoClip>? primaryVideoClips,
   }) {
     return TimelineState(
       textItems: textItems ?? this.textItems,
@@ -104,6 +110,7 @@ class TimelineState {
       lockedItems: lockedItems ?? this.lockedItems,
       hiddenItems: hiddenItems ?? this.hiddenItems,
       markers: markers ?? this.markers,
+      primaryVideoClips: primaryVideoClips ?? this.primaryVideoClips,
     );
   }
 
@@ -122,6 +129,7 @@ class TimelineState {
       lockedItems: lockedItems,
       hiddenItems: hiddenItems,
       markers: markers,
+      primaryVideoClips: primaryVideoClips,
     );
   }
 }
@@ -145,12 +153,13 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       textItems: project.textItems,
       imageItems: project.imageItems,
       audioItems: project.audioItems,
-      totalDuration: project.effectiveDuration,
+      totalDuration: project.magneticTrackDuration,
       currentPosition: Duration.zero,
       selectedItemId: null,
       selectedItemType: null,
       selectedItemIds: const {},
       markers: project.markers,
+      primaryVideoClips: project.primaryVideoClips,
     );
   }
 
@@ -164,8 +173,238 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
         imageItems: state.imageItems,
         audioItems: state.audioItems,
         markers: state.markers,
+        primaryVideoClips: state.primaryVideoClips,
       ),
     );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ HYBRID MAGNETIC TIMELINE – RIPPLE ENGINE
+  // ═══════════════════════════════════════════════════════
+
+  /// Appends [clip] to the end of the primary magnetic track.
+  void addPrimaryClip(PrimaryVideoClip clip) {
+    try {
+      final clips = [...state.primaryVideoClips, clip];
+      final project = _projectNotifier.state.currentProject;
+      final newDuration = _calcMagneticDuration(clips);
+      state = state.copyWith(
+        primaryVideoClips: clips,
+        totalDuration: newDuration,
+      );
+      if (project != null) {
+        _projectNotifier.updateCurrentProject(
+          project.copyWith(
+            primaryVideoClips: clips,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ addPrimaryClip error: $e');
+    }
+  }
+
+  /// Ripple Trim: changes the effective duration of [clipId].
+  /// All downstream clips and overlay items automatically shift.
+  void rippleTrimPrimaryClip(
+    String clipId, {
+    Duration? newTrimStart,
+    Duration? newTrimEnd,
+  }) {
+    try {
+      final clips = state.primaryVideoClips.toList();
+      final idx = clips.indexWhere((c) => c.id == clipId);
+      if (idx < 0) return;
+
+      final oldClip = clips[idx];
+      final oldEffective = oldClip.effectiveDuration;
+      final updatedClip = oldClip.copyWith(
+        trimStart: newTrimStart,
+        trimEnd: newTrimEnd,
+      );
+      final delta = updatedClip.effectiveDuration - oldEffective;
+      clips[idx] = updatedClip;
+
+      // Shift secondary overlay items that start after the clip boundary
+      final clipAbsStart = _calcStartTimeAt(clips, idx);
+      final shiftFrom = clipAbsStart + oldEffective;
+
+      final shiftedText = state.textItems.map((item) {
+        if (item.startTime >= shiftFrom) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final shiftedImage = state.imageItems.map((item) {
+        if (item.startTime >= shiftFrom) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final shiftedAudio = state.audioItems.map((item) {
+        if (item.startTime >= shiftFrom) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final newDuration = _calcMagneticDuration(clips);
+      state = state.copyWith(
+        primaryVideoClips: clips,
+        textItems: shiftedText,
+        imageItems: shiftedImage,
+        audioItems: shiftedAudio,
+        totalDuration: newDuration,
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ rippleTrimPrimaryClip error: $e');
+    }
+  }
+
+  /// Ripple Delete: removes [clipId] and collapses the gap automatically.
+  void rippleDeletePrimaryClip(String clipId) {
+    try {
+      final clips = state.primaryVideoClips.toList();
+      final idx = clips.indexWhere((c) => c.id == clipId);
+      if (idx < 0) return;
+
+      final clipAbsStart = _calcStartTimeAt(clips, idx);
+      final deletedDuration = clips[idx].effectiveDuration;
+      final shiftFrom = clipAbsStart;
+      final delta = -deletedDuration;
+      clips.removeAt(idx);
+
+      // Shift all secondary overlay items after the deleted clip
+      final shiftedText = state.textItems.map((item) {
+        if (item.startTime >= shiftFrom + deletedDuration) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final shiftedImage = state.imageItems.map((item) {
+        if (item.startTime >= shiftFrom + deletedDuration) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final shiftedAudio = state.audioItems.map((item) {
+        if (item.startTime >= shiftFrom + deletedDuration) {
+          return item.copyWith(
+            startTime: item.startTime + delta,
+            endTime: item.endTime + delta,
+          );
+        }
+        return item;
+      }).toList();
+
+      final newDuration = _calcMagneticDuration(clips);
+      state = state.copyWith(
+        primaryVideoClips: clips,
+        textItems: shiftedText,
+        imageItems: shiftedImage,
+        audioItems: shiftedAudio,
+        totalDuration: newDuration,
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ rippleDeletePrimaryClip error: $e');
+    }
+  }
+
+  /// Reorders clips on the magnetic track (drag-and-drop).
+  void reorderPrimaryClips(int oldIndex, int newIndex) {
+    try {
+      final clips = state.primaryVideoClips.toList();
+      if (oldIndex < 0 ||
+          oldIndex >= clips.length ||
+          newIndex < 0 ||
+          newIndex >= clips.length) {
+        return;
+      }
+      final clip = clips.removeAt(oldIndex);
+      clips.insert(newIndex, clip);
+      final newDuration = _calcMagneticDuration(clips);
+      state = state.copyWith(
+        primaryVideoClips: clips,
+        totalDuration: newDuration,
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ reorderPrimaryClips error: $e');
+    }
+  }
+
+  /// Sets the outgoing transition for the clip at [clipIndex].
+  void setClipTransition(int clipIndex, ClipTransition transition) {
+    try {
+      final clips = state.primaryVideoClips.toList();
+      if (clipIndex < 0 || clipIndex >= clips.length - 1) return;
+      clips[clipIndex] = clips[clipIndex].copyWith(
+        transitionOut: transition,
+      );
+      final newDuration = _calcMagneticDuration(clips);
+      state = state.copyWith(
+        primaryVideoClips: clips,
+        totalDuration: newDuration,
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ setClipTransition error: $e');
+    }
+  }
+
+  // ── Private ripple helpers ─────────────────────────────
+
+  Duration _calcMagneticDuration(List<PrimaryVideoClip> clips) {
+    try {
+      Duration total = Duration.zero;
+      for (int i = 0; i < clips.length; i++) {
+        total += clips[i].effectiveDuration;
+        if (i < clips.length - 1) {
+          final t = clips[i].transitionOut;
+          if (t.hasTransition) total -= t.duration;
+        }
+      }
+      return total < Duration.zero ? Duration.zero : total;
+    } catch (_) {
+      return Duration.zero;
+    }
+  }
+
+  Duration _calcStartTimeAt(List<PrimaryVideoClip> clips, int index) {
+    try {
+      Duration start = Duration.zero;
+      for (int i = 0; i < index; i++) {
+        start += clips[i].effectiveDuration;
+        if (i < clips.length - 1) {
+          final t = clips[i].transitionOut;
+          if (t.hasTransition) start -= t.duration;
+        }
+      }
+      return start;
+    } catch (_) {
+      return Duration.zero;
+    }
   }
 
   // ═══════════════════════════════════════════════════════

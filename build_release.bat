@@ -1,0 +1,3 @@
+@echo off
+powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1
+pause

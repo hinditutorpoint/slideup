@@ -4,6 +4,7 @@ import '../models/media_file.dart';
 import '../services/file_operations_service.dart';
 import '../services/settings_service.dart';
 import '../services/search_service.dart';
+import '../services/supported_extensions_service.dart';
 
 class FileBrowserState {
   final Directory? currentDirectory;
@@ -84,6 +85,9 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
     final sortOrder = await SettingsService.instance.getSortOrder();
     final lastLocation = await SettingsService.instance.getLastLocation();
 
+    // Initialize SupportedExtensionsService
+    await SupportedExtensionsService.instance.initialize();
+
     state = state.copyWith(
       isGridView: isGridView,
       showHiddenFiles: showHiddenFiles,
@@ -129,14 +133,22 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
   List<FileSystemEntity> _filterAndSortEntities(
     List<FileSystemEntity> entities,
   ) {
-    // Filter hidden files
+    // Filter hidden files (always allow .slock files in SlideUp File Browser)
     List<FileSystemEntity> filtered = entities;
     if (!state.showHiddenFiles) {
       filtered = entities.where((entity) {
+        if (entity.path.endsWith('.slock')) return true;
         final name = entity.path.split('/').last;
         return !name.startsWith('.');
       }).toList();
     }
+
+    // Filter by user's checked/enabled file extensions
+    filtered = filtered.where((entity) {
+      if (entity is Directory) return true;
+      if (entity.path.endsWith('.slock')) return true;
+      return SupportedExtensionsService.instance.isFileSupported(entity.path);
+    }).toList();
 
     // Sort entities
     filtered.sort((a, b) {

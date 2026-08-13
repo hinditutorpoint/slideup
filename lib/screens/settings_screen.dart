@@ -6,7 +6,6 @@ import '../services/security_service.dart';
 import '../services/settings_service.dart';
 import '../providers/settings_provider.dart';
 import '../helpers/image_helper.dart';
-import '../services/database_service.dart';
 import '../services/multi_database_backup_service.dart';
 import 'auth_screen.dart';
 import 'privacy_policy_screen.dart';
@@ -14,6 +13,13 @@ import 'terms_of_service_screen.dart';
 import '../models/database_config.dart';
 import '/features/speaker_player/screens/models_screen.dart';
 import '../features/speaker_player/tts_controller.dart';
+import '../features/private_browser/browser_settings_screen.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import '../services/thumbnail_service.dart';
+import 'locked_files_screen.dart';
+import 'file_extensions_screen.dart';
+import 'package:file_picker/file_picker.dart';
 
 // Import enums from settings service
 export '../services/settings_service.dart' show SortBy, SortOrder;
@@ -55,31 +61,85 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         children: [
           _buildSectionHeader('Security'),
           FutureBuilder<bool>(
-            future: SecurityService.instance.hasAppPassword(),
+            future: SecurityService.instance.hasAppLock(),
             builder: (context, snapshot) {
-              final hasPassword = snapshot.data ?? false;
+              final hasLock = snapshot.data ?? false;
 
-              return SwitchListTile(
-                title: const Text('App Lock'),
-                subtitle: const Text('Require password to open app'),
-                value: hasPassword,
-                onChanged: (value) async {
-                  if (value) {
-                    final result = await Navigator.push<bool>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AuthScreen(isSetup: true),
-                        fullscreenDialog: true,
-                      ),
-                    );
+              return Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text('App Lock'),
+                    subtitle: Text(
+                      hasLock
+                          ? 'App security lock is enabled'
+                          : 'Require authentication to open app',
+                    ),
+                    value: hasLock,
+                    onChanged: (value) async {
+                      if (value) {
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AuthScreen(isSetup: true),
+                            fullscreenDialog: true,
+                          ),
+                        );
 
-                    if (result == true) {
-                      setState(() {});
-                    }
-                  } else {
-                    _showRemovePasswordDialog();
-                  }
-                },
+                        if (result == true) {
+                          setState(() {});
+                        }
+                      } else {
+                        _showRemoveLockDialog();
+                      }
+                    },
+                  ),
+                  if (hasLock) ...[
+                    FutureBuilder<AppLockType>(
+                      future: SecurityService.instance.getAppLockType(),
+                      builder: (context, lockTypeSnapshot) {
+                        final lockType =
+                            lockTypeSnapshot.data ?? AppLockType.password;
+
+                        return ListTile(
+                          title: const Text('Lock Type'),
+                          subtitle: Text(lockType.displayName),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () async {
+                            final result = await Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AuthScreen(
+                                  isSetup: true,
+                                  initialLockType: lockType,
+                                ),
+                                fullscreenDialog: true,
+                              ),
+                            );
+                            if (result == true) {
+                              setState(() {});
+                            }
+                          },
+                        );
+                      },
+                    ),
+                    FutureBuilder<bool>(
+                      future: SecurityService.instance.hasSecurityQuestion(),
+                      builder: (context, sqSnapshot) {
+                        final hasQuestion = sqSnapshot.data ?? false;
+                        return ListTile(
+                          title: const Text('Security Question'),
+                          subtitle: Text(
+                            hasQuestion
+                                ? 'Configured for lock recovery'
+                                : 'Set up security question for recovery',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: _showSetSecurityQuestionDialog,
+                        );
+                      },
+                    ),
+                  ],
+                ],
               );
             },
           ),
@@ -113,11 +173,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             subtitle: const Text('Manage file locks'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
-              // TODO: Navigate to locked files screen
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const LockedFilesScreen(),
+                ),
+              );
             },
           ),
 
           const Divider(),
+          _buildSectionHeader('Browser'),
+          ListTile(
+            leading: const Icon(Icons.shield_outlined, color: Colors.teal),
+            title: const Text('Browser Settings'),
+            subtitle: const Text('HTTPS-only, trackers, JavaScript'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const BrowserSettingsScreen(),
+                ),
+              );
+            },
+          ),
           _buildSectionHeader('Player Settings'),
 
           SwitchListTile(
@@ -200,8 +280,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: const Text('Download Location'),
             subtitle: Text(settings.downloadLocation),
             trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final selected =
+                  await FilePicker.platform.getDirectoryPath(
+                dialogTitle: 'Choose download folder',
+                initialDirectory: settings.downloadLocation,
+              );
+              if (selected != null && mounted) {
+                await ref
+                    .read(settingsProvider.notifier)
+                    .setDownloadLocation(selected);
+              }
+            },
+          ),
+
+          const Divider(),
+          _buildSectionHeader('File Management'),
+
+          ListTile(
+            leading: const Icon(Icons.extension_outlined),
+            title: const Text('Supported File Extensions'),
+            subtitle: const Text(
+              'Customize extensions, check/uncheck & add custom formats',
+            ),
+            trailing: const Icon(Icons.chevron_right),
             onTap: () {
-              // TODO: Show folder picker
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const FileExtensionsScreen(),
+                ),
+              );
             },
           ),
 
@@ -361,12 +470,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  void _showRemovePasswordDialog() {
+  void _showRemoveLockDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove Password'),
-        content: const Text('Are you sure you want to remove app password?'),
+        title: const Text('Remove App Lock'),
+        content: const Text('Are you sure you want to remove the app security lock?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -374,13 +483,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await SecurityService.instance.removeAppPassword();
+              await SecurityService.instance.removeAppLock();
               if (!context.mounted) return;
               Navigator.pop(context);
               setState(() {});
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSetSecurityQuestionDialog() async {
+    final currentQuestion =
+        await SecurityService.instance.getSecurityQuestion();
+    if (!mounted) return;
+
+    final questionController = TextEditingController(
+      text: currentQuestion ?? 'What was the name of your first pet?',
+    );
+    final answerController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Security Recovery Question'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Set a question and answer to reset your app lock if forgotten:',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: questionController,
+              decoration: const InputDecoration(
+                labelText: 'Security Question',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: answerController,
+              decoration: const InputDecoration(
+                labelText: 'Answer (Case-insensitive)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final q = questionController.text.trim();
+              final a = answerController.text.trim();
+              if (q.isNotEmpty && a.isNotEmpty) {
+                await SecurityService.instance.setSecurityQuestion(q, a);
+                if (!ctx.mounted) return;
+                Navigator.pop(ctx);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Security question saved')),
+                );
+                setState(() {});
+              }
+            },
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -478,9 +654,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Cache'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.cleaning_services, color: Color(0xFF6C63FF)),
+            SizedBox(width: 8),
+            Text('Clear Cache'),
+          ],
+        ),
         content: const Text(
-          'This will delete all cached thumbnails and temporary files.',
+          'This will delete all cached thumbnails, temporary export files, and database orphans to free up storage.',
         ),
         actions: [
           TextButton(
@@ -489,21 +672,79 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await DatabaseService.instance.database;
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+
               try {
-                final cleaned = await ImageHelper.cleanupDatabaseOrphans();
-                if (cleaned > 0) {
-                  if (!context.mounted) return;
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Cache cleared')),
+                int bytesFreed = 0;
+
+                // 1. Clear Thumbnail Service Cache
+                try {
+                  final cacheSize = await ThumbnailService.instance.getCacheSize();
+                  await ThumbnailService.instance.clearCache();
+                  bytesFreed += cacheSize;
+                } catch (e) {
+                  debugPrint('Error clearing thumbnail cache: $e');
+                }
+
+                // 2. Clear Database Orphans
+                try {
+                  await ImageHelper.cleanupDatabaseOrphans();
+                } catch (e) {
+                  debugPrint('Error cleaning database orphans: $e');
+                }
+
+                // 3. Clear Temporary Directory Files
+                try {
+                  final tempDir = await getTemporaryDirectory();
+                  if (await tempDir.exists()) {
+                    final entities = tempDir.listSync(recursive: true);
+                    for (final entity in entities) {
+                      try {
+                        if (entity is File) {
+                          final size = await entity.length();
+                          await entity.delete();
+                          bytesFreed += size;
+                        }
+                      } catch (_) {}
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('Error clearing temp directory: $e');
+                }
+
+                navigator.pop();
+                if (mounted) {
+                  final mbFreed = (bytesFreed / (1024 * 1024)).toStringAsFixed(1);
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        bytesFreed > 0
+                            ? 'Cache cleared successfully ($mbFreed MB freed)'
+                            : 'Cache cleared successfully',
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                    ),
                   );
                 }
               } catch (e) {
-                debugPrint('Error during cleanup: $e');
+                debugPrint('Error in clearCache: $e');
+                navigator.pop();
+                if (mounted) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to clear cache: $e'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
               }
             },
-            child: const Text('Clear'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6C63FF),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Clear Now'),
           ),
         ],
       ),

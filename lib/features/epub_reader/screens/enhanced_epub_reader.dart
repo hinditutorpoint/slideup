@@ -1011,20 +1011,25 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
     if (!mounted) return;
     if (_pageController == null || !_pageController!.hasClients) return;
 
-    final currentPage = _pageController!.page?.round() ?? _currentPageIndex;
+    try {
+      final currentPage = _pageController!.page?.round() ?? _currentPageIndex;
 
-    if (currentPage != targetChapterIndex) {
-      debugPrint('Syncing PageController: $currentPage -> $targetChapterIndex');
+      if (currentPage != targetChapterIndex) {
+        debugPrint(
+            'Syncing PageController: $currentPage -> $targetChapterIndex');
 
-      setState(() {
-        _currentPageIndex = targetChapterIndex;
-      });
+        setState(() {
+          _currentPageIndex = targetChapterIndex;
+        });
 
-      _pageController!.animateToPage(
-        targetChapterIndex,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
+        _pageController!.animateToPage(
+          targetChapterIndex,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      }
+    } catch (e, st) {
+      debugPrint('[EPUB-SYNC] _syncPageControllerWithState error: $e\n$st');
     }
   }
 
@@ -1052,26 +1057,32 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
           itemCount: book.chapterCount,
           onPageChanged: _onPageChanged,
           itemBuilder: (context, index) {
-            // Show content for the page that matches current state
-            if (index == state.currentChapterIndex) {
-              return EpubContentView(
-                key: ValueKey('chapter_${index}_${chapter.id}'),
-                chapter: chapter,
-                settings: settings,
-                highlights: ref.read(currentChapterHighlightsProvider),
-                translatedText: settings.translationEnabled
-                    ? _translatedText
-                    : null,
-                isTranslating: _isTranslating,
-                initialScrollPosition: state.progress?.chapterProgress ?? 0.0,
-                onScrollProgress: _onScrollProgress,
-                onTextSelected: _onTextSelected,
-                onLinkTapped: _onLinkTapped,
-                onImageTapped: _onImageTapped,
-              );
-            }
+            try {
+              // Show content for the page that matches current state
+              if (index == state.currentChapterIndex) {
+                return EpubContentView(
+                  key: ValueKey('chapter_${index}_${chapter.id}'),
+                  chapter: chapter,
+                  settings: settings,
+                  highlights: ref.read(currentChapterHighlightsProvider),
+                  translatedText: settings.translationEnabled
+                      ? _translatedText
+                      : null,
+                  isTranslating: _isTranslating,
+                  initialScrollPosition: state.progress?.chapterProgress ?? 0.0,
+                  onScrollProgress: _onScrollProgress,
+                  onTextSelected: _onTextSelected,
+                  onLinkTapped: _onLinkTapped,
+                  onImageTapped: _onImageTapped,
+                );
+              }
 
-            return _buildChapterPlaceholder(index, book);
+              return _buildChapterPlaceholder(index, book);
+            } catch (e, st) {
+              debugPrint(
+                  '[EPUB-BUILD] itemBuilder($index) error: $e\n$st');
+              return _buildChapterPlaceholder(index, book);
+            }
           },
         ),
       ),
@@ -2093,44 +2104,55 @@ class _EnhancedEpubReaderState extends ConsumerState<EnhancedEpubReader>
   }
 
   void _onPageChanged(int index) {
-    if (_isSyncingPage || !mounted) return;
+    try {
+      if (_isSyncingPage || !mounted) return;
 
-    if (_isTranslating && _translatingChapterIndex != index) {
-      debugPrint(
-        '🛑 Cancelling translation for chapter $_translatingChapterIndex',
-      );
-      _cancelToken?.cancel();
-      _cancelToken = null;
-    }
+      if (_isTranslating && _translatingChapterIndex != index) {
+        debugPrint(
+          '🛑 Cancelling translation for chapter $_translatingChapterIndex',
+        );
+        _cancelToken?.cancel();
+        _cancelToken = null;
+      }
 
-    setState(() {
-      _currentPageIndex = index;
-      _translatedText = null;
-      _translatedTitle = null;
-      _isTranslating = false;
-      _translationProgress = 0;
-    });
-
-    // Update state in service
-    ref.read(readerServiceProvider).goToChapter(index);
-
-    // Start translation for new chapter if enabled
-    if (settings.translationEnabled) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted && _currentPageIndex == index) {
-          _translateCurrentChapter();
-
-          // ✅ PRELOAD ADJACENT CHAPTERS (after small delay)
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted && settings.translationEnabled) {
-              _preloadAdjacentTranslations(index);
-            }
-          });
-        }
+      setState(() {
+        _currentPageIndex = index;
+        _translatedText = null;
+        _translatedTitle = null;
+        _isTranslating = false;
+        _translationProgress = 0;
       });
-    }
 
-    _startUIHideTimer();
+      // Update state in service
+      ref.read(readerServiceProvider).goToChapter(index).then(
+        (result) {
+          if (result.isFailure) {
+            debugPrint('[EPUB-PAGESWITCH] goToChapter($index) failed: '
+                '${result.error}');
+          }
+        },
+      );
+
+      // Start translation for new chapter if enabled
+      if (settings.translationEnabled) {
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted && _currentPageIndex == index) {
+            _translateCurrentChapter();
+
+            // ✅ PRELOAD ADJACENT CHAPTERS (after small delay)
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && settings.translationEnabled) {
+                _preloadAdjacentTranslations(index);
+              }
+            });
+          }
+        });
+      }
+
+      _startUIHideTimer();
+    } catch (e, st) {
+      debugPrint('[EPUB-PAGESWITCH] _onPageChanged($index) error: $e\n$st');
+    }
   }
 
   Widget _buildDraggableSelectionToolbar() {

@@ -381,6 +381,7 @@ class DatabaseService {
 
   // Recent Files Operations
   Future<void> insertOrUpdateRecentFile(RecentFile recentFile) async {
+    if (recentFile.mediaId.toLowerCase().endsWith('.slock')) return;
     final db = await database;
     final existing = await db.query(
       'recent_files',

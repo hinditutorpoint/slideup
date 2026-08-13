@@ -5,11 +5,14 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../../core/constants/app_constants.dart' as app_constants;
 import '../models/download_task.dart';
 import '../utils/reader_utils.dart';
 import 'txt_reader_screen.dart';
+import '../../documents/screens/unified_reader_screen.dart';
 
 /// Text Downloads Screen - Main Downloads Manager for TXT files
 class TextDownloadsScreen extends StatefulWidget {
@@ -17,7 +20,37 @@ class TextDownloadsScreen extends StatefulWidget {
   final String? localPath;
   final String? title;
 
-  const TextDownloadsScreen({super.key, this.url, this.localPath, this.title});
+  /// Which file type this library manages.
+  final PdfFileFilter filter;
+
+  /// AppBar title shown for this library.
+  final String libraryTitle;
+
+  /// Extensions allowed when picking local files.
+  final List<String> pickExtensions;
+
+  /// Title shown in the "Add Download" bottom sheet.
+  final String addSheetTitle;
+
+  /// URL hint shown in the "Add Download" bottom sheet.
+  final String addSheetUrlHint;
+
+  /// Subtitle shown when the downloaded library is empty.
+  final String emptyDownloadedSubtitle;
+
+  const TextDownloadsScreen({
+    super.key,
+    this.url,
+    this.localPath,
+    this.title,
+    this.filter = PdfFileFilter.txt,
+    this.libraryTitle = 'Text Library',
+    this.pickExtensions = const ['txt'],
+    this.addSheetTitle = 'Add Text File',
+    this.addSheetUrlHint = 'https://example.com/document.txt',
+    this.emptyDownloadedSubtitle =
+        'Your downloaded text files will appear here',
+  });
 
   @override
   State<TextDownloadsScreen> createState() => _TextDownloadsScreenState();
@@ -35,6 +68,7 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
   // ignore: prefer_final_fields
   List<DownloadTask> _downloadingTasks = [];
   List<DownloadTask> _completedTasks = [];
+  final Map<String, String> _epubBookTitles = {};
   ReadingStats _readingStats = const ReadingStats();
   bool _isLoading = true;
   String? _error;
@@ -93,6 +127,12 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
   void _onTabChanged() {
     try {
       if (mounted) setState(() {});
+      // Refresh library + stats when leaving the Active tab, so files
+      // downloaded/read via other managers show up.
+      if (_tabController.index != 0) {
+        _loadDownloadedFiles();
+        _loadReadingStats();
+      }
     } catch (_) {}
   }
 
@@ -123,9 +163,13 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
   /// Load PERMANENTLY downloaded files from DownloadLibraryManager
   Future<void> _loadDownloadedFiles() async {
     try {
-      // Filter for TXT files only
+      // Re-sync with disk in case files were added by another manager
+      // instance (e.g. the documents DownloadLibraryManager).
+      await _libraryManager.reload();
+
+      // Filter for the configured file type only
       final downloads = await _libraryManager.listDownloads(
-        filter: PdfFileFilter.txt,
+        filter: widget.filter,
       );
 
       final tasks = <DownloadTask>[];
@@ -168,15 +212,31 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
   Future<void> _loadReadingStats() async {
     try {
       final positions = await _storageManager.getAllReadingPositions();
+      _epubBookTitles.clear();
+
+      final filtered = <String, ReadingPosition>{};
+
+      if (widget.filter == PdfFileFilter.epub) {
+        try {
+          await _loadEpubPositions(filtered);
+        } catch (e) {
+          _logError('Load epub stats error', e, null);
+        }
+      }
+
+      for (final entry in positions.entries) {
+        if (_positionBelongsToFilter(entry.key)) {
+          filtered.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
 
       int booksRead = 0;
       int pagesRead = 0;
-      Map<String, double> progressByBook = {};
+      final progressByBook = <String, double>{};
 
-      for (var entry in positions.entries) {
-        final progress = entry.value.progress;
+      for (final entry in filtered.entries) {
+        final progress = entry.value.progress.clamp(0.0, 1.0);
         progressByBook[entry.key] = progress;
-
         if (progress >= 0.9) booksRead++;
         pagesRead += entry.value.page;
       }
@@ -187,13 +247,101 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
             totalBooks: _completedTasks.length,
             booksRead: booksRead,
             pagesRead: pagesRead,
-            currentStreak: _calculateStreak(positions),
+            currentStreak: _calculateStreak(filtered),
             progressByBook: progressByBook,
           );
         });
       }
     } catch (e, stack) {
       _logError('Load stats error', e, stack);
+    }
+  }
+
+  /// Merge EPUB reading progress (stored in the 'reading_progress' Hive box)
+  /// into the stats for the EPUB library tab.
+  Future<void> _loadEpubPositions(
+    Map<String, ReadingPosition> filtered,
+  ) async {
+    final progressBox = await Hive.openBox<dynamic>(
+      app_constants.AppConstants.hiveProgressBox,
+    );
+    final booksBox = await Hive.openBox<dynamic>(
+      app_constants.AppConstants.hiveBooksBox,
+    );
+
+    for (final key in progressBox.keys) {
+      final raw = progressBox.get(key);
+      if (raw == null) continue;
+      try {
+        final map = Map<String, dynamic>.from(raw as Map);
+        final bookId = map['bookId'] as String? ?? key.toString();
+        final progress = (map['overallProgress'] as num?)?.toDouble() ?? 0.0;
+        final page = map['currentPage'] as int? ?? 0;
+
+        final rawLastRead = map['lastReadDate'];
+        final lastRead = rawLastRead is String
+            ? (DateTime.tryParse(rawLastRead) ?? DateTime.now())
+            : DateTime.now();
+
+        String title = '';
+        try {
+          final book = booksBox.get(bookId);
+          final dynamicBookTitle = book?.title;
+          if (dynamicBookTitle is String) title = dynamicBookTitle;
+        } catch (_) {}
+
+        _epubBookTitles[bookId] = title.isNotEmpty ? title : bookId;
+
+        if (progress <= 0 && page <= 0) continue;
+
+        filtered[key.toString()] = ReadingPosition(
+          identifier: key.toString(),
+          page: page,
+          progress: progress,
+          lastRead: lastRead,
+          metadata: {'title': title},
+        );
+      } catch (_) {}
+    }
+  }
+
+  /// Whether the position (keyed by [identifier]) belongs to THIS tab's type.
+  bool _positionBelongsToFilter(String identifier) {
+    if (widget.filter == PdfFileFilter.all) return true;
+
+    final matchesLibrary = _completedTasks.any(
+      (t) =>
+          t.id == identifier ||
+          t.url == identifier ||
+          t.localPath == identifier,
+    );
+    if (matchesLibrary) return true;
+
+    return _identifierHasType(identifier, widget.filter);
+  }
+
+  bool _identifierHasType(String id, PdfFileFilter filter) {
+    final lower = id.toLowerCase();
+    String? ext;
+    try {
+      final cleaned = lower.split('#').first.split('?').first;
+      final segment = cleaned.split('/').last;
+      final dot = segment.lastIndexOf('.');
+      if (dot != -1 && dot < segment.length - 1) {
+        ext = segment.substring(dot + 1);
+      }
+    } catch (_) {}
+
+    switch (filter) {
+      case PdfFileFilter.pdf:
+        return ext == 'pdf';
+      case PdfFileFilter.epub:
+        return ext == 'epub';
+      case PdfFileFilter.txt:
+        return ext == 'txt';
+      case PdfFileFilter.all:
+      case PdfFileFilter.other:
+        return true;
     }
   }
 
@@ -342,7 +490,11 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
   String _generateFileName(String url, String title) {
     try {
       final uri = Uri.parse(url);
-      String ext = 'txt';
+      String ext = switch (widget.filter) {
+        PdfFileFilter.pdf => 'pdf',
+        PdfFileFilter.epub => 'epub',
+        _ => 'txt',
+      };
 
       final path = uri.path.toLowerCase();
       if (path.endsWith('.pdf')) {
@@ -552,17 +704,25 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
 
   void _openReader(String path, String title, String? url) {
     try {
+      final Widget reader = widget.filter == PdfFileFilter.txt
+          ? TxtReaderScreen(
+              txtUrl: url ?? 'file://$path',
+              title: title,
+              identifier: url ?? path,
+            )
+          : UnifiedReaderScreen(
+              documentUrl: path,
+              title: title,
+              identifier: url ?? path,
+              source: 'local',
+            );
+
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => TxtReaderScreen(
-            txtUrl: url ?? 'file://$path',
-            title: title,
-            identifier: url ?? path,
-          ),
-        ),
+        MaterialPageRoute(builder: (context) => reader),
       ).then((_) {
-        // Reload stats when returning from reader
+        // Reload library + stats when returning from reader
+        _loadDownloadedFiles();
         _loadReadingStats();
       });
     } catch (e, stack) {
@@ -693,6 +853,8 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
         backgroundColor: Colors.transparent,
         isScrollControlled: true,
         builder: (context) => _AddDownloadSheet(
+          sheetTitle: widget.addSheetTitle,
+          urlHint: widget.addSheetUrlHint,
           onUrlSubmit: (url, title) {
             Navigator.pop(context);
             _startDownload(url, title);
@@ -712,7 +874,7 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['txt'],
+        allowedExtensions: widget.pickExtensions,
       );
 
       if (result != null && result.files.isNotEmpty) {
@@ -803,7 +965,7 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
 
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
-      title: const Text('Text Library'),
+      title: Text(widget.libraryTitle),
       centerTitle: false,
       elevation: 0,
       actions: [
@@ -1000,7 +1162,7 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
       return _buildEmptyState(
         icon: Icons.folder_open_rounded,
         title: 'No Downloaded Files',
-        subtitle: 'Your downloaded text files will appear here',
+        subtitle: widget.emptyDownloadedSubtitle,
       );
     }
 
@@ -1049,6 +1211,8 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
           _buildSectionTitle('Reading Progress'),
           const SizedBox(height: 12),
           _buildReadingProgressList(),
+          const SizedBox(height: 24),
+          _buildResetStatsButton(),
           const SizedBox(height: 24),
           _buildSectionTitle('Storage'),
           const SizedBox(height: 12),
@@ -1099,6 +1263,47 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
         );
       },
     );
+  }
+
+  Widget _buildResetStatsButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: _resetReadingStats,
+        icon: const Icon(Icons.restart_alt_rounded),
+        label: const Text('Reset Reading Stats'),
+      ),
+    );
+  }
+
+  Future<void> _resetReadingStats() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Reading Stats'),
+        content: const Text(
+          'This will clear all reading progress, pages read and day streak.\n'
+          'Your downloaded files will NOT be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _storageManager.clearReadingProgress();
+      await _loadReadingStats();
+      if (mounted) setState(() {});
+      _showSnackBar('Reading stats reset');
+    }
   }
 
   Widget _buildSectionTitle(String title) {
@@ -1159,10 +1364,13 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
           id: '',
           url: '',
           fileName: '',
-          title: _extractTitleFromUrl(identifier),
+          title: '',
         ),
       );
-      return task.title;
+      if (task.title.trim().isNotEmpty) return task.title;
+      final epubTitle = _epubBookTitles[identifier];
+      if (epubTitle != null && epubTitle.trim().isNotEmpty) return epubTitle;
+      return _extractTitleFromUrl(identifier);
     } catch (_) {
       return 'Unknown';
     }
@@ -1225,7 +1433,8 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
         builder: (context) => AlertDialog(
           title: const Text('Clear Cache'),
           content: const Text(
-            'This will clear cached translations and temporary files.\n\n'
+            'This will clear cached translations, temporary files and '
+            'reset all reading progress/stats.\n\n'
             'Your downloaded books will NOT be deleted.',
           ),
           actions: [
@@ -1244,7 +1453,10 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
       if (confirm == true) {
         await _cacheManager.clearCache();
         await _storageManager.clearTranslationsCache();
-        _showSnackBar('Cache cleared');
+        await _storageManager.clearReadingProgress();
+        await _loadReadingStats();
+        if (mounted) setState(() {});
+        _showSnackBar('Cache cleared and reading stats reset');
       }
     } catch (e, stack) {
       _logError('Clear cache error', e, stack);
@@ -1827,10 +2039,14 @@ class _ProgressItem extends StatelessWidget {
 class _AddDownloadSheet extends StatefulWidget {
   final Function(String url, String title) onUrlSubmit;
   final VoidCallback onPickFile;
+  final String sheetTitle;
+  final String urlHint;
 
   const _AddDownloadSheet({
     required this.onUrlSubmit,
     required this.onPickFile,
+    this.sheetTitle = 'Add Text File',
+    this.urlHint = 'https://example.com/document.txt',
   });
 
   @override
@@ -1927,9 +2143,9 @@ class _AddDownloadSheetState extends State<_AddDownloadSheet> {
             ),
 
             // Title
-            const Text(
-              'Add Text File',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            Text(
+              widget.sheetTitle,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 24),
 
@@ -1938,7 +2154,7 @@ class _AddDownloadSheetState extends State<_AddDownloadSheet> {
               controller: _urlController,
               decoration: InputDecoration(
                 labelText: 'URL',
-                hintText: 'https://example.com/document.txt',
+                hintText: widget.urlHint,
                 prefixIcon: const Icon(Icons.link_rounded),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.paste_rounded),

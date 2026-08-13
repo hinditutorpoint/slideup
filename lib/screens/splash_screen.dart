@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
-import '../services/database_service.dart';
 import '../services/permission_service.dart';
 import '../providers/media_provider.dart';
 import 'main_screen.dart';
@@ -45,44 +44,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   Future<void> _initialize() async {
     try {
-      // Initialize database
-      setState(() => _statusMessage = 'Setting up database...');
-      await DatabaseService.instance.database;
-      await Future.delayed(const Duration(milliseconds: 500));
-      setState(() => _progress = 0.3);
+      setState(() => _statusMessage = 'Starting SlideUp...');
+      setState(() => _progress = 0.4);
 
-      // Request permissions
-      setState(() => _statusMessage = 'Requesting permissions...');
-      final hasPermission = await PermissionService.instance
-          .requestPermissions();
+      await PermissionService.instance.requestPermissions();
+      setState(() => _progress = 0.8);
 
-      if (hasPermission) {
-        debugPrint('✅ Permissions granted');
-        setState(() => _progress = 0.6);
-      } else {
-        debugPrint('⚠️ Permissions denied - scanning may have limited access');
-        setState(() => _statusMessage = 'Permissions limited - scanning...');
-        setState(() => _progress = 0.6);
-        // Continue anyway - user can still browse available files
-      }
+      // Trigger media scan in background without blocking screen transition
+      unawaited(ref.read(mediaProvider.notifier).scanMedia().catchError((e) {
+        debugPrint('Media scan background error: $e');
+      }));
 
-      // Scan media files (will work with available permissions)
-      setState(() => _statusMessage = 'Scanning media files...');
-      try {
-        await ref.read(mediaProvider.notifier).scanMedia();
-        setState(() => _progress = 1.0);
-        debugPrint('✅ Media scan completed');
-      } catch (e) {
-        debugPrint('⚠️ Media scan error: $e');
-        setState(() => _statusMessage = 'Media scan incomplete');
-        setState(() => _progress = 0.9);
-        // Continue - user can still use the app
-      }
+      setState(() => _progress = 1.0);
 
-      // Wait for animation to complete
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Navigate to main screen
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -90,10 +64,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         );
       }
     } catch (e) {
-      debugPrint('❌ Splash screen error: $e');
-      setState(() => _statusMessage = 'Initializing...');
-      // Still navigate after error - allow app to continue
-      await Future.delayed(const Duration(seconds: 2));
+      debugPrint('Splash error: $e');
       if (mounted) {
         Navigator.pushReplacement(
           context,
