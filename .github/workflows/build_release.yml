@@ -48,10 +48,10 @@ jobs:
         run: flutter clean
 
       - name: 🔨 Build Compact Split-per-ABI APKs
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
 
       - name: 📦 Build AppBundle for Google Play
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --android-skip-build-dependency-validation
 
       - name: 📤 Upload Build Artifacts
         uses: actions/upload-artifact@v4
