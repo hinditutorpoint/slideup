@@ -876,9 +876,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                 icon: Icons.copy,
                 label: 'Copy',
                 onPressed: () async {
+                  final count = state.selectedEntities.length;
                   await notifier.copySelectedFiles();
+                  if (mounted) setState(() {});
                   _showSnackBar(
-                    '${state.selectedEntities.length} items copied',
+                    '$count items copied',
                   );
                 },
               ),
@@ -887,8 +889,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
                 icon: Icons.cut,
                 label: 'Cut',
                 onPressed: () async {
+                  final count = state.selectedEntities.length;
                   await notifier.cutSelectedFiles();
-                  _showSnackBar('${state.selectedEntities.length} items cut');
+                  if (mounted) setState(() {});
+                  _showSnackBar('$count items cut');
                 },
               ),
               const SizedBox(width: 8),
@@ -1161,19 +1165,24 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       return;
     }
 
-    final isLocked = await SecurityService.instance.isFileLocked(entity.path);
-    if (isLocked) {
-      if (!mounted) return;
-      final authenticated = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const AuthScreen(isSetup: false),
-        ),
-      );
-      if (authenticated != true) return;
-    }
-
     if (entity is Directory) {
+      final isLocked = await SecurityService.instance.isFileLocked(entity.path);
+      if (isLocked) {
+        if (!mounted) return;
+        final lockType =
+            await SecurityService.instance.getFileLockType(entity.path);
+        if (!mounted) return;
+        final authenticated = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => AuthScreen(
+              isSetup: false,
+              initialLockType: lockType,
+            ),
+          ),
+        );
+        if (authenticated != true) return;
+      }
       _navigateToDirectory(entity, notifier);
     } else if (entity is File) {
       _openFile(entity);
@@ -1251,8 +1260,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
   Future<void> _openFile(File file) async {
     File targetFile = file;
+    String? slockOriginalExtension;
+    // Track if source was a locked .slock file so we can suppress recent history
+    final wasSlockFile = file.path.endsWith('.slock');
 
-    if (file.path.endsWith('.slock')) {
+    if (wasSlockFile) {
       if (!mounted) return;
       final lockType =
           await SecurityService.instance.getFileLockType(file.path);
@@ -1269,6 +1281,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
       if (authenticated != true) return;
 
+      // Read original extension before decrypting (fallback for no-header slock files)
+      slockOriginalExtension =
+          await SecurityService.instance.getOriginalExtension(file.path);
+
       final tempFile =
           await SecurityService.instance.createTempDecryptedCopy(file.path);
       if (tempFile == null || !await tempFile.exists()) {
@@ -1278,7 +1294,12 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       targetFile = tempFile;
     }
 
+    // Determine extension: use temp file extension, or fall back to the
+    // original extension stored in the slock header for headerless old files.
     String extension = path.extension(targetFile.path).toLowerCase();
+    if (extension.isEmpty && slockOriginalExtension != null) {
+      extension = slockOriginalExtension.toLowerCase();
+    }
 
     if (!mounted) return;
 
@@ -1302,7 +1323,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.hls',
         '.mpd',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.video);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.video,
+            forceIsLocked: wasSlockFile);
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -1319,7 +1341,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.m4a',
         '.ogg',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.audio);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.audio,
+            forceIsLocked: wasSlockFile);
         AudioPlaybackHelper.playAudio(ref, mediaFile, [
           mediaFile,
         ], startIndex: 0);
@@ -1335,7 +1358,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         '.tiff',
         '.svg',
       ].contains(extension)) {
-        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.image);
+        final mediaFile = _createMediaFileFromFile(targetFile, MediaType.image,
+            forceIsLocked: wasSlockFile);
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -1349,7 +1373,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         final mediaFile = _createMediaFileFromFile(
           targetFile,
           MediaType.document,
-          DocumentType.pdf,
+          documentType: DocumentType.pdf,
+          forceIsLocked: wasSlockFile,
         );
         Navigator.push(
           context,
@@ -1390,10 +1415,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
   MediaFile _createMediaFileFromFile(
     File file,
-    MediaType type, [
+    MediaType type, {
     DocumentType? documentType,
-  ]) {
-    final isLocked = file.path.toLowerCase().endsWith('.slock');
+    bool forceIsLocked = false,
+  }) {
+    // A file is locked if it is itself a .slock, or if it was decrypted from one
+    final isLocked =
+        forceIsLocked || file.path.toLowerCase().endsWith('.slock');
     return MediaFile(
       id: file.path,
       name: path.basename(file.path),
@@ -2576,17 +2604,35 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
         // Paste FAB (only show if clipboard has items)
         if (FileOperationsService.instance.hasClipboard) ...[
-          FloatingActionButton.small(
-            heroTag: 'paste',
-            onPressed: () async {
-              final success = await notifier.pasteFiles();
-              if (success) {
-                _showSnackBar('Files pasted successfully');
-              }
-            },
-            backgroundColor: Colors.green,
-            tooltip: 'Paste',
-            child: const Icon(Icons.paste_rounded),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton.small(
+                heroTag: 'cancel_paste',
+                onPressed: () {
+                  FileOperationsService.instance.clearClipboard();
+                  if (mounted) setState(() {});
+                  _showSnackBar('Clipboard cleared');
+                },
+                backgroundColor: Colors.grey[800],
+                tooltip: 'Cancel Paste',
+                child: const Icon(Icons.close_rounded, size: 18, color: Colors.white),
+              ),
+              const SizedBox(width: 8),
+              FloatingActionButton.small(
+                heroTag: 'paste',
+                onPressed: () async {
+                  final success = await notifier.pasteFiles();
+                  if (success) {
+                    _showSnackBar('Files pasted successfully');
+                  }
+                  if (mounted) setState(() {});
+                },
+                backgroundColor: Colors.green,
+                tooltip: 'Paste',
+                child: const Icon(Icons.paste_rounded, size: 18, color: Colors.white),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
         ],

@@ -6,11 +6,13 @@ import '../widgets/pin_lock_widget.dart';
 class AuthScreen extends StatefulWidget {
   final bool isSetup;
   final AppLockType? initialLockType;
+  final bool canCancel;
 
   const AuthScreen({
     super.key,
     required this.isSetup,
     this.initialLockType,
+    this.canCancel = true,
   });
 
   @override
@@ -249,8 +251,10 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final allowCancel = widget.canCancel || widget.isSetup;
+
     return PopScope(
-      canPop: widget.isSetup,
+      canPop: allowCancel,
       child: Scaffold(
         body: Container(
           decoration: BoxDecoration(
@@ -264,20 +268,25 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
           child: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Lock Header Icon & Title
-                    _buildHeader(),
-                    const SizedBox(height: 24),
+            child: Stack(
+              children: [
+                Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24.0,
+                      vertical: 16.0,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Lock Header Icon & Title
+                        _buildHeader(),
+                        const SizedBox(height: 20),
 
-                    // Lock Mode Switcher Tabs (Setup Mode only)
-                    if (widget.isSetup) _buildLockTypeSelector(),
+                        // Lock Mode Switcher Tabs
+                        _buildLockTypeSelector(),
 
-                    const SizedBox(height: 20),
+                        const SizedBox(height: 20),
 
                     // Authentication Input Body
                     Container(
@@ -354,11 +363,27 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ),
             ),
-          ),
+            if (allowCancel)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: IconButton(
+                  icon: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                  tooltip: 'Cancel',
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+              ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 
   Future<void> _handleForgotCredential() async {
     final hasQuestion = await SecurityService.instance.hasSecurityQuestion();

@@ -123,7 +123,8 @@ class _MainScreenState extends ConsumerState<MainScreen>
       final result = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
-          builder: (context) => const AuthScreen(isSetup: false),
+          builder: (context) =>
+              const AuthScreen(isSetup: false, canCancel: false),
           fullscreenDialog: true,
         ),
       );

@@ -812,6 +812,10 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
   Widget _buildMoreMenu() {
     return PopupMenuButton<String>(
       tooltip: 'More',
+      icon: const Icon(Icons.more_vert_rounded, size: 20),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 4,
+      constraints: const BoxConstraints(minWidth: 180, maxWidth: 220),
       onSelected: (value) {
         switch (value) {
           case 'history':
@@ -827,56 +831,99 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
         }
       },
       itemBuilder: (context) => [
-        const PopupMenuItem(
+        _compactMenuItem(
           value: 'history',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.history_rounded),
-            title: Text('History'),
-          ),
+          icon: Icons.history_rounded,
+          label: 'History',
         ),
-        CheckedPopupMenuItem(
+        _compactMenuDivider(),
+        _compactMenuItemChecked(
           value: 'incognito',
+          icon: Icons.visibility_off_outlined,
+          label: 'Private session',
           checked: _incognito,
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.visibility_off_outlined),
-            title: const Text('Private session'),
-            subtitle: Text(
-              _incognito
-                  ? 'Browsing data not saved to disk'
-                  : 'Standard mode',
-              style: const TextStyle(fontSize: 11),
-            ),
-          ),
         ),
-        const PopupMenuItem(
+        _compactMenuDivider(),
+        _compactMenuItem(
           value: 'clear',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.delete_sweep_outlined),
-            title: Text('Clear session'),
-          ),
+          icon: Icons.delete_sweep_outlined,
+          label: 'Clear session',
+          color: Colors.orange,
         ),
-        const PopupMenuItem(
+        _compactMenuDivider(),
+        _compactMenuItem(
           value: 'settings',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.tune_rounded),
-            title: Text('Settings'),
-          ),
+          icon: Icons.tune_rounded,
+          label: 'Settings',
         ),
-        const PopupMenuItem(
+        _compactMenuDivider(),
+        _compactMenuItem(
           value: 'exit',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.logout_rounded),
-            title: Text('Exit'),
-          ),
+          icon: Icons.logout_rounded,
+          label: 'Exit',
+          color: Colors.redAccent,
         ),
       ],
     );
   }
+
+  PopupMenuEntry<String> _compactMenuItem({
+    required String value,
+    required IconData icon,
+    required String label,
+    Color? color,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Row(
+        children: [
+          Icon(icon, size: 17, color: color ?? Colors.grey[700]),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuEntry<String> _compactMenuItemChecked({
+    required String value,
+    required IconData icon,
+    required String label,
+    required bool checked,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Row(
+        children: [
+          Icon(icon, size: 17, color: Colors.grey[700]),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ),
+          if (checked)
+            const Icon(Icons.check_rounded, size: 15, color: Colors.teal),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuEntry<String> _compactMenuDivider() =>
+      const PopupMenuDivider(height: 1);
+
 
   // ── WebView ───────────────────────────────────────────────────────────────────
 

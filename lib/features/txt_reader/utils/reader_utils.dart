@@ -1810,6 +1810,27 @@ class DownloadLibraryManager {
     await _saveIndex();
   }
 
+  /// Updates the stored [fileName] for an item after a lock/unlock operation.
+  /// [newAbsolutePath] is the full path returned by SecurityService.
+  Future<void> updateFileName(String id, String newAbsolutePath) async {
+    await initialize();
+    final item = _items[id];
+    if (item == null) return;
+
+    // Store only the basename relative to downloadsDirectory
+    final newBaseName = newAbsolutePath.split('/').last.split('\\').last;
+    item.fileName = newBaseName;
+
+    try {
+      final file = File(newAbsolutePath);
+      if (await file.exists()) {
+        item.sizeBytes = await file.length();
+      }
+    } catch (_) {}
+
+    await _saveIndex();
+  }
+
   Future<void> clearAll() async {
     await initialize();
     final dir = await downloadsDirectory;

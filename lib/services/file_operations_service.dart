@@ -264,11 +264,9 @@ class FileOperationsService {
         }
       }
 
-      // Clear clipboard after successful cut operation
-      final isCutOperation = _currentOperation == FileOperation.cut;
+      // Clear clipboard after successful operation (both copy and cut)
       final hasNoErrors = errors.isEmpty;
-
-      if (isCutOperation && hasNoErrors) {
+      if (hasNoErrors) {
         clearClipboard();
       }
 

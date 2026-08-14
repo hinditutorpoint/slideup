@@ -167,11 +167,14 @@ class SecurityService {
 
   Future<bool> verifyAppPassword(String password) async {
     try {
-      final storedHash = await _secureStorage.read(key: _appPasswordKey);
-      if (storedHash == null) return false;
-
       final inputHash = hashPassword(password);
-      return storedHash == inputHash;
+      final storedHash = await _secureStorage.read(key: _appPasswordKey);
+      if (storedHash != null && storedHash == inputHash) return true;
+
+      final pinHash = await _secureStorage.read(key: _appPinKey);
+      if (pinHash != null && pinHash == inputHash) return true;
+
+      return false;
     } catch (e) {
       debugPrint('⚠️ SecurityService.verifyAppPassword error: $e');
       return false;
@@ -191,11 +194,14 @@ class SecurityService {
 
   Future<bool> verifyAppPin(String pin) async {
     try {
-      final storedHash = await _secureStorage.read(key: _appPinKey);
-      if (storedHash == null) return false;
-
       final inputHash = hashPassword(pin);
-      return storedHash == inputHash;
+      final storedHash = await _secureStorage.read(key: _appPinKey);
+      if (storedHash != null && storedHash == inputHash) return true;
+
+      final passHash = await _secureStorage.read(key: _appPasswordKey);
+      if (passHash != null && passHash == inputHash) return true;
+
+      return false;
     } catch (e) {
       debugPrint('⚠️ SecurityService.verifyAppPin error: $e');
       return false;
@@ -483,7 +489,35 @@ class SecurityService {
 
       final isEncrypted = meta['enc'] == true;
       final salt = meta['salt'] as String? ?? '';
-      final passToUse = password ?? await _getStoredCredential() ?? '';
+      final expectedHash = meta['hash'] as String?;
+
+      String passToUse = password ?? '';
+      if (passToUse.isEmpty && isEncrypted && salt.isNotEmpty) {
+        if (expectedHash != null) {
+          if (hashPassword('LOCKED:$salt') == expectedHash ||
+              expectedHash == hashPassword('LOCKED')) {
+            passToUse = 'LOCKED';
+          } else {
+            final appPass = await _secureStorage.read(key: _appPasswordKey);
+            if (appPass != null &&
+                (hashPassword('$appPass:$salt') == expectedHash ||
+                    expectedHash == hashPassword(appPass))) {
+              passToUse = appPass;
+            } else {
+              final appPin = await _secureStorage.read(key: _appPinKey);
+              if (appPin != null &&
+                  (hashPassword('$appPin:$salt') == expectedHash ||
+                      expectedHash == hashPassword(appPin))) {
+                passToUse = appPin;
+              } else {
+                passToUse = 'LOCKED';
+              }
+            }
+          }
+        } else {
+          passToUse = 'LOCKED';
+        }
+      }
 
       if (isEncrypted && salt.isNotEmpty) {
         final cipherKey = _deriveCipherKey(passToUse, salt);
@@ -536,7 +570,25 @@ class SecurityService {
     try {
       await clearTempCache(); // Automatically purge previous view cache
       final embeddedMeta = await readSlockEmbeddedHeader(slockPath);
-      final name = embeddedMeta?['name'] ?? p.basenameWithoutExtension(slockPath);
+
+      // Determine the correct original name with extension.
+      // Priority: embedded 'name' field (full name like 'video.mp4'),
+      // then build from basenameWithoutExtension + 'ext' field,
+      // then fallback to legacy meta storage.
+      String name;
+      if (embeddedMeta != null && embeddedMeta['name'] != null) {
+        name = embeddedMeta['name'] as String;
+        // If name has no extension but 'ext' is available, append it
+        if (p.extension(name).isEmpty && embeddedMeta['ext'] != null) {
+          name = '$name${embeddedMeta['ext']}'; 
+        }
+      } else {
+        // Old format: no embedded header — try legacy meta map for extension
+        final origExt = await getOriginalExtension(slockPath);
+        final baseName = p.basenameWithoutExtension(slockPath);
+        name = origExt != null && origExt.isNotEmpty ? '$baseName$origExt' : baseName;
+      }
+
       final tempDir = await getTemporaryDirectory();
       final cachePath = p.join(tempDir.path, 'cache_$name');
 

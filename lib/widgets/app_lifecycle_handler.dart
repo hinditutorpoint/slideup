@@ -83,7 +83,7 @@ class _AppLifecycleHandlerState extends ConsumerState<AppLifecycleHandler>
         await navigator.push(
           MaterialPageRoute(
             settings: const RouteSettings(name: '/auth'),
-            builder: (context) => const AuthScreen(isSetup: false),
+            builder: (context) => const AuthScreen(isSetup: false, canCancel: false),
             fullscreenDialog: true,
           ),
         );

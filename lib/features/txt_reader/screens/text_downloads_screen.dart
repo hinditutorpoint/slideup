@@ -13,6 +13,8 @@ import '../models/download_task.dart';
 import '../utils/reader_utils.dart';
 import 'txt_reader_screen.dart';
 import '../../documents/screens/unified_reader_screen.dart';
+import '../../../../services/security_service.dart';
+import '../../../../screens/auth_screen.dart';
 
 /// Text Downloads Screen - Main Downloads Manager for TXT files
 class TextDownloadsScreen extends StatefulWidget {
@@ -844,6 +846,87 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
     }
   }
 
+  // ========== Lock / Unlock ==========
+
+  /// Locks a downloaded file using the same 'LOCKED' credential as the file browser.
+  Future<void> _lockFile(DownloadTask task) async {
+    final filePath = task.localPath;
+    if (filePath == null || filePath.endsWith('.slock')) return;
+
+    final hasLock = await SecurityService.instance.hasAppLock();
+    if (!mounted) return;
+
+    if (!hasLock) {
+      final created = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(isSetup: true),
+        ),
+      );
+      if (created != true) return;
+    }
+
+    if (!mounted) return;
+    final authenticated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const AuthScreen(isSetup: false),
+      ),
+    );
+    if (authenticated != true) return;
+
+    final newPath = await SecurityService.instance.lockEntityWithSlock(
+      File(filePath),
+      'LOCKED',
+    );
+
+    if (newPath != null) {
+      try {
+        await _libraryManager.updateFileName(task.id, newPath);
+      } catch (_) {}
+      await _loadDownloadedFiles();
+      _showSnackBar('File locked');
+    } else {
+      _showSnackBar('Failed to lock file');
+    }
+  }
+
+  /// Unlocks a locked (.slock) downloaded file after authenticating.
+  Future<void> _unlockFile(DownloadTask task) async {
+    final filePath = task.localPath;
+    if (filePath == null || !filePath.endsWith('.slock')) return;
+
+    if (!mounted) return;
+    final lockType = await SecurityService.instance.getFileLockType(filePath);
+    if (!mounted) return;
+
+    final authenticated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AuthScreen(
+          isSetup: false,
+          initialLockType: lockType,
+        ),
+      ),
+    );
+
+    if (authenticated != true) return;
+
+    final restoredPath = await SecurityService.instance.unlockEntityWithSlock(
+      File(filePath),
+    );
+
+    if (restoredPath != null) {
+      try {
+        await _libraryManager.updateFileName(task.id, restoredPath);
+      } catch (_) {}
+      await _loadDownloadedFiles();
+      _showSnackBar('File unlocked');
+    } else {
+      _showSnackBar('Failed to unlock file');
+    }
+  }
+
   // ========== Add New Download Dialog ==========
 
   void _showAddDownloadDialog() {
@@ -1173,15 +1256,21 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
       itemBuilder: (context, index) {
         try {
           final task = _completedTasks[index];
+          final isLocked = task.localPath?.endsWith('.slock') ?? false;
           return _DownloadedFileCard(
             task: task,
+            isLocked: isLocked,
             progress:
                 _readingStats.progressByBook[task.url] ??
                 _readingStats.progressByBook[task.localPath ?? ''] ??
                 0.0,
             onTap: () {
               if (task.localPath != null) {
-                _openReader(task.localPath!, task.title, task.url);
+                if (isLocked) {
+                  _unlockAndOpenTemp(task);
+                } else {
+                  _openReader(task.localPath!, task.title, task.url);
+                }
               } else {
                 _showSnackBar('File not found. Re-download required.');
               }
@@ -1189,12 +1278,45 @@ class _TextDownloadsScreenState extends State<TextDownloadsScreen>
             onShare: () => _shareFile(task),
             onRename: () => _renameFile(task),
             onDelete: () => _deleteFile(task),
+            onLock: () => _lockFile(task),
+            onUnlock: () => _unlockFile(task),
           );
         } catch (_) {
           return const SizedBox.shrink();
         }
       },
     );
+  }
+
+  /// Opens a locked file by authenticating and decrypting to a temp copy for reading.
+  Future<void> _unlockAndOpenTemp(DownloadTask task) async {
+    final filePath = task.localPath;
+    if (filePath == null) return;
+    if (!mounted) return;
+
+    final lockType = await SecurityService.instance.getFileLockType(filePath);
+    if (!mounted) return;
+
+    final authenticated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AuthScreen(
+          isSetup: false,
+          initialLockType: lockType,
+        ),
+      ),
+    );
+    if (authenticated != true) return;
+
+    final tempFile =
+        await SecurityService.instance.createTempDecryptedCopy(filePath);
+    if (tempFile == null || !await tempFile.exists()) {
+      if (mounted) _showSnackBar('Failed to open locked file');
+      return;
+    }
+
+    if (!mounted) return;
+    _openReader(tempFile.path, task.title, task.url);
   }
 
   // ========== Analytics Tab ==========
@@ -1709,10 +1831,13 @@ class _DownloadingTaskCard extends StatelessWidget {
 class _DownloadedFileCard extends StatelessWidget {
   final DownloadTask task;
   final double progress;
+  final bool isLocked;
   final VoidCallback onTap;
   final VoidCallback onShare;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onLock;
+  final VoidCallback onUnlock;
 
   const _DownloadedFileCard({
     required this.task,
@@ -1721,6 +1846,9 @@ class _DownloadedFileCard extends StatelessWidget {
     required this.onShare,
     required this.onRename,
     required this.onDelete,
+    required this.onLock,
+    required this.onUnlock,
+    this.isLocked = false,
   });
 
   @override
@@ -1736,7 +1864,7 @@ class _DownloadedFileCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  // File icon with progress indicator
+                  // File icon with progress/lock indicator
                   Stack(
                     alignment: Alignment.center,
                     children: [
@@ -1744,16 +1872,17 @@ class _DownloadedFileCard extends StatelessWidget {
                         width: 52,
                         height: 52,
                         decoration: BoxDecoration(
-                          color: task.fileColor.withValues(alpha: 0.1),
+                          color: (isLocked ? Colors.orange : task.fileColor)
+                              .withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
-                          task.fileIcon,
-                          color: task.fileColor,
+                          isLocked ? Icons.lock_rounded : task.fileIcon,
+                          color: isLocked ? Colors.orange : task.fileColor,
                           size: 26,
                         ),
                       ),
-                      if (progress > 0 && progress < 1)
+                      if (!isLocked && progress > 0 && progress < 1)
                         SizedBox(
                           width: 52,
                           height: 52,
@@ -1761,10 +1890,11 @@ class _DownloadedFileCard extends StatelessWidget {
                             value: progress,
                             strokeWidth: 3,
                             backgroundColor: Colors.grey.withValues(alpha: 0.2),
-                            valueColor: AlwaysStoppedAnimation(task.fileColor),
+                            valueColor:
+                                AlwaysStoppedAnimation(task.fileColor),
                           ),
                         ),
-                      if (progress >= 0.9)
+                      if (!isLocked && progress >= 0.9)
                         Positioned(
                           right: 0,
                           bottom: 0,
@@ -1781,6 +1911,23 @@ class _DownloadedFileCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                      if (isLocked)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Colors.orange,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.lock_rounded,
+                              color: Colors.white,
+                              size: 10,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(width: 14),
@@ -1790,22 +1937,49 @@ class _DownloadedFileCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          task.title,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                task.title,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isLocked) ...[const SizedBox(width: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: const Text('LOCKED',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Row(
                           children: [
                             Text(
-                              task.fileExtension.toUpperCase(),
+                              isLocked
+                                  ? 'SLOCK'
+                                  : task.fileExtension.toUpperCase(),
                               style: TextStyle(
-                                color: task.fileColor,
+                                color:
+                                    isLocked ? Colors.orange : task.fileColor,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -1846,6 +2020,12 @@ class _DownloadedFileCard extends StatelessWidget {
                         case 'read':
                           onTap();
                           break;
+                        case 'lock':
+                          onLock();
+                          break;
+                        case 'unlock':
+                          onUnlock();
+                          break;
                         case 'share':
                           onShare();
                           break;
@@ -1858,37 +2038,75 @@ class _DownloadedFileCard extends StatelessWidget {
                       }
                     },
                     itemBuilder: (context) => [
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'read',
                         child: Row(
                           children: [
-                            Icon(Icons.auto_stories_rounded, size: 20),
-                            SizedBox(width: 12),
-                            Text('Read'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'share',
-                        child: Row(
-                          children: [
-                            Icon(Icons.share_rounded, size: 20),
-                            SizedBox(width: 12),
-                            Text('Share'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'rename',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit_rounded, size: 20),
-                            SizedBox(width: 12),
-                            Text('Rename'),
+                            Icon(
+                              isLocked
+                                  ? Icons.lock_open_rounded
+                                  : Icons.auto_stories_rounded,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(isLocked ? 'Open (requires unlock)' : 'Read'),
                           ],
                         ),
                       ),
                       const PopupMenuDivider(),
+                      // Lock / Unlock toggle
+                      if (!isLocked)
+                        const PopupMenuItem(
+                          value: 'lock',
+                          child: Row(
+                            children: [
+                              Icon(Icons.lock_rounded,
+                                  size: 20, color: Colors.orange),
+                              SizedBox(width: 12),
+                              Text('Lock file',
+                                  style:
+                                      TextStyle(color: Colors.orange)),
+                            ],
+                          ),
+                        )
+                      else
+                        const PopupMenuItem(
+                          value: 'unlock',
+                          child: Row(
+                            children: [
+                              Icon(Icons.lock_open_rounded,
+                                  size: 20, color: Colors.green),
+                              SizedBox(width: 12),
+                              Text('Unlock file',
+                                  style:
+                                      TextStyle(color: Colors.green)),
+                            ],
+                          ),
+                        ),
+                      const PopupMenuDivider(),
+                      if (!isLocked) ...[
+                        const PopupMenuItem(
+                          value: 'share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share_rounded, size: 20),
+                              SizedBox(width: 12),
+                              Text('Share'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_rounded, size: 20),
+                              SizedBox(width: 12),
+                              Text('Rename'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                      ],
                       PopupMenuItem(
                         value: 'delete',
                         child: Row(
@@ -1911,8 +2129,8 @@ class _DownloadedFileCard extends StatelessWidget {
                 ],
               ),
 
-              // Progress bar
-              if (progress > 0 && progress < 1) ...[
+              // Progress bar (only when unlocked)
+              if (!isLocked && progress > 0 && progress < 1) ...[
                 const SizedBox(height: 10),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(2),
