@@ -5,6 +5,7 @@ import '../providers/media_provider.dart';
 import '../widgets/media_item_card.dart';
 import '../widgets/empty_state_widget.dart';
 import '../helpers/audio_playback_helper.dart';
+import '../services/settings_service.dart';
 
 class AudiosScreen extends ConsumerStatefulWidget {
   const AudiosScreen({super.key});
@@ -14,8 +15,14 @@ class AudiosScreen extends ConsumerStatefulWidget {
 }
 
 class _AudiosScreenState extends ConsumerState<AudiosScreen> {
-  bool _isGridView = false;
+  late bool _isGridView;
   String _sortBy = 'name';
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,6 +106,7 @@ class _AudiosScreenState extends ConsumerState<AudiosScreen> {
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
               setState(() => _isGridView = !_isGridView);
+              SettingsService.instance.setIsGridView(_isGridView);
             },
           ),
         ],

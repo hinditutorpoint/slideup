@@ -1,0 +1,1380 @@
+ENHANCED AUDIO/VIDEO CONVERTER — ANDROID ONLY
+
+This file defines the complete feature requirements for adding an Enhanced Audio/Video Converter to the existing Flutter Android application.
+
+IMPORTANT:
+The application already has FFmpeg integrated.
+
+Use the existing FFmpeg integration.
+Do NOT replace it with another FFmpeg package unless absolutely necessary.
+Do NOT build a server-side converter.
+All media conversion must happen locally on the Android device.
+
+============================================================
+
+1. EXISTING PROJECT ANALYSIS
+   ============================================================
+
+Before implementation, inspect the existing Flutter project.
+
+Identify:
+
+* Flutter version
+* Dart version
+* Android minimum SDK
+* Android target SDK
+* Existing FFmpeg package/integration
+* Existing FFmpeg execution service
+* Existing FFprobe/media information support
+* Existing file picker
+* Existing storage/file handling
+* Existing notification system
+* Existing state management
+* Existing local database/storage
+* Existing navigation
+* Existing sidebar
+* Existing theme
+* Existing localization
+* Existing background-service implementation
+
+Reuse the existing architecture wherever possible.
+
+Do not introduce a new state-management framework, database, notification framework, or FFmpeg library unnecessarily.
+
+============================================================
+2. SIDEBAR
+==========
+
+Add a new sidebar item:
+
+Enhanced Converter
+
+Use the existing sidebar design and icon conventions.
+
+The item must:
+
+* Navigate to the converter screen
+* Show active state
+* Respect existing theme
+* Respect existing authorization/permissions if applicable
+* Work with the existing navigation architecture
+
+============================================================
+3. MAIN CONVERTER
+=================
+
+Create a professional Android converter interface.
+
+Main sections:
+
+* Add Files
+* Selected Files
+* Preset
+* Output Format
+* Output Location
+* Advanced Options
+* Conversion Queue
+* Conversion History
+
+Support:
+
+* File picker
+* Multiple file selection
+* Android file URI handling
+* Drag/drop only if the existing Android environment supports it
+* Audio files
+* Video files
+
+============================================================
+4. SUPPORTED FORMATS
+====================
+
+Support formats according to the codecs/containers actually available in the existing FFmpeg build.
+
+Common formats:
+
+Audio:
+
+* MP3
+* WAV
+* AAC
+* M4A
+* FLAC
+* OGG
+* OPUS
+* WMA
+* AIFF
+
+Video:
+
+* MP4
+* MKV
+* AVI
+* MOV
+* WebM
+* MPEG
+* MPG
+* TS
+* M4V
+* FLV
+
+Do not expose unsupported formats.
+
+Detect capabilities from the existing FFmpeg build where possible.
+
+============================================================
+5. CONVERSION TYPES
+===================
+
+Support:
+
+Audio → Audio
+
+Video → Video
+
+Video → Audio
+
+Examples:
+
+FLAC → MP3
+WAV → MP3
+M4A → AAC
+MKV → MP4
+MOV → MP4
+AVI → MP4
+MP4 → WebM
+MP4 → MP3
+MKV → FLAC
+
+============================================================
+6. PRESETS
+==========
+
+Provide built-in presets.
+
+Audio:
+
+* MP3 High Quality
+* MP3 Standard
+* MP3 Small Size
+* AAC High Quality
+* FLAC Lossless
+* WAV
+* OPUS High Quality
+
+Video:
+
+* MP4 High Quality
+* MP4 Balanced
+* MP4 Small Size
+* WebM Web Optimized
+* Mobile Video
+* Archive Quality
+* Social Media
+
+Extraction:
+
+* Extract MP3
+* Extract WAV
+* Extract FLAC
+* Extract Original Audio
+
+System presets must not be accidentally deleted.
+
+============================================================
+7. CUSTOM PRESETS
+=================
+
+Allow users to:
+
+* Create preset
+* Edit preset
+* Duplicate preset
+* Rename preset
+* Delete preset
+* Set default preset
+
+Preset properties may include:
+
+* Container
+* Video codec
+* Audio codec
+* Resolution
+* FPS
+* CRF
+* Video bitrate
+* Audio bitrate
+* Sample rate
+* Channels
+* Metadata options
+
+Persist presets using the existing local storage/database architecture.
+
+============================================================
+8. ADVANCED OPTIONS
+===================
+
+Provide an Advanced Options section.
+
+Video:
+
+* Codec
+* Resolution
+* FPS
+* Bitrate
+* CRF
+* Preset
+* Profile
+* Pixel format
+
+Audio:
+
+* Codec
+* Bitrate
+* Sample rate
+* Channels
+* Quality
+* Volume
+
+Container:
+
+* Format
+* Metadata
+* Fast Start where supported
+
+Only show valid options for the selected format.
+
+============================================================
+9. MEDIA INFORMATION
+====================
+
+Use the existing FFprobe/FFmpeg media probing functionality.
+
+Display:
+
+* Filename
+* File size
+* Duration
+* Video codec
+* Video resolution
+* FPS
+* Video bitrate
+* Audio codec
+* Sample rate
+* Channels
+* Audio bitrate
+
+Example:
+
+movie.mkv
+
+Duration: 01:42:18
+Video: H.264
+Resolution: 1920 × 1080
+FPS: 29.97
+Audio: AAC
+Sample Rate: 48 kHz
+Channels: Stereo
+Size: 1.42 GB
+
+============================================================
+10. CONVERSION QUEUE
+====================
+
+Create a persistent conversion queue.
+
+States:
+
+* Pending
+* Queued
+* Processing
+* Completed
+* Failed
+* Cancelled
+* Interrupted
+
+Each conversion must be an independent job.
+
+One failed conversion must not stop other queued conversions.
+
+============================================================
+11. BACKGROUND CONVERSION
+=========================
+
+This is a critical feature.
+
+Conversions must continue when the user:
+
+* Leaves the Converter screen
+* Opens another screen
+* Minimizes the application
+* Locks the Android screen where Android allows it
+
+Use an Android-compatible background architecture.
+
+Prefer:
+
+* Android Foreground Service
+* Existing background-service implementation
+* Flutter isolate where appropriate
+* Native Android service where required
+
+Do NOT rely only on a Flutter widget or UI isolate.
+
+The conversion worker must be independent from the converter screen.
+
+============================================================
+12. ANDROID FOREGROUND SERVICE
+==============================
+
+If required by the Android version and project architecture, implement conversion processing through an Android Foreground Service.
+
+The service should:
+
+* Keep conversion alive in background
+* Show a persistent notification
+* Report progress
+* Handle cancellation
+* Handle completion
+* Handle failure
+* Recover from process/service interruptions where possible
+
+Use the project's existing Android service architecture if available.
+
+============================================================
+13. ANDROID NOTIFICATION
+========================
+
+Create a persistent conversion notification.
+
+Example:
+
+Enhanced Converter
+
+Converting:
+movie.mkv
+
+72%
+
+██████████████░░░░
+
+Time remaining:
+00:51
+
+Notification actions where supported:
+
+* Open Converter
+* Cancel
+
+After completion:
+
+Conversion completed
+
+movie.mkv → movie.mp4
+
+After failure:
+
+Conversion failed
+
+movie.mkv
+
+Notifications must follow modern Android notification requirements.
+
+Request notification permission only where required by the Android version.
+
+============================================================
+14. REAL PROGRESS
+=================
+
+Progress must come from actual FFmpeg processing information.
+
+Never use fake progress.
+
+Do not use:
+
+Timer.periodic()
+
+to simulate conversion progress.
+
+Use actual FFmpeg values such as:
+
+* Current processing time
+* Duration
+* Speed
+* FPS
+
+Calculate:
+
+Percentage
+Elapsed time
+Estimated remaining time
+
+Example:
+
+72%
+
+Elapsed:
+00:02:14
+
+Remaining:
+00:00:51
+
+Speed:
+1.8x
+
+============================================================
+15. GLOBAL CONVERTER INDICATOR
+==============================
+
+When conversion is running, show a global indicator in the application UI.
+
+Example:
+
+⇄ 2
+
+Clicking it opens:
+
+Active Conversions
+
+movie.mkv
+72%
+
+video.mov
+21%
+
+The indicator must remain available when the user navigates away from the Converter screen.
+
+============================================================
+16. BATCH CONVERSION
+====================
+
+Allow multiple files.
+
+Example:
+
+5 files selected
+
+Preset:
+MP4 Balanced
+
+Output:
+Same folder
+
+Start Conversion
+
+Show:
+
+3 / 5 completed
+
+Overall progress:
+██████████████░░░░
+
+Each file must be an independent conversion job.
+
+============================================================
+17. OUTPUT LOCATION
+===================
+
+Support:
+
+* Same folder as source
+* Application output folder
+* User-selected folder
+
+Use Android Storage Access Framework where appropriate.
+
+Do not assume unrestricted filesystem paths on modern Android.
+
+Correctly handle:
+
+content:// URIs
+file:// paths
+application-private paths
+SAF document URIs
+
+============================================================
+18. ANDROID STORAGE
+===================
+
+The implementation must be compatible with modern Android scoped storage.
+
+Do not depend on unrestricted access to:
+
+/storage/emulated/0/
+
+unless the application actually has the required permissions and Android version allows it.
+
+Prefer Android Storage Access Framework for user-selected files/folders.
+
+Do not request MANAGE_EXTERNAL_STORAGE unless there is a genuine technical requirement and the application architecture justifies it.
+
+============================================================
+19. LARGE FILE SUPPORT
+======================
+
+The converter must support large files.
+
+Examples:
+
+500 MB
+1 GB
+2 GB
+5 GB+
+where device storage and FFmpeg permit.
+
+Never load the complete media file into Dart memory.
+
+Use filesystem paths or Android-compatible temporary files.
+
+For content URIs, copy/stream to a suitable temporary location when required by the existing FFmpeg integration.
+
+============================================================
+20. DISK SPACE CHECK
+====================
+
+Before conversion:
+
+Check available storage where technically possible.
+
+If insufficient:
+
+Insufficient storage
+
+Required:
+2.1 GB
+
+Available:
+640 MB
+
+Conversion must not start.
+
+============================================================
+21. TEMPORARY FILE MANAGEMENT
+=============================
+
+Create a managed temporary directory.
+
+Temporary files must be:
+
+* uniquely named
+* tracked
+* deleted after successful conversion
+* deleted after cancellation
+* cleaned after failure where safe
+
+Implement orphan temporary-file cleanup.
+
+Do not delete user files.
+
+============================================================
+22. OUTPUT FILE NAMING
+======================
+
+Example:
+
+movie.mkv
+→
+movie.mp4
+
+Never generate:
+
+movie.mkv.mp4
+
+If movie.mp4 already exists:
+
+* Replace
+* Rename
+* Skip
+* Ask
+
+Recommended rename:
+
+movie (1).mp4
+movie (2).mp4
+
+============================================================
+23. CANCEL
+==========
+
+Cancellation must actually stop FFmpeg.
+
+When user presses Cancel:
+
+* Stop FFmpeg
+* Update job status
+* Clean temporary files
+* Update notification
+* Update UI
+
+Do not only change database status.
+
+============================================================
+24. RETRY
+=========
+
+Failed conversions must support Retry.
+
+Retry must reuse:
+
+* Source
+* Preset
+* Settings
+* Output configuration
+
+Create a clean new execution attempt.
+
+============================================================
+25. CONVERSION HISTORY
+======================
+
+Persist conversion history.
+
+Store appropriate information:
+
+* Filename
+* Input format
+* Output format
+* Preset
+* Status
+* File size
+* Duration
+* Start time
+* Completion time
+* Error message
+* Output path/URI where appropriate
+
+Provide filters:
+
+* All
+* Processing
+* Completed
+* Failed
+* Cancelled
+* Interrupted
+
+Support:
+
+* Search
+* Retry
+* Reconvert
+* Open output
+* Delete output
+* View details
+
+============================================================
+26. APPLICATION RESTART RECOVERY
+================================
+
+When the application restarts:
+
+Detect jobs that were marked Processing but no longer have an active FFmpeg process.
+
+Change them to:
+
+Interrupted
+
+Example:
+
+Previous conversion interrupted
+
+movie.mkv
+
+[Retry]
+
+Do not show an inactive job as Processing.
+
+Where technically possible, allow queued jobs to resume automatically.
+
+Do not claim true resume support if FFmpeg cannot resume the particular conversion.
+
+============================================================
+27. PAUSE / RESUME
+==================
+
+Investigate whether the existing FFmpeg implementation supports reliable pause/resume.
+
+If technically supported:
+
+Add:
+
+Pause
+Resume
+
+If not supported:
+
+Do not fake it.
+
+Use:
+
+Cancel
+Retry
+
+instead.
+
+============================================================
+28. FORMAT COMPATIBILITY
+========================
+
+Create a compatibility layer.
+
+Example:
+
+MP4:
+
+Video:
+H.264
+H.265
+AV1
+
+Audio:
+AAC
+MP3
+AC3
+
+Do not allow invalid codec/container combinations.
+
+The compatibility layer must be extensible.
+
+============================================================
+29. FFMPEG COMMAND BUILDER
+==========================
+
+Create a reusable FFmpeg command builder.
+
+Conceptually:
+
+ConversionSettings
+↓
+FFmpegCommandBuilder
+↓
+FFmpeg arguments
+↓
+Existing FFmpeg executor
+
+The command builder must support:
+
+* Input
+* Output
+* Container
+* Video codec
+* Audio codec
+* Resolution
+* FPS
+* CRF
+* Bitrate
+* Sample rate
+* Channels
+* Metadata
+* Other supported options
+
+Do not construct commands directly inside UI widgets.
+
+============================================================
+30. SECURITY
+============
+
+Protect against:
+
+* Path traversal
+* Arbitrary file overwrite
+* Invalid paths
+* Command injection
+* Unauthorized file access
+
+Never blindly concatenate user-controlled values into a shell command.
+
+Use the existing FFmpeg execution API's structured arguments.
+
+Validate filenames and output locations.
+
+============================================================
+31. HARDWARE ACCELERATION
+=========================
+
+Inspect the actual Android FFmpeg build.
+
+If supported, detect hardware acceleration such as:
+
+* MediaCodec
+* Android hardware decoding/encoding
+* Other hardware codecs exposed by the FFmpeg build
+
+Do not show hardware options that are unavailable.
+
+Provide:
+
+Auto
+CPU
+Hardware
+
+only where technically supported.
+
+============================================================
+32. CONVERTER SETTINGS
+======================
+
+Add converter settings to the existing Settings screen where appropriate.
+
+Possible settings:
+
+* Default preset
+* Default output format
+* Default output folder
+* Maximum simultaneous conversions
+* Overwrite behavior
+* Keep history
+* Automatically open completed output
+* Show notifications
+* Background conversion
+* Hardware acceleration
+
+Use existing application settings architecture.
+
+============================================================
+33. CONCURRENCY
+===============
+
+Do not run unlimited FFmpeg processes.
+
+Example default:
+
+Maximum concurrent conversions:
+1 or 2
+
+Additional jobs remain queued.
+
+Allow configuration if appropriate.
+
+The default must be conservative because mobile devices have limited:
+
+* CPU
+* RAM
+* Battery
+* Storage
+* thermal capacity
+
+============================================================
+34. BATTERY / THERMAL CONSIDERATIONS
+====================================
+
+Because this is Android:
+
+Consider:
+
+* Battery usage
+* Thermal throttling
+* Background execution limits
+* Device performance
+* Storage consumption
+
+Do not perform unnecessary polling.
+
+Use efficient progress reporting.
+
+Where appropriate, show a warning that video transcoding can consume significant battery and generate heat.
+
+============================================================
+35. NETWORK IS NOT REQUIRED
+===========================
+
+Conversion must work offline.
+
+The converter must not require:
+
+* Internet
+* API server
+* Cloud storage
+* Remote FFmpeg
+
+All processing happens locally.
+
+============================================================
+36. UI STRUCTURE
+================
+
+Recommended components:
+
+EnhancedConverterPage
+ConverterFilePicker
+SelectedMediaList
+MediaInfoPanel
+PresetSelector
+PresetEditor
+AdvancedOptions
+ConversionQueueView
+ConversionJobCard
+ConversionHistory
+ConverterNotificationIndicator
+ConverterManager
+ConversionRepository
+FFmpegService
+FFmpegCommandBuilder
+MediaProbeService
+PresetService
+NotificationService
+
+Adapt these names to the existing architecture.
+
+Do not create unnecessary classes.
+
+============================================================
+37. STATE MANAGEMENT
+====================
+
+Use the project's existing state management solution.
+
+The conversion manager must expose reactive state for:
+
+* Queue
+* Active jobs
+* Progress
+* Completed jobs
+* Failed jobs
+* Notifications
+
+Do not rebuild the entire UI for every FFmpeg progress event.
+
+Use efficient streams/state updates.
+
+============================================================
+38. THEME
+=========
+
+Use the application's existing:
+
+* Colors
+* Typography
+* Dark theme
+* Light theme
+* Buttons
+* Cards
+* Dialogs
+* Spacing
+* Icons
+
+Do not create an unrelated UI style.
+
+============================================================
+39. RESPONSIVE UI
+=================
+
+The application is Android-only.
+
+Support:
+
+* Phones
+* Tablets
+
+Use adaptive layouts.
+
+Phone:
+
+Use cards, bottom sheets, expandable sections.
+
+Tablet:
+
+Use multi-column layouts where appropriate.
+
+============================================================
+40. ACCESSIBILITY
+=================
+
+Support:
+
+* Screen readers
+* Semantic labels
+* Keyboard where applicable
+* Large text
+* Accessible progress indicators
+* Accessible buttons
+* Clear status messages
+
+Do not communicate status using color alone.
+
+============================================================
+41. LOCALIZATION
+================
+
+If the existing project supports localization:
+
+Use it for all converter strings.
+
+Do not hard-code user-facing strings directly into widgets.
+
+============================================================
+42. ERROR HANDLING
+==================
+
+Show user-friendly errors.
+
+Example:
+
+Conversion Failed
+
+The selected codec is not compatible with the selected container.
+
+Suggestion:
+
+Use H.264 + AAC for MP4.
+
+Also provide:
+
+View Technical Details
+
+Technical details should contain the actual FFmpeg error/log.
+
+============================================================
+43. FFmpeg LOG MANAGEMENT
+=========================
+
+Capture FFmpeg logs/progress using the existing integration.
+
+Do not keep unlimited logs in memory.
+
+Use bounded storage.
+
+Associate logs with conversion jobs where appropriate.
+
+============================================================
+44. LOCAL DATA MODEL
+====================
+
+Inspect existing local database/storage first.
+
+If a persistent database is already available, integrate with it.
+
+Possible entities:
+
+ConversionJob
+ConverterPreset
+ConversionHistory
+
+Do not introduce another database unnecessarily.
+
+A ConversionJob should contain appropriate information such as:
+
+* id
+* uuid
+* source URI/path
+* source filename
+* input format
+* output format
+* output URI/path
+* preset
+* conversion settings
+* status
+* progress
+* duration
+* createdAt
+* startedAt
+* completedAt
+* failedAt
+* errorMessage
+
+Adapt fields to the existing architecture.
+
+============================================================
+45. TESTING
+===========
+
+Add tests for:
+
+* Converter navigation
+* File validation
+* Format compatibility
+* Preset creation
+* Preset editing
+* Preset deletion
+* Command generation
+* Queue management
+* Job state transitions
+* Cancellation
+* Retry
+* History
+* Persistence
+* Output filename generation
+* Application restart recovery
+
+Mock FFmpeg for unit/widget tests.
+
+Use real FFmpeg integration tests where practical.
+
+============================================================
+46. ANDROID PERMISSIONS
+=======================
+
+Inspect the current AndroidManifest.xml.
+
+Only request permissions actually required.
+
+Consider Android notification permission requirements.
+
+For storage:
+
+Prefer Storage Access Framework.
+
+Do not automatically request broad storage permissions.
+
+Do not request:
+
+MANAGE_EXTERNAL_STORAGE
+
+unless there is a documented and unavoidable requirement.
+
+============================================================
+47. ANDROID BACKGROUND LIMITATIONS
+==================================
+
+Respect Android background execution restrictions.
+
+If a Foreground Service is required:
+
+Implement it correctly.
+
+Ensure:
+
+* Foreground service notification
+* Appropriate service type
+* Correct AndroidManifest configuration
+* Notification channel
+* Permission requirements
+* Service lifecycle
+* Cancellation
+* Completion
+* Failure handling
+
+Follow the target Android SDK requirements already used by the project.
+
+============================================================
+48. NO SERVER
+=============
+
+This converter is strictly local.
+
+Architecture:
+
+Flutter UI
+↓
+Conversion Manager
+↓
+Local Queue
+↓
+Android Background Worker/Foreground Service
+↓
+Existing FFmpeg
+↓
+Local Output File
+
+There must be no dependency on a Laravel/PHP/server backend for conversion.
+
+============================================================
+49. PERFORMANCE
+===============
+
+Large conversions must not freeze the UI.
+
+Do not:
+
+* Load complete files into memory
+* Execute FFmpeg synchronously on the UI isolate
+* Rebuild the complete screen on every progress update
+* Poll too frequently
+* Run unlimited conversions
+
+Use isolates/native background execution where appropriate.
+
+============================================================
+50. FINAL END-TO-END TEST
+=========================
+
+Test:
+
+Open Application
+↓
+Enhanced Converter
+↓
+Select MKV
+↓
+Media information appears
+↓
+Select MP4 Balanced
+↓
+Select output folder
+↓
+Start conversion
+↓
+Job enters queue
+↓
+FFmpeg starts
+↓
+Real progress appears
+↓
+Leave converter screen
+↓
+Open another application screen
+↓
+Conversion continues
+↓
+Android notification shows progress
+↓
+Conversion completes
+↓
+Completion notification appears
+↓
+Output file available
+↓
+History updated
+↓
+Restart application
+↓
+History remains available
+
+Also test:
+
+* Audio → MP3
+* Video → MP4
+* Video → MP3
+* Batch conversion
+* Custom preset
+* Cancel
+* Retry
+* Failed conversion
+* Duplicate output
+* Insufficient storage
+* Large file
+* Application restart
+* Background conversion
+
+============================================================
+51. EXISTING FFmpeg IS MANDATORY
+================================
+
+The project already has FFmpeg.
+
+First find:
+
+* FFmpeg package
+* FFmpeg service
+* FFmpeg execution method
+* FFprobe implementation
+* Android native integration
+* Existing FFmpeg binaries
+* Existing command construction
+* Existing progress handling
+
+Reuse them.
+
+Do not install another FFmpeg dependency without a concrete reason.
+
+============================================================
+52. NO FAKE FEATURES
+====================
+
+Never implement fake:
+
+* Conversion
+* Progress
+* Background processing
+* Notifications
+* Pause/resume
+* Completion
+* Media information
+
+If a feature cannot technically be implemented on a particular Android version/device, document the limitation and implement the correct fallback.
+
+============================================================
+53. EXISTING FEATURES MUST NOT BREAK
+====================================
+
+Do not break:
+
+* Existing screens
+* Existing navigation
+* Existing sidebar
+* Existing FFmpeg functionality
+* Existing file functionality
+* Existing settings
+* Existing theme
+* Existing notifications
+* Existing database
+* Existing Android build
+
+Avoid unnecessary dependency upgrades.
+
+Avoid unrelated refactoring.
+
+============================================================
+54. IMPLEMENTATION RESULT
+=========================
+
+The final implementation must provide:
+
+* Enhanced Converter sidebar item
+* Local Android conversion
+* Existing FFmpeg integration
+* Audio conversion
+* Video conversion
+* Video-to-audio extraction
+* Presets
+* Custom presets
+* Advanced settings
+* Media information
+* Multiple files
+* Batch conversion
+* Persistent queue
+* Background conversion
+* Android Foreground Service where required
+* Real FFmpeg progress
+* Persistent Android notification
+* Global conversion indicator
+* Conversion history
+* Cancel
+* Retry
+* Error handling
+* Disk-space protection
+* Temporary-file cleanup
+* Output folder management
+* Duplicate-file handling
+* Format compatibility
+* Hardware acceleration detection where supported
+* Restart recovery
+* Android scoped-storage compatibility
+* Offline operation
+* Responsive UI
+* Accessibility
+* Localization
+* Tests
+
+============================================================
+55. GEMINI IMPLEMENTATION RULE
+==============================
+
+Do not simply provide theoretical code or a tutorial.
+
+Inspect the existing project and implement the feature directly into the project.
+
+Reuse existing architecture.
+
+If an existing service/component can perform a required function, extend it instead of creating a duplicate.
+
+Do not rewrite unrelated parts of the application.
+
+After implementation, provide:
+
+1. Files created
+2. Files modified
+3. Dependencies added/removed
+4. Existing FFmpeg integration reused
+5. AndroidManifest changes
+6. Android native changes
+7. Database/local-storage changes
+8. New services
+9. New models
+10. New UI components
+11. Required permissions
+12. Required configuration
+13. Build commands
+14. Tests performed
+15. Known Android limitations
+
+The implementation must be production-ready and Android-only.

@@ -6,6 +6,7 @@ import '../widgets/media_item_card.dart';
 import '../widgets/empty_state_widget.dart';
 //import 'media_kit_video_player.dart';
 import '../features/video_player/video_player_launcher.dart';
+import '../services/settings_service.dart';
 
 class VideosScreen extends ConsumerStatefulWidget {
   const VideosScreen({super.key});
@@ -15,8 +16,14 @@ class VideosScreen extends ConsumerStatefulWidget {
 }
 
 class _VideosScreenState extends ConsumerState<VideosScreen> {
-  bool _isGridView = true;
+  late bool _isGridView;
   String _sortBy = 'name'; // name, date, size
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +107,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
               setState(() => _isGridView = !_isGridView);
+              SettingsService.instance.setIsGridView(_isGridView);
             },
           ),
         ],

@@ -1,17 +1,176 @@
-# slideup
+# SlideUp — Professional All-in-One Media & Document Suite
 
-A new Flutter project.
+SlideUp is a feature-rich, high-performance multimedia player, document reader, video editor, and file manager built with **Flutter**, **Riverpod**, **MediaKit**, and **FFmpeg**. It delivers an ultra-smooth, customizable experience for playing videos and audios, editing media, reading documents (PDF, EPUB, TXT), private browsing, and securing private files.
 
-## API Configuration (Optional)
+---
 
-This project uses compile-time environment variables.
+## ✨ Key Features
 
-To enable translation features, run:
+### 🎬 Advanced Video Player
+- **High Performance Engine**: Powered by `media_kit` (libmpv backend) for seamless playback of virtually all formats (MP4, MKV, AVI, FLV, WEBM, TS, MOV, etc.).
+- **Smart Gestures**: Dual-side swipe controls for screen brightness, volume, and intuitive scrubbing/seeking.
+- **Picture-in-Picture (PiP)**: Native floating mini-player support (`simple_pip_mode`).
+- **Audio & Subtitle Controls**: Multi-audio track switching, external subtitle loader, playback speed regulation (0.25x – 4.0x), aspect ratio adjustments, and sleep timer.
+- **Hardware Acceleration & Equalizer**: Native audio enhancement and equalizer tuning.
+- **Media Extraction Tools**:
+  - **Screenshot Capture**: Snapshot video frames directly in PNG, JPG, BMP, or WebP.
+  - **Audio Extractor**: Convert video to MP3, AAC, WAV, or FLAC.
+  - **Frame Extractor**: Extract sequence frames at custom FPS.
 
-flutter run \
-  --dart-define=API_BASE_URL=https://your-api-url \
-  --dart-define=API_KEY=your-api-key \
-  --dart-define=PIXABAY_KEY=your-pixaBay-key
+---
 
-Without these values, API-based features will be disabled.
+### ✂️ Integrated Video Editor
+- **Timeline Trimming & Cutting**: Fast precision trim and cut without re-encoding when possible.
+- **Video Transformation**: Crop, rotate, flip, and adjust aspect ratios (16:9, 9:16, 1:1, 4:5, etc.).
+- **Speed Ramping**: Slow motion and fast motion video effects.
+- **Audio Mixing & Replacement**: Add background music, replace existing audio, adjust volume levels.
+- **Visual Filters & Adjustments**: Adjust brightness, contrast, saturation, and apply color presets.
+- **Text & Watermark Overlays**: Custom text styling, positioning, and timestamps.
+- **FFmpeg Powered**: Accelerated rendering and export via `ffmpeg_kit_flutter_new`.
 
+---
+
+### 🎵 Comprehensive Audio Player & Speaker Suite
+- **Background Playback & Lock Screen Controls**: Powered by `just_audio` and `audio_service` with notification media controls.
+- **Speaker Booster Player**: Built-in sound amplifier and loudness enhancer.
+- **Queue & Playlists**: Create, reorder, and persist custom playlists and favorites.
+- **Sleep Timer & Equalizer**: 10-band equalizer presets (Rock, Pop, Jazz, Classical, Bass Boost, etc.) and auto-off timer.
+
+---
+
+### 📚 Document & E-Book Reader
+- **PDF Viewer & Annotation**: Powered by `syncfusion_flutter_pdfviewer` with text search, page jumping, continuous scroll, and bookmarks.
+- **EPUB Reader**: Interactive e-book reader with chapter navigation, font scaling, night mode, and reading history.
+- **TXT & Code Reader**: Lightweight, distraction-free text and script document viewer.
+- **Reading History & Tracker**: Automatically bookmark reading progress across all documents.
+
+---
+
+### 🔒 Secure Vault (Locked Files)
+- **Biometric & PIN Lock**: Protect sensitive videos, audios, and documents using fingerprint, face unlock, or PIN code (`local_auth`).
+- **Encrypted Storage**: Secure credential and key management (`flutter_secure_storage` & `crypto`).
+- **Stealth / Sandboxed Folder**: Keep hidden files isolated from public gallery scans.
+
+---
+
+### 🌐 Private Browser & Media Downloader
+- **Incognito Web Browser**: Built-in `flutter_inappwebview` with tracking protection, tab management, and ad/pop-up suppression.
+- **Download Manager**: Multi-threaded download engine with pause, resume, background downloads (`workmanager`), and download progress indicators.
+
+---
+
+### 📁 Smart File Browser & Backup
+- **Deep Category Browsing**: Categorize files by Video, Audio, Documents, Images, Downloads, and Extracted Media.
+- **Batch Operations**: Bulk delete, share, rename, move, and favorite.
+- **Backup & Restore**: Export and import application settings, playlists, and reading history (`hive_flutter` & `sqflite`).
+
+---
+
+### 🎙️ On-Device AI Subtitles & Transcription
+- **Offline Speech Recognition**: Local on-device AI transcription powered by `sherpa_onnx` (no internet required for speech processing).
+
+---
+
+## 🛠️ Technology Stack
+
+| Category | Technologies / Libraries |
+|---|---|
+| **Framework** | Flutter (Dart SDK ^3.8.1) |
+| **State Management** | Flutter Riverpod (`flutter_riverpod: ^3.0.3`) |
+| **Media Playback** | `media_kit`, `video_player`, `just_audio`, `audio_service` |
+| **Video Processing** | `ffmpeg_kit_flutter_new`, `image`, `saver_gallery` |
+| **Documents** | `syncfusion_flutter_pdfviewer`, `syncfusion_flutter_pdf`, `open_filex` |
+| **Security & Auth** | `local_auth`, `flutter_secure_storage`, `crypto` |
+| **Browser & Network** | `flutter_inappwebview`, `dio`, `http`, `connectivity_plus` |
+| **Local Storage** | `hive_flutter`, `sqflite`, `path_provider` |
+| **AI / ML** | `sherpa_onnx` (Offline ASR / Speech Recognition) |
+| **UI & Animations** | `curved_navigation_bar`, `flutter_slidable`, `shimmer`, `loading_animation_widget` |
+
+---
+
+## 📁 Project Structure
+
+```
+slideup/
+├── android/                   # Android native configuration (Gradle Kotlin DSL)
+├── assets/                    # Static assets, icons, fonts, and images
+│   ├── icons/
+│   └── images/
+├── lib/
+│   ├── core/                  # Core constants, themes, database helpers
+│   ├── features/              # Modular feature domains
+│   │   ├── documents/         # PDF reader, search, annotations & history
+│   │   ├── epub_reader/       # EPUB reader engine
+│   │   ├── private_browser/   # In-app browser & download manager
+│   │   ├── speaker_player/    # Audio amplifier & loudness booster
+│   │   ├── txt_reader/        # Text file reader
+│   │   ├── video_editor/      # Video trimming, filters, timeline & export
+│   │   ├── video_player/      # Video player components & gestures
+│   │   └── video_search/      # Media search and discovery
+│   ├── helpers/               # Utility functions & helpers
+│   ├── models/                # Data models & entities
+│   ├── providers/             # Riverpod state providers
+│   ├── screens/               # Main application screens & navigation
+│   ├── services/              # Background, audio, video & storage services
+│   ├── shared/                # Shared widgets, dialogs, and components
+│   └── main.dart              # App entry point
+└── pubspec.yaml               # Project dependencies and asset definitions
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- [Flutter SDK](https://flutter.dev/docs/get-started/install) (version `>= 3.8.1`)
+- [Android Studio](https://developer.android.com/studio) / Android SDK (API Level 24+ recommended)
+- Java Development Kit (JDK 11 or 17)
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-username/slideup.git
+   cd slideup
+   ```
+
+2. **Install Flutter dependencies**:
+   ```bash
+   flutter pub get
+   ```
+
+3. **Compile-Time Environment Variables (Optional)**:
+   To enable online API services or image/translation features, pass the compile-time variables:
+   ```bash
+   flutter run \
+     --dart-define=API_BASE_URL=https://your-api-url \
+     --dart-define=API_KEY=your-api-key \
+     --dart-define=PIXABAY_KEY=your-pixabay-key
+   ```
+
+4. **Build APK / Run Debug**:
+   ```bash
+   # Run on connected device
+   flutter run
+
+   # Build Release APK
+   flutter build apk --release
+   ```
+
+---
+
+## 🔐 Permissions Overview
+
+SlideUp requests only essential Android permissions:
+- `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO`, `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE`: To index and play local media files.
+- `WRITE_EXTERNAL_STORAGE` (Android <= 10): To save edited videos, screenshots, and extracted audio.
+- `USE_BIOMETRIC` / `USE_FINGERPRINT`: To secure the Private Vault.
+- `INTERNET`: For the private in-app web browser and downloading online media.
+- `WAKE_LOCK` & `FOREGROUND_SERVICE`: For uninterrupted background audio and video playback.
+- `SYSTEM_ALERT_WINDOW`: For Picture-in-Picture (PiP) window overlay.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License — see the [LICENSE](file:///D:/flutterapp/slideup/slideup/LICENSE) file for details.

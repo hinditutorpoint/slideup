@@ -11,6 +11,7 @@ import 'image_viewer_screen.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import '../widgets/playlist_selection_dialog.dart';
+import '../services/settings_service.dart';
 
 class RecentFilesScreen extends ConsumerStatefulWidget {
   const RecentFilesScreen({super.key});
@@ -20,7 +21,13 @@ class RecentFilesScreen extends ConsumerStatefulWidget {
 }
 
 class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
-  bool _isGridView = true;
+  late bool _isGridView;
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +105,7 @@ class _RecentFilesScreenState extends ConsumerState<RecentFilesScreen> {
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
               setState(() => _isGridView = !_isGridView);
+              SettingsService.instance.setIsGridView(_isGridView);
             },
           ),
           IconButton(

@@ -21,6 +21,8 @@ import '../widgets/downloaded_pdf_widget.dart';
 import '../utils/reader_utils.dart' as doc_utils;
 import 'unified_reader_screen.dart';
 import '../../private_browser/private_browser_screen.dart';
+import '../../../../core/constants/languages.dart';
+import '../widgets/filter_bottom_sheet.dart' show LanguagePickerSheet;
 
 // ========== REUSE EXISTING WIDGETS ==========
 import '../widgets/reading_history_widget.dart' show ReadingHistoryWidget;
@@ -97,17 +99,35 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
             viewMode == PdfViewMode.grid ? Icons.view_list : Icons.grid_view,
           ),
           onPressed: () {
-            ref
-                .read(pdfMetaViewModeProvider.notifier)
-                .state = viewMode == PdfViewMode.grid
-                ? PdfViewMode.list
-                : PdfViewMode.grid;
+            ref.read(pdfMetaViewModeProvider.notifier).toggle();
           },
-          tooltip: 'Toggle view',
+          tooltip: viewMode == PdfViewMode.grid
+              ? 'Switch to List view'
+              : 'Switch to Grid view',
+        ),
+        Consumer(
+          builder: (context, ref, _) {
+            final selectedLang = ref.watch(pdfFileLanguageFilterProvider);
+            final isFiltered = selectedLang.code.isNotEmpty;
+            return IconButton(
+              icon: Badge(
+                isLabelVisible: isFiltered,
+                smallSize: 8,
+                child: Icon(
+                  isFiltered ? Icons.language : Icons.language_outlined,
+                  color: isFiltered ? Theme.of(context).colorScheme.primary : null,
+                ),
+              ),
+              tooltip: isFiltered
+                  ? 'Language: ${selectedLang.name}'
+                  : 'Filter by Language',
+              onPressed: _showLanguagePicker,
+            );
+          },
         ),
         PopupMenuButton<PdfFileFilter>(
           icon: const Icon(Icons.filter_alt_outlined),
-          tooltip: 'Filter',
+          tooltip: 'Format Filter',
           onSelected: (filter) {
             ref.read(pdfFileFilterProvider.notifier).state = filter;
           },
@@ -339,39 +359,194 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
     );
   }
 
-  Widget _buildFilesTab(PdfMetadataState state, PdfViewMode viewMode) {
-    final filter = ref.watch(pdfFileFilterProvider);
-    final files = state.getFilteredFiles(filter);
+  void _showLanguagePicker() {
+    final currentLang = ref.read(pdfFileLanguageFilterProvider);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => LanguagePickerSheet(
+        selectedLanguage: currentLang,
+        onSelected: (language) {
+          ref.read(pdfFileLanguageFilterProvider.notifier).state = language;
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
 
-    if (files.isEmpty) {
-      return EmptyStateWidget(
-        title: 'No Files Found',
-        subtitle: filter == PdfFileFilter.all
-            ? 'No document files available'
-            : 'No ${filter.name} files found',
-        icon: Icons.insert_drive_file_outlined,
-      );
-    }
+  void _resetAllFilters() {
+    ref.read(pdfFileFilterProvider.notifier).state = PdfFileFilter.all;
+    ref.read(pdfFileLanguageFilterProvider.notifier).state = AppLanguages.all;
+  }
+
+  Widget _buildFilesTab(PdfMetadataState state, PdfViewMode viewMode) {
+    final formatFilter = ref.watch(pdfFileFilterProvider);
+    final languageFilter = ref.watch(pdfFileLanguageFilterProvider);
+    final files = state.getFilteredFiles(
+      formatFilter: formatFilter,
+      languageFilter: languageFilter,
+    );
+
+    final hasActiveFilter =
+        formatFilter != PdfFileFilter.all || languageFilter.code.isNotEmpty;
 
     return Column(
       children: [
-        if (filter != PdfFileFilter.all)
-          _buildFilterBanner(filter, files.length),
+        _buildQuickFilterBar(formatFilter, languageFilter, state),
+        if (hasActiveFilter)
+          _buildFilterBanner(formatFilter, languageFilter, files.length),
         Expanded(
-          child: viewMode == PdfViewMode.grid
-              ? _buildFilesGrid(files, state)
-              : _buildFilesList(files, state),
+          child: files.isEmpty
+              ? _buildEmptyFilteredState(formatFilter, languageFilter)
+              : (viewMode == PdfViewMode.grid
+                  ? _buildFilesGrid(files, state)
+                  : _buildFilesList(files, state)),
         ),
       ],
     );
   }
 
-  Widget _buildFilterBanner(PdfFileFilter filter, int count) {
+  Widget _buildQuickFilterBar(
+    PdfFileFilter formatFilter,
+    Language languageFilter,
+    PdfMetadataState state,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final detectedLangs = state.getDetectedLanguages();
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          // Language picker chip
+          ActionChip(
+            avatar: Icon(
+              Icons.language,
+              size: 16,
+              color: languageFilter.code.isNotEmpty
+                  ? colorScheme.onPrimaryContainer
+                  : colorScheme.onSurfaceVariant,
+            ),
+            label: Text(
+              languageFilter.code.isNotEmpty
+                  ? languageFilter.name
+                  : 'Language',
+            ),
+            backgroundColor: languageFilter.code.isNotEmpty
+                ? colorScheme.primaryContainer
+                : null,
+            side: BorderSide(
+              color: languageFilter.code.isNotEmpty
+                  ? colorScheme.primary
+                  : colorScheme.outlineVariant,
+            ),
+            onPressed: _showLanguagePicker,
+          ),
+          if (languageFilter.code.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                ref.read(pdfFileLanguageFilterProvider.notifier).state =
+                    AppLanguages.all;
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(4.0),
+                child: Icon(
+                  Icons.cancel,
+                  size: 18,
+                  color: colorScheme.outline,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+          const SizedBox(
+            height: 20,
+            child: VerticalDivider(thickness: 1, width: 1),
+          ),
+          const SizedBox(width: 8),
+          // Format filter chips
+          ...PdfFileFilter.values.map((f) {
+            final isSelected = formatFilter == f;
+            String label;
+            switch (f) {
+              case PdfFileFilter.all:
+                label = 'All Types';
+                break;
+              case PdfFileFilter.pdf:
+                label = 'PDF';
+                break;
+              case PdfFileFilter.epub:
+                label = 'EPUB';
+                break;
+              case PdfFileFilter.other:
+                label = 'Other';
+                break;
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: FilterChip(
+                label: Text(label),
+                selected: isSelected,
+                onSelected: (selected) {
+                  ref.read(pdfFileFilterProvider.notifier).state =
+                      selected ? f : PdfFileFilter.all;
+                },
+                visualDensity: VisualDensity.compact,
+              ),
+            );
+          }),
+          // Detected item languages quick chips (if any other languages detected)
+          if (detectedLangs.length > 1) ...[
+            const SizedBox(
+              height: 20,
+              child: VerticalDivider(thickness: 1, width: 1),
+            ),
+            const SizedBox(width: 8),
+            ...detectedLangs.map((lang) {
+              final isSelected = languageFilter.code == lang.code;
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(lang.name),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    ref.read(pdfFileLanguageFilterProvider.notifier).state =
+                        selected ? lang : AppLanguages.all;
+                  },
+                  visualDensity: VisualDensity.compact,
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterBanner(
+    PdfFileFilter formatFilter,
+    Language languageFilter,
+    int count,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final filterParts = <String>[];
+    if (formatFilter != PdfFileFilter.all) {
+      filterParts.add(formatFilter.name.toUpperCase());
+    }
+    if (languageFilter.code.isNotEmpty) {
+      filterParts.add(languageFilter.name);
+    }
+    final filterText = filterParts.join(' • ');
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       color: colorScheme.primaryContainer,
       child: Row(
         children: [
@@ -381,26 +556,63 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
             color: colorScheme.onPrimaryContainer,
           ),
           const SizedBox(width: 8),
-          Text(
-            '${filter.name} files ($count)',
-            style: TextStyle(
-              fontSize: 12,
-              color: colorScheme.onPrimaryContainer,
+          Expanded(
+            child: Text(
+              '$filterText ($count files)',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colorScheme.onPrimaryContainer,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const Spacer(),
           TextButton(
-            onPressed: () {
-              ref.read(pdfFileFilterProvider.notifier).state =
-                  PdfFileFilter.all;
-            },
+            onPressed: _resetAllFilters,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              minimumSize: const Size(0, 32),
+              minimumSize: const Size(0, 28),
             ),
-            child: const Text('Clear'),
+            child: const Text('Reset All'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyFilteredState(
+    PdfFileFilter formatFilter,
+    Language languageFilter,
+  ) {
+    String subtitle = 'No document files available';
+    if (languageFilter.code.isNotEmpty && formatFilter != PdfFileFilter.all) {
+      subtitle =
+          'No ${formatFilter.name.toUpperCase()} files found in ${languageFilter.name}';
+    } else if (languageFilter.code.isNotEmpty) {
+      subtitle = 'No files found in ${languageFilter.name}';
+    } else if (formatFilter != PdfFileFilter.all) {
+      subtitle = 'No ${formatFilter.name.toUpperCase()} files found';
+    }
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            EmptyStateWidget(
+              title: 'No Matching Files',
+              subtitle: subtitle,
+              icon: Icons.filter_alt_off_outlined,
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: _resetAllFilters,
+              icon: const Icon(Icons.clear_all),
+              label: const Text('Clear Filters'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -585,7 +797,7 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
     try {
       final ext = item.extension.toLowerCase().replaceAll('.', '');
       if (ext != 'pdf' && ext != 'epub' && ext != 'txt') {
-        _showSnackBar('Only PDF and TXT files are supported');
+        _showSnackBar('Only PDF, EPUB, and TXT files are supported');
         return;
       }
 

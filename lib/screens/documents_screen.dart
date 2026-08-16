@@ -6,6 +6,7 @@ import '../widgets/media_item_card.dart';
 import '../widgets/empty_state_widget.dart';
 import 'pdf_viewer_screen.dart';
 import 'package:open_filex/open_filex.dart';
+import '../services/settings_service.dart';
 
 class DocumentsScreen extends ConsumerStatefulWidget {
   const DocumentsScreen({super.key});
@@ -15,9 +16,15 @@ class DocumentsScreen extends ConsumerStatefulWidget {
 }
 
 class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
-  bool _isGridView = true;
+  late bool _isGridView;
   String _sortBy = 'name';
   DocumentType? _filterType;
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +113,7 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
               setState(() => _isGridView = !_isGridView);
+              SettingsService.instance.setIsGridView(_isGridView);
             },
           ),
         ],

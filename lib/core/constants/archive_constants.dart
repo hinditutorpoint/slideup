@@ -56,5 +56,6 @@ class ApiFields {
     'downloads',
     'item_size',
     'format',
+    'language',
   ];
 }

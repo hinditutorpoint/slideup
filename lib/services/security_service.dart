@@ -455,16 +455,6 @@ class SecurityService {
     }
   }
 
-  Future<String?> _getStoredCredential() async {
-    final password = await _secureStorage.read(key: _appPasswordKey);
-    if (password != null && password.isNotEmpty) return password;
-    final pin = await _secureStorage.read(key: _appPinKey);
-    if (pin != null && pin.isNotEmpty) return pin;
-    final pattern = await _secureStorage.read(key: _appPatternKey);
-    if (pattern != null && pattern.isNotEmpty) return pattern;
-    return null;
-  }
-
   /// Restores original file from .slock file by stripping header and decrypting payload
   Future<File?> restoreSlockFileFromHeader({
     required File slockFile,

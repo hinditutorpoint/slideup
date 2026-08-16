@@ -7,6 +7,7 @@ import '../datasources/pdf_remote_datasource.dart';
 import '../models/archive_item.dart';
 import '../models/search_filter.dart';
 import '../repositories/pdf_repository.dart';
+import '../../../services/settings_service.dart';
 
 // ============ Service Providers ============
 
@@ -54,10 +55,25 @@ final viewModeProvider = NotifierProvider<ViewModeNotifier, ViewMode>(
 
 class ViewModeNotifier extends Notifier<ViewMode> {
   @override
-  ViewMode build() => ViewMode.grid;
+  ViewMode build() {
+    final isGrid = SettingsService.instance.isGridView;
+    return isGrid ? ViewMode.grid : ViewMode.list;
+  }
 
   void toggle() {
-    state = state == ViewMode.grid ? ViewMode.list : ViewMode.grid;
+    final newMode = state == ViewMode.grid ? ViewMode.list : ViewMode.grid;
+    state = newMode;
+    SettingsService.instance.setIsGridView(newMode == ViewMode.grid);
+  }
+
+  void setGrid() {
+    state = ViewMode.grid;
+    SettingsService.instance.setIsGridView(true);
+  }
+
+  void setList() {
+    state = ViewMode.list;
+    SettingsService.instance.setIsGridView(false);
   }
 }
 

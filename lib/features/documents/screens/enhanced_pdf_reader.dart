@@ -534,7 +534,13 @@ class _EnhancedPdfReaderState extends State<EnhancedPdfReader>
           identifier: _docId,
           page: _currentPage,
           progress: _currentPage / _totalPages,
-          metadata: {'title': widget.title},
+          metadata: {
+            'title': widget.title,
+            if (widget.pdfUrl != null) 'pdfUrl': widget.pdfUrl,
+            if (_pdfFile != null) 'localPath': _pdfFile!.path,
+            if (widget.localFile != null) 'localPath': widget.localFile!.path,
+            if (widget.identifier != null) 'identifier': widget.identifier,
+          },
         ),
       ),
     );

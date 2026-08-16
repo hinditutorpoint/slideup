@@ -1,3 +1,7 @@
+import java.io.File
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -20,7 +24,7 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
-    packagingOptions {
+    packaging {
         jniLibs {
             pickFirsts.add("**/libc++_shared.so")
         }
@@ -38,13 +42,43 @@ android {
         multiDexEnabled = true
     }
 
+    val keystorePropertiesFile = rootProject.file("key.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    }
+
     signingConfigs {
         create("release") {
-            val keystorePath = project.findProperty("MY_KEYSTORE") as String?
-            storeFile = if (keystorePath != null && keystorePath.isNotEmpty()) File(keystorePath) else null
-            storePassword = project.findProperty("MY_STORE_PASSWORD") as String? ?: ""
-            keyAlias = project.findProperty("MY_KEY_ALIAS") as String? ?: ""
-            keyPassword = project.findProperty("MY_KEY_PASSWORD") as String? ?: ""
+            val defaultKeyFile = file("my-release-key.keystore")
+            val customKeystorePath = project.findProperty("MY_KEYSTORE") as String?
+                ?: keystoreProperties.getProperty("storeFile")
+
+            val resolvedStoreFile = when {
+                !customKeystorePath.isNullOrEmpty() -> {
+                    val f = File(customKeystorePath)
+                    if (f.isAbsolute) f else rootProject.file(customKeystorePath)
+                }
+                defaultKeyFile.exists() -> defaultKeyFile
+                else -> null
+            }
+
+            val sPassword = project.findProperty("MY_STORE_PASSWORD") as String?
+                ?: keystoreProperties.getProperty("storePassword")
+            val kAlias = project.findProperty("MY_KEY_ALIAS") as String?
+                ?: keystoreProperties.getProperty("keyAlias")
+            val kPassword = project.findProperty("MY_KEY_PASSWORD") as String?
+                ?: keystoreProperties.getProperty("keyPassword")
+
+            if (resolvedStoreFile != null && resolvedStoreFile.exists() && !sPassword.isNullOrEmpty() && !kAlias.isNullOrEmpty()) {
+                storeFile = resolvedStoreFile
+                storePassword = sPassword
+                keyAlias = kAlias
+                keyPassword = if (!kPassword.isNullOrEmpty()) kPassword else sPassword
+            } else {
+                // Fall back to debug signing config when release keystore credentials are not provided
+                initWith(signingConfigs.getByName("debug"))
+            }
         }
     }
 

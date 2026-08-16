@@ -89,13 +89,19 @@ class SettingsService {
 
   // ---------------- View mode ----------------
 
-  Future<bool> getIsGridView() async {
+  bool get isGridView {
     try {
-      return _box.get(_keyViewMode, defaultValue: 'grid') == 'grid';
-    } catch (e) {
-      debugPrint('Error loading view mode: $e');
+      if (Hive.isBoxOpen(_boxName)) {
+        return _box.get(_keyViewMode, defaultValue: 'grid') == 'grid';
+      }
+      return true;
+    } catch (_) {
       return true;
     }
+  }
+
+  Future<bool> getIsGridView() async {
+    return isGridView;
   }
 
   Future<void> setIsGridView(bool isGrid) async {

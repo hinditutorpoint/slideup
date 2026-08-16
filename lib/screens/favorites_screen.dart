@@ -10,6 +10,7 @@ import '../helpers/audio_playback_helper.dart';
 import 'pdf_viewer_screen.dart';
 import 'image_viewer_screen.dart';
 import 'main_screen.dart';
+import '../services/settings_service.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
@@ -42,6 +43,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen>
   @override
   void initState() {
     super.initState();
+    _isGridView = SettingsService.instance.isGridView;
     _tabController = TabController(length: 5, vsync: this);
   }
 
@@ -173,6 +175,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen>
           tooltip: _isGridView ? 'List View' : 'Grid View',
           onPressed: () {
             setState(() => _isGridView = !_isGridView);
+            SettingsService.instance.setIsGridView(_isGridView);
           },
         ),
         PopupMenuButton<String>(

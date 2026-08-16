@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import '../models/media_file.dart';
+import '../services/settings_service.dart';
 import '../helpers/format_helper.dart';
 
 class VideoPlaylistScreen extends ConsumerStatefulWidget {
@@ -22,9 +23,15 @@ class VideoPlaylistScreen extends ConsumerStatefulWidget {
 }
 
 class _VideoPlaylistScreenState extends ConsumerState<VideoPlaylistScreen> {
-  bool _isGridView = true;
+  late bool _isGridView;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   void dispose() {
@@ -77,6 +84,7 @@ class _VideoPlaylistScreenState extends ConsumerState<VideoPlaylistScreen> {
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {
               setState(() => _isGridView = !_isGridView);
+              SettingsService.instance.setIsGridView(_isGridView);
             },
           ),
         ],

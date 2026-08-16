@@ -1,7 +1,69 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../utils/reader_utils.dart';
 import '../screens/enhanced_pdf_reader.dart';
+
+/// Shared helper to open a reading position from history or continue-reading card
+Future<void> openReadingPosition(
+  BuildContext context,
+  ReadingPosition position,
+) async {
+  final title = position.metadata?['title']?.toString() ??
+      DocumentUtils.extractTitleFromUrl(position.identifier);
+  final pdfUrl = position.metadata?['pdfUrl']?.toString();
+  final localPath = position.metadata?['localPath']?.toString();
+  final archiveId = position.metadata?['identifier']?.toString() ??
+      (position.identifier.startsWith('http') ? null : position.identifier);
+
+  // 1. Try local file if exists
+  if (localPath != null && localPath.isNotEmpty) {
+    final file = File(localPath);
+    if (await file.exists()) {
+      if (!context.mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EnhancedPdfReader.file(
+            file: file,
+            title: title,
+            identifier: archiveId,
+            initialPage: position.page,
+          ),
+        ),
+      );
+      return;
+    }
+  }
+
+  // 2. Try direct network URL
+  String? targetUrl = pdfUrl;
+  if (targetUrl == null || targetUrl.isEmpty) {
+    if (position.identifier.startsWith('http://') ||
+        position.identifier.startsWith('https://')) {
+      targetUrl = position.identifier;
+    } else {
+      final fileSuffix = position.metadata?['fileName'] ??
+          (title.endsWith('.pdf') ? title : '$title.pdf');
+      targetUrl =
+          'https://archive.org/download/${position.identifier}/$fileSuffix';
+    }
+  }
+
+  if (!context.mounted) return;
+
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => EnhancedPdfReader.network(
+        pdfUrl: targetUrl!,
+        title: title,
+        identifier: archiveId,
+        initialPage: position.page,
+      ),
+    ),
+  );
+}
 
 class ReadingHistoryWidget extends StatefulWidget {
   final int maxItems;
@@ -68,35 +130,10 @@ class _ReadingHistoryWidgetState extends State<ReadingHistoryWidget> {
   }
 
   Future<void> _openDocument(ReadingPosition position) async {
-    final type = DocumentUtils.detectDocumentType(position.identifier);
-
-    // For now, only support PDF
-    if (type != DocumentType.pdf && type != DocumentType.unknown) {
-      _showSnackBar('Only PDF files are supported');
-      return;
-    }
-
-    final title = position.metadata?['title'];
-    final urlDoc = 'https://archive.org/download/${position.identifier}/$title';
-
-    if (!mounted) return;
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EnhancedPdfReader.network(
-          pdfUrl: urlDoc,
-          title:
-              position.metadata?['title'] ??
-              DocumentUtils.extractTitleFromUrl(position.identifier),
-          identifier: position.identifier,
-          initialPage: position.page,
-        ),
-      ),
-    );
+    await openReadingPosition(context, position);
 
     // Refresh after returning
-    _loadHistory();
+    if (mounted) _loadHistory();
   }
 
   Future<void> _deleteItem(ReadingPosition position) async {
@@ -539,31 +576,10 @@ class _ContinueReadingCardState extends State<ContinueReadingCard> {
   Future<void> _continueReading() async {
     if (_lastPosition == null) return;
 
-    final type = DocumentUtils.detectDocumentType(_lastPosition!.identifier);
-
-    if (type != DocumentType.pdf && type != DocumentType.unknown) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only PDF files are supported')),
-      );
-      return;
-    }
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EnhancedPdfReader.network(
-          pdfUrl: _lastPosition!.identifier,
-          title:
-              _lastPosition!.metadata?['title'] ??
-              DocumentUtils.extractTitleFromUrl(_lastPosition!.identifier),
-          identifier: _lastPosition!.identifier,
-          initialPage: _lastPosition!.page,
-        ),
-      ),
-    );
+    await openReadingPosition(context, _lastPosition!);
 
     // Refresh after returning
-    _loadLastRead();
+    if (mounted) _loadLastRead();
   }
 
   void _dismiss() {

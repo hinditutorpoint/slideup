@@ -3,13 +3,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-
 import '../../../../core/utils/responsive_helper.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
 import '../../../../shared/widgets/error_widget.dart';
 import '../../../../shared/widgets/loading_widget.dart';
 import '../utils/reader_utils.dart';
 import '../screens/unified_reader_screen.dart';
+
+import '../../../services/settings_service.dart' hide SortOrder, SortBy;
 
 // ========== Providers ==========
 
@@ -18,9 +19,30 @@ final downloadedPdfsProvider =
       return DownloadedPdfsNotifier();
     });
 
-final downloadedPdfViewModeProvider = StateProvider<PdfViewMode>((ref) {
-  return PdfViewMode.list;
-});
+class DownloadedPdfViewModeNotifier extends Notifier<PdfViewMode> {
+  @override
+  PdfViewMode build() {
+    final isGrid = SettingsService.instance.isGridView;
+    return isGrid ? PdfViewMode.grid : PdfViewMode.list;
+  }
+
+  void toggle() {
+    final newMode =
+        state == PdfViewMode.grid ? PdfViewMode.list : PdfViewMode.grid;
+    state = newMode;
+    SettingsService.instance.setIsGridView(newMode == PdfViewMode.grid);
+  }
+
+  void setMode(PdfViewMode mode) {
+    state = mode;
+    SettingsService.instance.setIsGridView(mode == PdfViewMode.grid);
+  }
+}
+
+final downloadedPdfViewModeProvider =
+    NotifierProvider<DownloadedPdfViewModeNotifier, PdfViewMode>(
+      DownloadedPdfViewModeNotifier.new,
+    );
 
 final downloadedPdfSortProvider = StateProvider<SortOrder>((ref) {
   return SortOrder.dateDesc;
@@ -434,9 +456,7 @@ class _DownloadedPdfWidgetState extends ConsumerState<DownloadedPdfWidget> {
   }
 
   void _toggleViewMode() {
-    final current = ref.read(downloadedPdfViewModeProvider);
-    ref.read(downloadedPdfViewModeProvider.notifier).state =
-        current == PdfViewMode.grid ? PdfViewMode.list : PdfViewMode.grid;
+    ref.read(downloadedPdfViewModeProvider.notifier).toggle();
   }
 
   void _onSortChanged(SortOrder order) {

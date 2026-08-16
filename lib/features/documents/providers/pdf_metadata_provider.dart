@@ -1,3 +1,4 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../models/pdf_file.dart';
 import '../models/pdf_metadata.dart';
@@ -5,16 +6,45 @@ import '../../video_search/models/thumbnail_file.dart';
 import '../repositories/pdf_repository.dart';
 import 'pdf_providers.dart';
 
+import '../../../core/constants/languages.dart';
+
+import '../../../services/settings_service.dart';
+
 enum PdfViewMode { grid, list }
 
-final pdfMetaViewModeProvider = StateProvider<PdfViewMode>(
-  (ref) => PdfViewMode.list,
-);
+class PdfMetaViewModeNotifier extends Notifier<PdfViewMode> {
+  @override
+  PdfViewMode build() {
+    final isGrid = SettingsService.instance.isGridView;
+    return isGrid ? PdfViewMode.grid : PdfViewMode.list;
+  }
+
+  void toggle() {
+    final newMode =
+        state == PdfViewMode.grid ? PdfViewMode.list : PdfViewMode.grid;
+    state = newMode;
+    SettingsService.instance.setIsGridView(newMode == PdfViewMode.grid);
+  }
+
+  void setMode(PdfViewMode mode) {
+    state = mode;
+    SettingsService.instance.setIsGridView(mode == PdfViewMode.grid);
+  }
+}
+
+final pdfMetaViewModeProvider =
+    NotifierProvider<PdfMetaViewModeNotifier, PdfViewMode>(
+      PdfMetaViewModeNotifier.new,
+    );
 
 enum PdfFileFilter { all, pdf, epub, other }
 
 final pdfFileFilterProvider = StateProvider<PdfFileFilter>(
   (ref) => PdfFileFilter.all,
+);
+
+final pdfFileLanguageFilterProvider = StateProvider<Language>(
+  (ref) => AppLanguages.all,
 );
 
 class PdfMetadataState {
@@ -35,17 +65,52 @@ class PdfMetadataState {
   int get filesCount => allFiles.length;
   int get thumbnailsCount => allThumbnails.length;
 
-  List<PdfFile> getFilteredFiles(PdfFileFilter filter) {
-    switch (filter) {
+  List<PdfFile> getFilteredFiles({
+    PdfFileFilter formatFilter = PdfFileFilter.all,
+    Language languageFilter = AppLanguages.all,
+  }) {
+    var files = allFiles;
+
+    // Filter by file type
+    switch (formatFilter) {
       case PdfFileFilter.all:
-        return allFiles;
+        break;
       case PdfFileFilter.pdf:
-        return allFiles.where((f) => f.isPdf).toList();
+        files = files.where((f) => f.isPdf).toList();
+        break;
       case PdfFileFilter.epub:
-        return allFiles.where((f) => f.isEpub).toList();
+        files = files.where((f) => f.isEpub).toList();
+        break;
       case PdfFileFilter.other:
-        return allFiles.where((f) => !f.isPdf && !f.isEpub).toList();
+        files = files.where((f) => !f.isPdf && !f.isEpub).toList();
+        break;
     }
+
+    // Filter by language
+    if (languageFilter.code.isNotEmpty) {
+      files = files
+          .where((f) => f.matchesLanguage(languageFilter, metadata?.language))
+          .toList();
+    }
+
+    return files;
+  }
+
+  /// Extracts all distinct languages detected across files or item metadata
+  List<Language> getDetectedLanguages() {
+    final result = <Language>{};
+
+    for (final lang in AppLanguages.supportedLanguages) {
+      if (lang.code.isEmpty) continue;
+      final hasMatchingFile = allFiles.any(
+        (f) => f.matchesLanguage(lang, metadata?.language),
+      );
+      if (hasMatchingFile) {
+        result.add(lang);
+      }
+    }
+
+    return result.toList();
   }
 
   bool isFileLiked(String fileName) => likedFiles.contains(fileName);

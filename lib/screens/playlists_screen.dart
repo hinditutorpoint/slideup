@@ -4,6 +4,7 @@ import '../models/playlist.dart';
 import '../providers/playlist_provider.dart';
 import 'playlist_detail_screen.dart';
 import 'main_screen.dart';
+import '../services/settings_service.dart';
 import '../services/security_service.dart';
 
 class PlaylistsScreen extends ConsumerStatefulWidget {
@@ -14,10 +15,16 @@ class PlaylistsScreen extends ConsumerStatefulWidget {
 }
 
 class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
-  bool _isGridView = false;
+  late bool _isGridView;
   String _searchQuery = '';
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   // Responsive helpers
   bool get _isTablet => MediaQuery.of(context).size.width >= 600;
@@ -172,6 +179,7 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
           tooltip: _isGridView ? 'List View' : 'Grid View',
           onPressed: () {
             setState(() => _isGridView = !_isGridView);
+            SettingsService.instance.setIsGridView(_isGridView);
           },
         ),
         PopupMenuButton<String>(

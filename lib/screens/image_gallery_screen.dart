@@ -7,6 +7,7 @@ import '../helpers/image_helper.dart';
 import '../services/database_service.dart';
 import 'package:share_plus/share_plus.dart';
 import 'image_viewer_screen.dart';
+import '../services/settings_service.dart';
 
 class ImageGalleryScreen extends ConsumerStatefulWidget {
   const ImageGalleryScreen({super.key});
@@ -17,8 +18,14 @@ class ImageGalleryScreen extends ConsumerStatefulWidget {
 
 class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
   int _crossAxisCount = 3;
-  bool _isGridView = true;
+  late bool _isGridView;
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   @override
   void dispose() {
@@ -216,6 +223,7 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
             setState(() {
               _isGridView = !_isGridView;
             });
+            SettingsService.instance.setIsGridView(_isGridView);
           },
         ),
         if (_isGridView)

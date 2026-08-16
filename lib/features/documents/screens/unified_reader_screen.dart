@@ -271,6 +271,7 @@ class DocumentOpener {
     required String title,
     String? identifier,
     String? initialChapter,
+    String? coverUrl,
   }) {
     Navigator.push(
       context,
@@ -278,7 +279,10 @@ class DocumentOpener {
         builder: (context) => DownloadedEpubCatalogue(
           url: url,
           bookTitle: title,
-          coverUrl: 'https://example.com/cover.jpg',
+          coverUrl: coverUrl ??
+              (identifier != null
+                  ? 'https://archive.org/services/img/$identifier'
+                  : null),
         ),
       ),
     );

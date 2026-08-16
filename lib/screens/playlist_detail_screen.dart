@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import '../models/playlist.dart';
 import '../models/media_file.dart';
+import '../services/settings_service.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/media_provider.dart';
 import '../providers/image_provider.dart';
@@ -27,9 +28,15 @@ class PlaylistDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
-  bool _isGridView = true;
+  late bool _isGridView;
   bool _isLoading = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _isGridView = SettingsService.instance.isGridView;
+  }
 
   // Responsive breakpoints
   bool get _isTablet => MediaQuery.of(context).size.width >= 600;
@@ -86,6 +93,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
           tooltip: _isGridView ? 'List View' : 'Grid View',
           onPressed: () {
             setState(() => _isGridView = !_isGridView);
+            SettingsService.instance.setIsGridView(_isGridView);
           },
         ),
         PopupMenuButton<String>(

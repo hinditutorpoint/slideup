@@ -1522,25 +1522,30 @@ class ArchivePageThumbnailManager {
 
 class DocumentUtils {
   static DocumentType detectDocumentType(String url) {
-    final uri = Uri.tryParse(url.toLowerCase());
-    if (uri == null) return DocumentType.unknown;
+    if (url.trim().isEmpty) return DocumentType.unknown;
+    final lower = url.toLowerCase().replaceAll('\\', '/');
 
-    final path = uri.path;
-    if (path.endsWith('.pdf')) return DocumentType.pdf;
-    if (path.endsWith('.epub')) return DocumentType.epub;
-    if (path.endsWith('.txt')) return DocumentType.txt;
+    // Direct suffix check on clean path (handles both local paths and URLs)
+    final cleanPath = lower.split('?').first.split('#').first;
+    if (cleanPath.endsWith('.pdf')) return DocumentType.pdf;
+    if (cleanPath.endsWith('.epub')) return DocumentType.epub;
+    if (cleanPath.endsWith('.txt')) return DocumentType.txt;
 
-    if (url.contains('archive.org')) {
-      if (path.contains('/download/') && path.contains('.pdf')) {
-        return DocumentType.pdf;
-      }
-      if (path.contains('/download/') && path.contains('.epub')) {
-        return DocumentType.epub;
-      }
-      if (path.contains('/download/') && path.contains('.txt')) {
-        return DocumentType.txt;
-      }
+    // Archive.org URLs with embedded extensions
+    if (cleanPath.contains('archive.org')) {
+      if (cleanPath.contains('.pdf')) return DocumentType.pdf;
+      if (cleanPath.contains('.epub')) return DocumentType.epub;
+      if (cleanPath.contains('.txt')) return DocumentType.txt;
     }
+
+    final uri = Uri.tryParse(lower);
+    if (uri != null) {
+      final path = uri.path;
+      if (path.endsWith('.pdf')) return DocumentType.pdf;
+      if (path.endsWith('.epub')) return DocumentType.epub;
+      if (path.endsWith('.txt')) return DocumentType.txt;
+    }
+
     return DocumentType.unknown;
   }
 
