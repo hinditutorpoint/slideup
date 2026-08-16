@@ -79,16 +79,12 @@ jobs:
       - name: 🔨 Build Compact Split-per-ABI APKs
         run: flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
 
-      - name: 📦 Build AppBundle for Google Play
-        run: flutter build appbundle --release --android-skip-build-dependency-validation
-
       - name: 📤 Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: slideup-release-apks
           path: |
             build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/bundle/release/*.aab
           retention-days: 30
 
       - name: 🚀 Create GitHub Release (On Tag Push)
@@ -97,7 +93,6 @@ jobs:
         with:
           files: |
             build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/bundle/release/*.aab
           name: SlideUp Release ${{ github.ref_name }}
           draft: false
           prerelease: false

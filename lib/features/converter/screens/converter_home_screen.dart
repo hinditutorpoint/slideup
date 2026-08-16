@@ -47,25 +47,12 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Media Converter'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.add_to_photos_outlined), text: 'Convert'),
-            Tab(icon: Icon(Icons.visibility_outlined), text: 'Preview'),
-            Tab(icon: Icon(Icons.playlist_play), text: 'Queue'),
-            Tab(icon: Icon(Icons.history), text: 'History'),
-            Tab(icon: Icon(Icons.tune), text: 'Presets'),
-            Tab(icon: Icon(Icons.settings_outlined), text: 'Settings'),
-          ],
-        ),
-      ),
+      appBar: AppBar(title: const Text('Media Converter')),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ConvertTab(onDone: () => _tabController.animateTo(2)),
           const _PreviewTab(onDone: null),
+          _ConvertTab(onDone: () => _tabController.animateTo(2)),
           const _QueueTab(),
           _HistoryTab(
             searchController: _searchController,
@@ -75,6 +62,28 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
           const _PresetsTab(),
           const _SettingsTab(),
         ],
+      ),
+      bottomNavigationBar: Material(
+        color: Theme.of(context).colorScheme.surface,
+        elevation: 8,
+        child: SafeArea(
+          child: TabBar(
+            controller: _tabController,
+            labelColor: Theme.of(context).colorScheme.primary,
+            unselectedLabelColor: Theme.of(context)
+                .colorScheme
+                .onSurface
+                .withValues(alpha: 0.7),
+            tabs: const [
+              Tab(icon: Icon(Icons.visibility_outlined), text: 'Preview'),
+              Tab(icon: Icon(Icons.add_to_photos_outlined), text: 'Convert'),
+              Tab(icon: Icon(Icons.playlist_play), text: 'Queue'),
+              Tab(icon: Icon(Icons.history), text: 'History'),
+              Tab(icon: Icon(Icons.tune), text: 'Presets'),
+              Tab(icon: Icon(Icons.settings_outlined), text: 'Settings'),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -95,6 +104,8 @@ class _ConvertTab extends ConsumerStatefulWidget {
 
 class _ConvertTabState extends ConsumerState<_ConvertTab> {
   bool _picking = false;
+  bool _converting = false;
+  final List<ConverterPreviewItem> _pendingItems = [];
   List<ConverterPreset> _presets = [];
   ConverterPreset? _selectedPreset;
 
@@ -143,7 +154,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
     }
   }
 
-  Future<void> _pickAndEnqueue() async {
+  Future<void> _pickFiles() async {
     if (_picking) return;
     setState(() => _picking = true);
     try {
@@ -154,20 +165,16 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
       );
       if (result == null || result.files.isEmpty) return;
 
-      final paths = <String>[];
-      final names = <String>[];
-      final probes = <MediaProbeInfo>[];
+      final items = <ConverterPreviewItem>[];
       for (final f in result.files) {
         final path = f.path;
         if (path == null) continue;
         final probe = await FFprobeService.instance.probe(path);
         if (probe == null) continue;
-        paths.add(path);
-        names.add(f.name);
-        probes.add(probe);
+        items.add(ConverterPreviewItem(path: path, name: f.name, probe: probe));
       }
 
-      if (paths.isEmpty) {
+      if (items.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -178,22 +185,17 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         return;
       }
 
-      final prefs = ref.read(converterPreferencesProvider);
-      var settings = _resolveSettings(probes);
-      settings = settings.copyWith(
-        outputLocation: prefs.outputLocation,
-        duplicateStrategy: prefs.duplicateStrategy,
-        hardwareMode: _selectedPreset?.settings.hardwareMode ??
-            settings.hardwareMode,
-      );
-
-      await ConversionManager.instance.enqueue(
-        sourcePaths: paths,
-        sourceNames: names,
-        probes: probes,
-        settings: settings,
-      );
-      widget.onDone?.call();
+      if (mounted) {
+        setState(() => _pendingItems.addAll(items));
+        _autoPickPreset(items);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${items.length} file(s) added. Press Convert to start.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -205,12 +207,83 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
     }
   }
 
-  ConversionSettings _resolveSettings(List<MediaProbeInfo> probes) {
-    final hasVideo = probes.any((p) => p.hasVideo);
+  Future<void> _convertNow() async {
+    if (_converting || _pendingItems.isEmpty) return;
+    setState(() => _converting = true);
+    try {
+      final prefs = ref.read(converterPreferencesProvider);
+      var settings = _resolveSettings(_pendingItems);
+      settings = settings.copyWith(
+        outputLocation: prefs.outputLocation,
+        duplicateStrategy: prefs.duplicateStrategy,
+        hardwareMode: _selectedPreset?.settings.hardwareMode ??
+            settings.hardwareMode,
+      );
+
+      final enqueued = _pendingItems.length;
+      await ConversionManager.instance.enqueue(
+        sourcePaths: _pendingItems.map((i) => i.path).toList(),
+        sourceNames: _pendingItems.map((i) => i.name).toList(),
+        probes: _pendingItems.map((i) => i.probe).toList(),
+        settings: settings,
+      );
+      if (mounted) {
+        setState(_pendingItems.clear);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$enqueued file(s) added to the queue.')),
+        );
+      }
+      widget.onDone?.call();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start conversion: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _converting = false);
+    }
+  }
+
+  ConversionSettings _resolveSettings(List<ConverterPreviewItem> items) {
+    final hasVideo = items.any((p) => p.hasVideo);
     return _settings.copyWith(
       videoMute: _settings.videoMute || !hasVideo,
-      audioMute: _settings.audioMute || !probes.any((p) => p.hasAudio),
+      audioMute: _settings.audioMute || !items.any((p) => p.hasAudio),
     );
+  }
+
+  /// Picks the most fitting preset for the selected files (audio → audio
+  /// preset, video → video preset) and applies its settings.
+  void _autoPickPreset(List<ConverterPreviewItem> items) {
+    final hasVideo = items.any((i) => i.hasVideo);
+    final prefs = ref.read(converterPreferencesProvider);
+    final defaultId = prefs.defaultPresetId;
+
+    final defaultMatch = _presets.where((p) => p.id == defaultId).toList();
+    final defaultPreset = defaultMatch.isEmpty ? null : defaultMatch.first;
+    final fitsType = defaultPreset != null &&
+        defaultPreset.settings.format.isVideoContainer == hasVideo;
+    if (fitsType) {
+      _applyPreset(defaultPreset);
+      return;
+    }
+
+    final videoMatch = _presets.where((p) {
+      if (p.settings.format.isVideoContainer != hasVideo) return false;
+      if (hasVideo && p.settings.videoCodec == VideoCodec.auto) return false;
+      return true;
+    }).toList();
+    if (videoMatch.isNotEmpty) {
+      _applyPreset(videoMatch.first);
+      return;
+    }
+
+    final audioMatch = _presets.where((p) {
+      if (p.settings.format.isVideoContainer != hasVideo) return false;
+      return true;
+    }).toList();
+    if (audioMatch.isNotEmpty) _applyPreset(audioMatch.first);
   }
 
   void _applyPreset(ConverterPreset? preset) {
@@ -227,7 +300,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
       padding: const EdgeInsets.all(16),
       children: [
         OutlinedButton.icon(
-          onPressed: _picking ? null : _pickAndEnqueue,
+          onPressed: _picking ? null : _pickFiles,
           icon: _picking
               ? const SizedBox(
                   width: 18,
@@ -240,6 +313,25 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
         ),
+        if (_pendingItems.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          ..._pendingItems.map((item) {
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                item.hasVideo ? Icons.movie_outlined : Icons.audiotrack,
+              ),
+              title: Text(item.name, overflow: TextOverflow.ellipsis),
+              trailing: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Remove',
+                onPressed: () => setState(() => _pendingItems.remove(item)),
+              ),
+            );
+          }),
+          const SizedBox(height: 4),
+        ],
         const SizedBox(height: 24),
         Text('Preset', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
@@ -273,9 +365,23 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         ),
         const SizedBox(height: 24),
         FilledButton.icon(
-          onPressed: _picking ? null : _pickAndEnqueue,
-          icon: const Icon(Icons.autorenew),
-          label: const Text('Convert'),
+          onPressed: (_picking || _converting || _pendingItems.isEmpty)
+              ? null
+              : _convertNow,
+          icon: _converting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.autorenew),
+          label: Text(
+            _converting
+                ? 'Starting…'
+                : _pendingItems.isEmpty
+                    ? 'Convert'
+                    : 'Convert ${_pendingItems.length}',
+          ),
         ),
       ],
     );
@@ -551,6 +657,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       if (items.isEmpty) return;
 
       ref.read(converterPreviewListProvider.notifier).addAll(items);
+      _autoPickPreset(items);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -559,6 +666,41 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       }
     } finally {
       if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  /// Picks the most fitting preset for the selected files and applies it to
+  /// the shared convert draft (audio → audio preset, video → video preset).
+  Future<void> _autoPickPreset(List<ConverterPreviewItem> items) async {
+    final hasVideo = items.any((i) => i.hasVideo);
+    final prefs = ref.read(converterPreferencesProvider);
+
+    final all = await ConverterDatabaseService.instance.getAllPresets();
+    final defaultMatch = all.where((p) => p.id == prefs.defaultPresetId).toList();
+    final defaultPreset = defaultMatch.isEmpty ? null : defaultMatch.first;
+    final fitsType = defaultPreset != null &&
+        defaultPreset.settings.format.isVideoContainer == hasVideo;
+    if (fitsType) {
+      ref.read(converterDraftProvider.notifier).apply(defaultPreset.settings);
+      return;
+    }
+
+    final videoMatch = all.where((p) {
+      if (p.settings.format.isVideoContainer != hasVideo) return false;
+      if (hasVideo && p.settings.videoCodec == VideoCodec.auto) return false;
+      return true;
+    }).toList();
+    if (videoMatch.isNotEmpty) {
+      ref.read(converterDraftProvider.notifier).apply(videoMatch.first.settings);
+      return;
+    }
+
+    final audioMatch = all.where((p) {
+      if (p.settings.format.isVideoContainer != hasVideo) return false;
+      return true;
+    }).toList();
+    if (audioMatch.isNotEmpty) {
+      ref.read(converterDraftProvider.notifier).apply(audioMatch.first.settings);
     }
   }
 
@@ -836,14 +978,36 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
           ],
         ),
         trailing: job.status == ConversionStatus.processing
-            ? IconButton(
-                tooltip: 'Cancel',
-                icon: const Icon(Icons.close),
-                onPressed: () => ConversionManager.instance.cancelJob(job.id),
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Pause',
+                    icon: const Icon(Icons.pause),
+                    onPressed: () => ConversionManager.instance.pauseJob(job.id),
+                  ),
+                  IconButton(
+                    tooltip: 'Stop',
+                    icon: const Icon(Icons.stop),
+                    onPressed: () => ConversionManager.instance.cancelJob(job.id),
+                  ),
+                ],
               )
-            : const Chip(
-                label: Text('Pending'),
-                visualDensity: VisualDensity.compact,
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Start',
+                    icon: const Icon(Icons.play_arrow),
+                    onPressed: () =>
+                        ConversionManager.instance.startJob(job.id),
+                  ),
+                  IconButton(
+                    tooltip: 'Cancel',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => ConversionManager.instance.cancelJob(job.id),
+                  ),
+                ],
               ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => JobDetailsScreen(jobId: job.id)),

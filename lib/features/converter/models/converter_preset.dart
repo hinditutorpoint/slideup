@@ -31,8 +31,8 @@ class ConverterPreset {
     return {
       'id': id,
       'name': name,
-      'isSystem': isSystem,
-      'isDefault': isDefault,
+      'isSystem': isSystem ? 1 : 0,
+      'isDefault': isDefault ? 1 : 0,
       'settingsJson': jsonEncode(settings.toJson()),
       'description': description,
       'createdAt': createdAt.toIso8601String(),
@@ -56,8 +56,8 @@ class ConverterPreset {
     return ConverterPreset(
       id: json['id'] as String,
       name: json['name'] as String? ?? 'Preset',
-      isSystem: json['isSystem'] as bool? ?? false,
-      isDefault: json['isDefault'] as bool? ?? false,
+      isSystem: json['isSystem'] == 1 || json['isSystem'] == true,
+      isDefault: json['isDefault'] == 1 || json['isDefault'] == true,
       settings: settings,
       description: json['description'] as String?,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),

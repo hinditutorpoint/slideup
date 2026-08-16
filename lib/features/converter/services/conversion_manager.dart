@@ -57,10 +57,10 @@ class ConversionManager {
       StreamController<ConversionProgress>.broadcast();
 
   bool _initialized = false;
-  bool _pumping = false;
   final Uuid _uuid = const Uuid();
   int _nextNotificationId = 6000;
   String? _appOutputDir;
+  final Set<String> _pausedIds = {};
 
   // ─────────────────────────── Public state ───────────────────────────
 
@@ -72,9 +72,6 @@ class ConversionManager {
 
   int get activeCount =>
       _jobs.where((j) => j.status == ConversionStatus.processing).length;
-
-  bool get hasActiveAny =>
-      _jobs.any((j) => j.status == ConversionStatus.processing);
 
   Future<void> initializeAndRecover() async {
     if (_initialized) return;
@@ -152,7 +149,6 @@ class ConversionManager {
       created.add(job);
       _notify();
     }
-    unawaited(_pump());
     return created;
   }
 
@@ -172,7 +168,38 @@ class ConversionManager {
     _jobs.insert(0, fresh);
     await _db.upsertJob(fresh);
     _notify();
-    unawaited(_pump());
+  }
+
+  /// Manually starts a queued/pending job (respecting max simultaneous).
+  Future<void> startJob(String id) async {
+    final job = _jobs.firstWhereOrNull((j) => j.id == id);
+    if (job == null) return;
+    if (job.status != ConversionStatus.queued &&
+        job.status != ConversionStatus.pending) {
+      return;
+    }
+    final prefs = _settings.preferences;
+    final maxConcurrent = prefs.maxSimultaneous <= 0
+        ? ConverterConstants.defaultMaxSimultaneous
+        : prefs.maxSimultaneous;
+    final running = _jobs
+        .where((j) => j.status == ConversionStatus.processing)
+        .length;
+    if (running >= maxConcurrent) return;
+    unawaited(_startJob(job));
+  }
+
+  /// Stops the running FFmpeg process and returns the job to the queue so it
+  /// can be started again later (pause = real stop + requeue; no fake state).
+  Future<void> pauseJob(String id) async {
+    final job = _jobs.firstWhereOrNull((j) => j.id == id);
+    if (job == null || job.status != ConversionStatus.processing) return;
+    final session = _sessions[id];
+    if (session == null) return;
+    _pausedIds.add(id);
+    job.progress = 0;
+    await _db.updateJob(job);
+    await FFmpegKit.cancel(session.getSessionId());
   }
 
   Future<void> cancelJob(String id) async {
@@ -199,7 +226,6 @@ class ConversionManager {
     await _db.upsertJob(job);
     await _notifier.dismiss(job);
     _notify();
-    unawaited(_pump());
   }
 
   Future<void> deleteJobs(List<String> ids) async {
@@ -221,42 +247,6 @@ class ConversionManager {
 
   // ────────────────────────────── Worker ──────────────────────────────
 
-  Future<void> _pump() async {
-    if (_pumping) return;
-    _pumping = true;
-    try {
-      final prefs = _settings.preferences;
-      final maxConcurrent = prefs.maxSimultaneous <= 0
-          ? ConverterConstants.defaultMaxSimultaneous
-          : prefs.maxSimultaneous;
-
-      while (
-          _jobs.where((j) => j.status == ConversionStatus.processing).length <
-              maxConcurrent) {
-        final next =
-            _jobs
-                .where(
-                  (j) =>
-                      j.status == ConversionStatus.queued &&
-                      !_sessions.containsKey(j.id),
-                )
-                .toList()
-                .firstWhereOrNull((_) => true);
-        if (next == null) break;
-        unawaited(_startJob(next));
-      }
-
-      if (prefs.backgroundConversion && hasActiveAny) {
-        final job = _jobs.firstWhere(
-          (j) => j.status == ConversionStatus.processing,
-        );
-        await _notifier.startForeground(job: job, fraction: 0);
-      }
-    } finally {
-      _pumping = false;
-    }
-  }
-
   Future<void> _startJob(ConversionJob job) async {
     job.status = ConversionStatus.processing;
     job.startedAt = DateTime.now();
@@ -265,6 +255,9 @@ class ConversionManager {
 
     final prefs = _settings.preferences;
     if (prefs.keepAwake && !kIsWeb) await WakelockPlus.enable();
+    if (prefs.backgroundConversion) {
+      await _notifier.startForeground(job: job, fraction: 0);
+    }
 
     try {
       final probe = await FFprobeService.instance.probe(job.sourcePath);
@@ -392,6 +385,17 @@ class ConversionManager {
       }
       await _afterJobEnds(job);
     } else if (ReturnCode.isCancel(rc)) {
+      if (_pausedIds.remove(job.id)) {
+        // Paused: return to queue, ready to be started again.
+        await _cleanupPartial(outPath);
+        job.status = ConversionStatus.queued;
+        job.errorMessage = 'Paused — press Start to resume.';
+        await _db.updateJob(job);
+        await _notifier.dismiss(job);
+        _notify();
+        await _afterJobEnds(job);
+        return;
+      }
       await _cleanupPartial(outPath);
       job.status = ConversionStatus.cancelled;
       job.errorMessage = 'Cancelled';
@@ -432,7 +436,6 @@ class ConversionManager {
       if (!kIsWeb) await WakelockPlus.disable();
       await _notifier.stopForeground();
     }
-    unawaited(_pump());
   }
 
   static String _friendlyError(String raw) {
@@ -477,19 +480,25 @@ class ConversionManager {
     switch (settings.outputLocation) {
       case OutputLocation.sameFolder:
         dir = p.dirname(job.sourcePath);
-        if (!(await _isWritable(dir))) dir = await _appFolder();
+        if (!await _ensureWritableDir(dir)) dir = await _appFolder();
       case OutputLocation.appFolder:
         dir = await _appFolder();
       case OutputLocation.selectedFolder:
         final selected = settings.selectedFolderPath;
-        if (selected != null && await _isWritable(selected)) {
+        if (selected != null && await _ensureWritableDir(selected)) {
           dir = selected;
         } else {
           dir = await _appFolder();
         }
     }
 
-    await Directory(dir).create(recursive: true);
+    if (!await _ensureWritableDir(dir)) {
+      // Last resort: app-private documents directory (always writable).
+      dir =
+          '${(await getApplicationDocumentsDirectory()).path}'
+          '${Platform.pathSeparator}SlideUpConvert';
+      await _ensureWritableDir(dir);
+    }
 
     var finalPath = '$dir${Platform.pathSeparator}$fileName';
 
@@ -539,9 +548,21 @@ class ConversionManager {
     }
   }
 
-  Future<bool> _isWritable(String dir) {
-    return PermissionService.instance.hasWritePermissionForPath(dir);
+  /// Creates the directory (if needed) and verifies it is actually writable.
+/// Returns `false` (without throwing) when the path is read-only — e.g.
+/// some removable SD cards — so callers can fall back to the app folder.
+Future<bool> _ensureWritableDir(String dir) async {
+  try {
+    final directory = Directory(dir);
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    return await PermissionService.instance.isPathWritable(dir);
+  } catch (e) {
+    debugPrint('⚠️ Output dir not writable ($dir): $e');
+    return false;
   }
+}
 
   Future<String> _appFolder() async {
     if (_appOutputDir != null) return _appOutputDir!;
