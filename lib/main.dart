@@ -28,6 +28,8 @@ import 'services/notification_service.dart' as notification_service;
 import 'providers/audio_handler_provider.dart';
 import 'providers/intent_handler_provider.dart';
 import 'features/video_player/video_player_init.dart';
+import 'features/converter/services/conversion_manager.dart';
+import 'features/converter/widgets/converter_global_indicator.dart';
 import 'features/epub_reader/models/epub_book.dart';
 import 'features/epub_reader/models/epub_chapter.dart';
 import 'features/epub_reader/models/download_task.dart';
@@ -179,6 +181,12 @@ Future<void> _initBackgroundServices() async {
     await BackgroundChapterGenerator.instance.initialize();
   } catch (e) {
     debugPrint('BackgroundChapterGenerator error: $e');
+  }
+
+  try {
+    await ConversionManager.instance.initializeAndRecover();
+  } catch (e) {
+    debugPrint('Converter init error: $e');
   }
 }
 
@@ -344,7 +352,9 @@ class _SlideupMediaPlayerAppState extends ConsumerState<SlideupMediaPlayerApp> {
               ).copyWith(textScaler: TextScaler.noScaling),
               child: PiPOverlay(
                 child: AudioPlayerOverlay(
-                  child: child ?? const SizedBox.shrink(),
+                  child: ConverterGlobalIndicator(
+                    child: child ?? const SizedBox.shrink(),
+                  ),
                 ),
               ),
             );

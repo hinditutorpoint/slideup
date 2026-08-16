@@ -7,6 +7,11 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
+  /// Listeners that react to conversion notification action buttons.
+  /// Each listener receives `(actionId, payload)`.
+  static final List<void Function(String actionId, String? payload)>
+      _conversionActionListeners = [];
+
   bool _isInitialized = false;
 
   NotificationService._internal();
@@ -14,6 +19,18 @@ class NotificationService {
   factory NotificationService() {
     _instance ??= NotificationService._internal();
     return _instance!;
+  }
+
+  static void registerConversionActionListener(
+    void Function(String actionId, String? payload) listener,
+  ) {
+    _conversionActionListeners.add(listener);
+  }
+
+  static void unregisterConversionActionListener(
+    void Function(String actionId, String? payload) listener,
+  ) {
+    _conversionActionListeners.remove(listener);
   }
 
   Future<void> initialize() async {
@@ -47,8 +64,20 @@ class NotificationService {
   }
 
   void _onNotificationTapped(NotificationResponse response) {
-    debugPrint('Notification tapped: ${response.payload}');
-    // Handle notification tap
+    debugPrint(
+      'Notification tapped: action=${response.actionId} payload=${response.payload}',
+    );
+    final actionId = response.actionId;
+    if (actionId != null && actionId.startsWith('conv_')) {
+      for (final listener in List.of(_conversionActionListeners)) {
+        try {
+          listener(actionId, response.payload);
+        } catch (e) {
+          debugPrint('⚠️ Conversion action listener error: $e');
+        }
+      }
+      return;
+    }
   }
 
   /// Show download progress notification
@@ -175,6 +204,101 @@ class NotificationService {
       );
     } catch (e) {
       debugPrint('⚠️ Failed to show error notification: $e');
+    }
+  }
+
+  /// Show persistent conversion progress notification with Cancel/Open actions.
+  Future<void> showConversionProgress({
+    required int id,
+    required String title,
+    required int progress,
+    required int maxProgress,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    try {
+      final percentage = maxProgress > 0
+          ? ((progress / maxProgress) * 100).round()
+          : 0;
+
+      final androidDetails = AndroidNotificationDetails(
+        'conversion_progress',
+        'Conversions',
+        channelDescription: 'Shows conversion progress',
+        importance: Importance.low,
+        priority: Priority.low,
+        onlyAlertOnce: true,
+        showProgress: true,
+        maxProgress: maxProgress,
+        progress: progress,
+        ongoing: true,
+        autoCancel: false,
+        playSound: false,
+        enableVibration: false,
+        channelShowBadge: false,
+        icon: '@mipmap/ic_launcher',
+        actions: [
+          const AndroidNotificationAction('conv_cancel', 'Cancel'),
+          const AndroidNotificationAction('conv_open', 'Open'),
+        ],
+      );
+
+      final iosDetails = DarwinNotificationDetails(
+        presentAlert: false,
+        presentBadge: false,
+        presentSound: false,
+      );
+
+      await _notifications.show(
+        id,
+        'Converting: $title',
+        '$percentage% complete',
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to show conversion progress notification: $e');
+    }
+  }
+
+  /// Show a conversion result notification (success/failure/cancelled).
+  Future<void> showConversionResult({
+    required int id,
+    required String title,
+    required bool success,
+    String? outputPath,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        success ? 'conversion_complete' : 'conversion_failed',
+        success ? 'Conversion Complete' : 'Conversion Failed',
+        channelDescription: success
+            ? 'Shows when conversions complete'
+            : 'Shows when conversions fail or are cancelled',
+        importance: Importance.high,
+        priority: Priority.high,
+        autoCancel: true,
+        ongoing: false,
+        playSound: success,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      await _notifications.show(
+        id,
+        success ? 'Conversion Complete' : 'Conversion Failed',
+        title,
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+        payload: outputPath,
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to show conversion result notification: $e');
     }
   }
 

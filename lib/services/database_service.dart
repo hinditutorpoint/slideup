@@ -31,7 +31,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       singleInstance: true,
@@ -143,6 +143,51 @@ class DatabaseService {
     await db.execute('''
       CREATE INDEX idx_url_history_lastPlayed ON url_history(lastPlayed DESC)
     ''');
+
+    await _createConverterTables(db);
+  }
+
+  /// Converter feature tables (version 3).
+  Future<void> _createConverterTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS conversion_jobs (
+        id TEXT PRIMARY KEY,
+        sourcePath TEXT NOT NULL,
+        sourceName TEXT NOT NULL,
+        outputPath TEXT,
+        settingsJson TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        progress INTEGER NOT NULL,
+        durationMs INTEGER,
+        errorMessage TEXT,
+        ffmpegLog TEXT,
+        notificationId INTEGER NOT NULL,
+        queuedAt TEXT NOT NULL,
+        startedAt TEXT,
+        completedAt TEXT,
+        outputSize INTEGER
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS converter_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        isSystem INTEGER NOT NULL,
+        isDefault INTEGER NOT NULL,
+        settingsJson TEXT NOT NULL,
+        description TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_conversion_jobs_status ON conversion_jobs(status)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_conversion_jobs_queued ON conversion_jobs(queuedAt DESC)',
+    );
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -164,6 +209,9 @@ class DatabaseService {
       await db.execute('''
         CREATE INDEX IF NOT EXISTS idx_url_history_lastPlayed ON url_history(lastPlayed DESC)
       ''');
+    }
+    if (oldVersion < 3) {
+      await _createConverterTables(db);
     }
   }
 

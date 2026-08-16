@@ -33,6 +33,7 @@ import '../core/theme/app_theme.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
 import '../features/video_editor/video_editor_screen.dart';
 import '../features/private_browser/private_browser_screen.dart';
+import '../features/converter/screens/converter_home_screen.dart';
 
 // Quick action model
 class QuickAction {
@@ -223,6 +224,13 @@ class _MainScreenState extends ConsumerState<MainScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.compare_arrows_rounded),
+                        onPressed: () =>
+                            _navigateTo(const ConverterHomeScreen()),
+                        tooltip: 'Converter',
+                      ),
+                      const SizedBox(height: 8),
                       IconButton(
                         icon: const Icon(Icons.movie_edit),
                         onPressed: _openVideoEditor,
@@ -955,6 +963,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
                       title: 'Watch History',
                       subtitle: 'Recently watched',
                       onTap: () {},
+                    ),
+                    _DrawerItem(
+                      icon: Icons.compare_arrows_rounded,
+                      title: 'Convert Media',
+                      subtitle: 'Audio & video converter',
+                      onTap: () => _navigateTo(const ConverterHomeScreen()),
                     ),
                     _DrawerItem(
                       icon: Icons.movie_edit,

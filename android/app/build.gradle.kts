@@ -9,6 +9,35 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Fallback keystore used ONLY when no release keystore credentials are
+// provided (e.g. CI runs without secrets). It is generated into the build
+// directory, is never committed, and simply lets `validateSigningRelease`
+// succeed so the APK/AAB can be produced. It is NOT a production key.
+val generatedKeystore = rootProject.layout.buildDirectory.file("slideup-release-keystore.jks")
+
+val generateFallbackKeystore = tasks.register("generateFallbackKeystore") {
+    val keystoreFile = generatedKeystore.get().asFile
+    outputs.file(keystoreFile)
+    onlyIf { !keystoreFile.exists() }
+    doLast {
+        keystoreFile.parentFile.mkdirs()
+        project.exec {
+            commandLine(
+                "keytool",
+                "-genkeypair", "-v",
+                "-keystore", keystoreFile.absolutePath,
+                "-storepass", "slideup-release",
+                "-keypass", "slideup-release",
+                "-alias", "slideup-release",
+                "-keyalg", "RSA",
+                "-keysize", "2048",
+                "-validity", "10000",
+                "-dname", "CN=SlideUp CI,O=SlideUp,C=US",
+            )
+        }
+    }
+}
+
 android {
     namespace = "com.slideup.mediaplayer"
     compileSdk = 36
@@ -76,8 +105,17 @@ android {
                 keyAlias = kAlias
                 keyPassword = if (!kPassword.isNullOrEmpty()) kPassword else sPassword
             } else {
-                // Fall back to debug signing config when release keystore credentials are not provided
-                initWith(signingConfigs.getByName("debug"))
+                // CI fallback: generate a throwaway keystore into the build dir
+                // instead of signing with the system debug config (which does
+                // not exist on fresh runners and breaks validateSigningRelease).
+                val fallback = generatedKeystore.get().asFile
+                storeFile = fallback
+                storePassword = "slideup-release"
+                keyAlias = "slideup-release"
+                keyPassword = "slideup-release"
+                tasks.named("validateSigningRelease").configure {
+                    dependsOn(generateFallbackKeystore)
+                }
             }
         }
     }
