@@ -132,8 +132,13 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 minification/shrinking is DISABLED: Flutter release Dart code
+            // is already AOT-compiled, and R8 strips/renames plugin classes
+            // (media_kit, flutter_inappwebview, flutter_foreground_task,
+            // flutter_local_notifications, ...) causing NoClassDefFoundError
+            // crashes on launch.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android.txt"),
                 "proguard-rules.pro"
