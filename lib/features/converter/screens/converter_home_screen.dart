@@ -15,6 +15,7 @@ import '../services/conversion_manager.dart';
 import '../services/converter_constants.dart';
 import '../services/converter_database_service.dart';
 import '../services/ffmpeg_probe_service.dart';
+import '../widgets/converter_preview_player.dart';
 
 class ConverterHomeScreen extends ConsumerStatefulWidget {
   const ConverterHomeScreen({super.key});
@@ -33,7 +34,7 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -52,6 +53,7 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
           controller: _tabController,
           tabs: const [
             Tab(icon: Icon(Icons.add_to_photos_outlined), text: 'Convert'),
+            Tab(icon: Icon(Icons.visibility_outlined), text: 'Preview'),
             Tab(icon: Icon(Icons.playlist_play), text: 'Queue'),
             Tab(icon: Icon(Icons.history), text: 'History'),
             Tab(icon: Icon(Icons.tune), text: 'Presets'),
@@ -62,7 +64,8 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ConvertTab(onDone: () => _tabController.animateTo(1)),
+          _ConvertTab(onDone: () => _tabController.animateTo(2)),
+          const _PreviewTab(onDone: null),
           const _QueueTab(),
           _HistoryTab(
             searchController: _searchController,
@@ -92,9 +95,14 @@ class _ConvertTab extends ConsumerStatefulWidget {
 
 class _ConvertTabState extends ConsumerState<_ConvertTab> {
   bool _picking = false;
-  ConversionSettings _settings = const ConversionSettings();
   List<ConverterPreset> _presets = [];
   ConverterPreset? _selectedPreset;
+
+  ConversionSettings get _settings => ref.read(converterDraftProvider);
+
+  void _updateSettings(ConversionSettings settings) {
+    ref.read(converterDraftProvider.notifier).apply(settings);
+  }
 
   @override
   void initState() {
@@ -127,7 +135,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         if (mounted) {
           setState(() {
             _selectedPreset = p;
-            _settings = p.settings;
+            _updateSettings(p.settings);
           });
         }
         return;
@@ -208,12 +216,13 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
   void _applyPreset(ConverterPreset? preset) {
     setState(() {
       _selectedPreset = preset;
-      _settings = preset?.settings ?? const ConversionSettings();
+      _updateSettings(preset?.settings ?? const ConversionSettings());
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(converterDraftProvider);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -283,7 +292,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .toList(),
         onChanged: (v) => setState(() {
           _selectedPreset = null;
-          _settings = s.copyWith(format: v ?? s.format);
+          _updateSettings(s.copyWith(format: v ?? s.format));
         }),
       ),
       const SizedBox(height: 12),
@@ -295,7 +304,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .toList(),
         onChanged: (v) => setState(() {
           _selectedPreset = null;
-          _settings = s.copyWith(outputLocation: v ?? s.outputLocation);
+          _updateSettings(s.copyWith(outputLocation: v ?? s.outputLocation));
         }),
       ),
       if (s.outputLocation == OutputLocation.selectedFolder) ...[
@@ -309,7 +318,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             final dir = await FilePicker.platform.getDirectoryPath();
             if (dir != null) {
               setState(() {
-                _settings = s.copyWith(selectedFolderPath: dir);
+                _updateSettings(s.copyWith(selectedFolderPath: dir));
               });
             }
           },
@@ -324,7 +333,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .toList(),
         onChanged: (v) => setState(() {
           _selectedPreset = null;
-          _settings = s.copyWith(duplicateStrategy: v ?? s.duplicateStrategy);
+          _updateSettings(s.copyWith(duplicateStrategy: v ?? s.duplicateStrategy));
         }),
       ),
     ];
@@ -343,7 +352,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         onChanged: isAudio
             ? null
             : (v) => setState(
-                  () => _settings = s.copyWith(videoCodec: v ?? s.videoCodec),
+                  () => _updateSettings(s.copyWith(videoCodec: v ?? s.videoCodec)),
                 ),
       ),
       const SizedBox(height: 12),
@@ -354,7 +363,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .map((c) => DropdownMenuItem(value: c, child: Text(c.label)))
             .toList(),
         onChanged: (v) =>
-            setState(() => _settings = s.copyWith(audioCodec: v ?? s.audioCodec)),
+            setState(() => _updateSettings(s.copyWith(audioCodec: v ?? s.audioCodec))),
       ),
       const SizedBox(height: 12),
       Row(
@@ -365,7 +374,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Width'),
               onChanged: (v) =>
-                  setState(() => _settings = s.copyWith(width: int.tryParse(v))),
+                  setState(() => _updateSettings(s.copyWith(width: int.tryParse(v)))),
             ),
           ),
           const SizedBox(width: 12),
@@ -375,7 +384,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Height'),
               onChanged: (v) =>
-                  setState(() => _settings = s.copyWith(height: int.tryParse(v))),
+                  setState(() => _updateSettings(s.copyWith(height: int.tryParse(v)))),
             ),
           ),
         ],
@@ -390,7 +399,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         onChanged: isAudio
             ? null
             : (v) => setState(
-                  () => _settings = s.copyWith(frameRate: v ?? s.frameRate),
+                  () => _updateSettings(s.copyWith(frameRate: v ?? s.frameRate)),
                 ),
       ),
       const SizedBox(height: 12),
@@ -402,8 +411,9 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .toList(),
         onChanged: isAudio
             ? null
-            : (v) =>
-                  setState(() => _settings = s.copyWith(profile: v ?? s.profile)),
+            : (v) => setState(
+                  () => _updateSettings(s.copyWith(profile: v ?? s.profile)),
+                ),
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<AudioSampleRate>(
@@ -413,7 +423,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
             .map((r) => DropdownMenuItem(value: r, child: Text(r.label)))
             .toList(),
         onChanged: (v) => setState(
-          () => _settings = s.copyWith(audioSampleRate: v ?? s.audioSampleRate),
+          () => _updateSettings(s.copyWith(audioSampleRate: v ?? s.audioSampleRate)),
         ),
       ),
       _sliderField(
@@ -424,7 +434,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         max: 9,
         divisions: 9,
         onChanged: (v) =>
-            setState(() => _settings = s.copyWith(audioQuality: v.round())),
+            setState(() => _updateSettings(s.copyWith(audioQuality: v.round()))),
       ),
       _sliderField(
         context,
@@ -433,7 +443,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         min: 0.0,
         max: 2.0,
         divisions: 20,
-        onChanged: (v) => setState(() => _settings = s.copyWith(volume: v)),
+        onChanged: (v) => setState(() => _updateSettings(s.copyWith(volume: v))),
       ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
@@ -441,13 +451,13 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         value: s.faststart,
         onChanged: isAudio
             ? null
-            : (v) => setState(() => _settings = s.copyWith(faststart: v)),
+            : (v) => setState(() => _updateSettings(s.copyWith(faststart: v))),
       ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Keep metadata'),
         value: s.keepMetadata,
-        onChanged: (v) => setState(() => _settings = s.copyWith(keepMetadata: v)),
+        onChanged: (v) => setState(() => _updateSettings(s.copyWith(keepMetadata: v))),
       ),
     ];
   }
@@ -499,6 +509,236 @@ String _duplicateLabel(DuplicateStrategy d) {
       return 'Rename new file';
     case DuplicateStrategy.skip:
       return 'Skip';
+  }
+}
+
+// ─────────────────────────────── Preview ───────────────────────────────
+
+class _PreviewTab extends ConsumerStatefulWidget {
+  const _PreviewTab({this.onDone});
+
+  final VoidCallback? onDone;
+
+  @override
+  ConsumerState<_PreviewTab> createState() => _PreviewTabState();
+}
+
+class _PreviewTabState extends ConsumerState<_PreviewTab> {
+  int _selectedIndex = 0;
+  bool _picking = false;
+
+  Future<void> _pickFiles() async {
+    if (_picking) return;
+    setState(() => _picking = true);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ConverterConstants.supportedInputs,
+        allowMultiple: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final items = <ConverterPreviewItem>[];
+      for (final f in result.files) {
+        final path = f.path;
+        if (path == null) continue;
+        final probe = await FFprobeService.instance.probe(path);
+        if (probe == null) continue;
+        items.add(
+          ConverterPreviewItem(path: path, name: f.name, probe: probe),
+        );
+      }
+      if (items.isEmpty) return;
+
+      ref.read(converterPreviewListProvider.notifier).addAll(items);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load preview: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  Future<void> _sendToQueue() async {
+    final items = ref.read(converterPreviewListProvider);
+    if (items.isEmpty) return;
+
+    final settings = ref.read(converterDraftProvider);
+    final prefs = ref.read(converterPreferencesProvider);
+    final hasVideo = items.any((i) => i.hasVideo);
+    final hasAudio = items.any((i) => i.hasAudio);
+    final resolved = settings.copyWith(
+      videoMute: settings.videoMute || !hasVideo,
+      audioMute: settings.audioMute || !hasAudio,
+      outputLocation: prefs.outputLocation,
+      duplicateStrategy: prefs.duplicateStrategy,
+      hardwareMode: settings.hardwareMode,
+    );
+
+    await ConversionManager.instance.enqueue(
+      sourcePaths: items.map((i) => i.path).toList(),
+      sourceNames: items.map((i) => i.name).toList(),
+      probes: items.map((i) => i.probe).toList(),
+      settings: resolved,
+    );
+    ref.read(converterPreviewListProvider.notifier).clear();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${items.length} file(s) added to the queue.'),
+        ),
+      );
+    }
+    widget.onDone?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = ref.watch(converterPreviewListProvider);
+    if (_selectedIndex >= items.length && items.isNotEmpty) {
+      _selectedIndex = items.length - 1;
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _picking ? null : _pickFiles,
+                  icon: _picking
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add),
+                  label: Text(_picking ? 'Loading…' : 'Add files to preview'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Remove all',
+                icon: const Icon(Icons.delete_sweep_outlined),
+                onPressed: items.isEmpty
+                    ? null
+                    : () => ref
+                        .read(converterPreviewListProvider.notifier)
+                        .clear(),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: items.isEmpty
+              ? const _EmptyState(
+                  icon: Icons.visibility_outlined,
+                  message: 'Add media files to preview them before converting.',
+                )
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: ConverterPreviewPlayer(
+                          key: ValueKey(items[_selectedIndex].path),
+                          path: items[_selectedIndex].path,
+                          title: items[_selectedIndex].name,
+                          hasVideo: items[_selectedIndex].hasVideo,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        itemCount: items.length,
+                        itemBuilder: (context, i) {
+                          final item = items[i];
+                          final selected = i == _selectedIndex;
+                          return ListTile(
+                            selected: selected,
+                            selectedTileColor: Theme.of(context)
+                                .colorScheme
+                                .primaryContainer
+                                .withValues(alpha: 0.4),
+                            leading: Icon(
+                              item.hasVideo
+                                  ? Icons.movie_outlined
+                                  : Icons.audiotrack,
+                            ),
+                            title: Text(
+                              item.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              item.hasVideo
+                                  ? 'Video'
+                                  : item.hasAudio
+                                      ? 'Audio'
+                                      : 'Media',
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Play',
+                                  icon: Icon(
+                                    selected
+                                        ? Icons.volume_up
+                                        : Icons.play_arrow,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _selectedIndex = i,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove',
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    ref
+                                        .read(
+                                          converterPreviewListProvider.notifier,
+                                        )
+                                        .removeAt(i);
+                                    if (_selectedIndex >=
+                                        items.length - 1) {
+                                      _selectedIndex = (items.length - 2)
+                                          .clamp(0, items.length - 1);
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            onTap: () => setState(() => _selectedIndex = i),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: FilledButton.icon(
+              onPressed: items.isEmpty ? null : _sendToQueue,
+              icon: const Icon(Icons.autorenew),
+              label: Text(
+                'Send ${items.length} to queue',
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

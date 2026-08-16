@@ -15,6 +15,12 @@ plugins {
 // succeed so the APK/AAB can be produced. It is NOT a production key.
 val generatedKeystore = rootProject.layout.buildDirectory.file("slideup-release-keystore.jks")
 
+// Set to true when the release signing config falls back to the generated
+// keystore. Used to wire validateSigningRelease -> generateFallbackKeystore
+// in afterEvaluate, because that task is not registered yet when the
+// signingConfigs block configures.
+var useFallbackKeystore = false
+
 val generateFallbackKeystore = tasks.register("generateFallbackKeystore") {
     val keystoreFile = generatedKeystore.get().asFile
     outputs.file(keystoreFile)
@@ -108,14 +114,12 @@ android {
                 // CI fallback: generate a throwaway keystore into the build dir
                 // instead of signing with the system debug config (which does
                 // not exist on fresh runners and breaks validateSigningRelease).
+                useFallbackKeystore = true
                 val fallback = generatedKeystore.get().asFile
                 storeFile = fallback
                 storePassword = "slideup-release"
                 keyAlias = "slideup-release"
                 keyPassword = "slideup-release"
-                tasks.named("validateSigningRelease").configure {
-                    dependsOn(generateFallbackKeystore)
-                }
             }
         }
     }
@@ -146,4 +150,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+afterEvaluate {
+    if (useFallbackKeystore) {
+        tasks.named("validateSigningRelease").configure {
+            dependsOn(generateFallbackKeystore)
+        }
+    }
 }

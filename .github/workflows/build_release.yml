@@ -55,13 +55,16 @@ jobs:
         run: flutter analyze --no-fatal-warnings
 
       - name: 🔑 Configure Release Signing
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.MY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MY_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.MY_KEY_PASSWORD }}
         run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 not set - falling back to a throwaway CI keystore (not for Play Store)."
+            exit 0
+          fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
           cat > android/key.properties <<EOF
           storeFile=upload-keystore.jks

@@ -30,6 +30,19 @@ SlideUp is a feature-rich, high-performance multimedia player, document reader, 
 
 ---
 
+### 🔄 Enhanced Audio/Video Converter
+- **Broad Format Support**: Convert audio→audio, video→video, and video→audio (MP3, M4A/AAC, FLAC, WAV, Opus, OGG, MP4, MKV, AVI, WebM, MOV, MPG, TS, FLV, and more).
+- **Smart Presets**: 12 built-in presets (MP3 High Quality, FLAC Lossless, MP4 H.264 1080p, WebM VP9, MKV HEVC, etc.) plus custom presets you can create, edit, duplicate, rename, delete, and mark as default.
+- **Advanced Options**: Video codec (H.264, HEVC, AV1, VP8/VP9), resolution, frame rate, bitrate, CRF, encoder preset & profile, pixel format, audio codec/bitrate/sample rate/channels/quality/volume, container format, metadata preservation, and FastStart.
+- **Real Progress & Media Info**: Live FFmpeg statistics (time, speed, size) with FFprobe-powered source analysis — no fake progress bars.
+- **Batch Queue & Background Conversion**: Multiple independent jobs, persistent queue with retry/cancel, and an Android Foreground Service notification with live progress and Cancel/Open actions.
+- **Output Management**: Same folder / app folder / user-selected folder, smart output naming (`movie.mkv → movie.mp4`), and duplicate handling (replace, rename `movie (1).mp4`, skip, ask).
+- **Conversion History**: Search and filter past jobs by status, retry or reconvert, open/delete outputs, and view full FFmpeg logs.
+- **Hardware Acceleration**: Auto-detect MediaCodec-accelerated encoding (Auto / CPU / Hardware modes).
+- **Powered by FFmpeg**: Built on `ffmpeg_kit_flutter_new` with `flutter_foreground_task` for reliable background conversion.
+
+---
+
 ### 🎵 Comprehensive Audio Player & Speaker Suite
 - **Background Playback & Lock Screen Controls**: Powered by `just_audio` and `audio_service` with notification media controls.
 - **Speaker Booster Player**: Built-in sound amplifier and loudness enhancer.
@@ -79,6 +92,7 @@ SlideUp is a feature-rich, high-performance multimedia player, document reader, 
 | **State Management** | Flutter Riverpod (`flutter_riverpod: ^3.0.3`) |
 | **Media Playback** | `media_kit`, `video_player`, `just_audio`, `audio_service` |
 | **Video Processing** | `ffmpeg_kit_flutter_new`, `image`, `saver_gallery` |
+| **Media Conversion** | `ffmpeg_kit_flutter_new` (FFprobe), `flutter_foreground_task`, `disk_space_plus`, `file_picker` |
 | **Documents** | `syncfusion_flutter_pdfviewer`, `syncfusion_flutter_pdf`, `open_filex` |
 | **Security & Auth** | `local_auth`, `flutter_secure_storage`, `crypto` |
 | **Browser & Network** | `flutter_inappwebview`, `dio`, `http`, `connectivity_plus` |
@@ -100,6 +114,7 @@ slideup/
 │   ├── core/                  # Core constants, themes, database helpers
 │   ├── features/              # Modular feature domains
 │   │   ├── documents/         # PDF reader, search, annotations & history
+│   │   ├── converter/         # Audio/video converter: queue, presets, history & FFmpeg runner
 │   │   ├── epub_reader/       # EPUB reader engine
 │   │   ├── private_browser/   # In-app browser & download manager
 │   │   ├── speaker_player/    # Audio amplifier & loudness booster
@@ -167,6 +182,7 @@ SlideUp requests only essential Android permissions:
 - `USE_BIOMETRIC` / `USE_FINGERPRINT`: To secure the Private Vault.
 - `INTERNET`: For the private in-app web browser and downloading online media.
 - `WAKE_LOCK` & `FOREGROUND_SERVICE`: For uninterrupted background audio and video playback.
+- `FOREGROUND_SERVICE_MEDIA_PROCESSING`: For reliable background media conversion with a persistent progress notification.
 - `SYSTEM_ALERT_WINDOW`: For Picture-in-Picture (PiP) window overlay.
 
 ---

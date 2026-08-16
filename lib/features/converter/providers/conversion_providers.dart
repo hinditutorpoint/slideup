@@ -1,9 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/conversion_job.dart';
+import '../models/conversion_settings.dart';
 import '../models/converter_preferences.dart';
 import '../services/conversion_manager.dart';
 import '../services/converter_settings_service.dart';
+import '../services/ffmpeg_probe_service.dart';
 
 /// Live snapshot of the converter queue + history.
 ///
@@ -72,4 +74,61 @@ class ConverterPreferencesNotifier extends Notifier<ConverterPreferences> {
 final converterPreferencesProvider =
     NotifierProvider<ConverterPreferencesNotifier, ConverterPreferences>(
       () => ConverterPreferencesNotifier(),
+    );
+
+/// Draft conversion options shared between the Convert and Preview tabs.
+class ConverterDraftNotifier extends Notifier<ConversionSettings> {
+  @override
+  ConversionSettings build() => const ConversionSettings();
+
+  void apply(ConversionSettings settings) => state = settings;
+}
+
+final converterDraftProvider =
+    NotifierProvider<ConverterDraftNotifier, ConversionSettings>(
+      () => ConverterDraftNotifier(),
+    );
+
+/// A single source file loaded into the Preview tab for inspection before
+/// sending it to the conversion queue.
+class ConverterPreviewItem {
+  const ConverterPreviewItem({
+    required this.path,
+    required this.name,
+    required this.probe,
+  });
+
+  final String path;
+  final String name;
+  final MediaProbeInfo probe;
+
+  bool get hasVideo => probe.hasVideo;
+  bool get hasAudio => probe.hasAudio;
+}
+
+/// Selection of files picked for preview. Kept in state so the Preview tab
+/// can show a player on top and a playable list below.
+class ConverterPreviewListNotifier extends Notifier<List<ConverterPreviewItem>> {
+  @override
+  List<ConverterPreviewItem> build() => const [];
+
+  void add(ConverterPreviewItem item) => state = [...state, item];
+
+  void addAll(List<ConverterPreviewItem> items) => state = [...state, ...items];
+
+  void removeAt(int index) {
+    final next = [...state]..removeAt(index);
+    state = next;
+  }
+
+  void clear() => state = const [];
+
+  void removeWhere(bool Function(ConverterPreviewItem) test) {
+    state = state.where((e) => !test(e)).toList();
+  }
+}
+
+final converterPreviewListProvider =
+    NotifierProvider<ConverterPreviewListNotifier, List<ConverterPreviewItem>>(
+      () => ConverterPreviewListNotifier(),
     );
