@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 # Required so the default GITHUB_TOKEN can create releases (Resource not
-# accessible by integration → 403 without this).
+# accessible by integration -> 403 without this).
 permissions:
   contents: write
 
@@ -22,13 +22,15 @@ jobs:
   build:
     name: Build, Test & Release Compact APKs
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Heavy native deps (media_kit, ffmpeg_kit, sherpa_onnx) — a fresh runner
+    # routinely exceeds 45 min; exit 143 = SIGTERM from the job timeout.
+    timeout-minutes: 120
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🧹 Free Disk Space on Runner
+      - name: Free Disk Space on Runner
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
@@ -38,20 +40,31 @@ jobs:
           echo "Disk space after cleanup:"
           df -h
 
-      - name: ☕ Setup Java 17
+      # Gradle build cache speeds up subsequent runs significantly.
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
           cache: gradle
 
-      - name: 💙 Setup Flutter SDK
+      - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: 🚀 Auto-Increment Build Number in pubspec.yaml
+      - name: Auto-Increment Build Number in pubspec.yaml
         run: |
           VERSION_LINE=$(grep 'version:' pubspec.yaml)
           echo "Current Version: $VERSION_LINE"
@@ -59,13 +72,13 @@ jobs:
           sed -i "s/version: \([0-9]*\.[0-9]*\.[0-9]*\).*/version: \1+$BUILD_NUM/" pubspec.yaml
           echo "Updated Version: $(grep 'version:' pubspec.yaml)"
 
-      - name: 📦 Install Dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
-      - name: 🔍 Static Analysis
+      - name: Static Analysis
         run: flutter analyze --no-fatal-warnings
 
-      - name: 🔑 Configure Release Signing
+      - name: Configure Release Signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.MY_STORE_PASSWORD }}
@@ -84,13 +97,13 @@ jobs:
           keyPassword=$KEY_PASSWORD
           EOF
 
-      - name: 🧹 Clean Build Cache
+      - name: Clean Build Cache
         run: flutter clean
 
-      - name: 🔨 Build Compact Split-per-ABI APKs
+      - name: Build Compact Split-per-ABI APKs
         run: flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
 
-      - name: 📤 Upload Build Artifacts
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: slideup-release-apks
@@ -98,7 +111,7 @@ jobs:
             build/app/outputs/flutter-apk/*.apk
           retention-days: 30
 
-      - name: 🚀 Create GitHub Release (On Tag Push)
+      - name: Create GitHub Release (On Tag Push)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
