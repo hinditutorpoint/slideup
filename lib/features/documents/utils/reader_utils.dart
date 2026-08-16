@@ -9,6 +9,8 @@ import 'package:hive_flutter/hive_flutter.dart'; // Changed from secure storage
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/utils/download_location_helper.dart';
+
 /// --------------------
 /// Models
 /// --------------------
@@ -1007,6 +1009,11 @@ class DownloadLibraryManager {
 
   Future<Directory> get downloadsDirectory async {
     if (_downloadsDir != null) return _downloadsDir!;
+    final configured = await DownloadLocationHelper.configuredDirectory();
+    if (configured != null) {
+      _downloadsDir = configured;
+      return configured;
+    }
     final base = await AppDirectoryProvider.preferredBaseDir();
     _downloadsDir = Directory('${base.path}/downloads');
     if (!await _downloadsDir!.exists()) {

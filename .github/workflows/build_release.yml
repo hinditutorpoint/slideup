@@ -9,10 +9,15 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+concurrency:
+  group: slideup-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build, Test & Release Compact APKs
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: 📥 Checkout Repository
@@ -33,6 +38,7 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+          cache: gradle
 
       - name: 💙 Setup Flutter SDK
         uses: subosito/flutter-action@v2

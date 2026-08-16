@@ -31,7 +31,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       singleInstance: true,
@@ -145,6 +145,55 @@ class DatabaseService {
     ''');
 
     await _createConverterTables(db);
+    await _createIptvTables(db);
+  }
+
+  /// IPTV feature tables (version 5).
+  Future<void> _createIptvTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS iptv_playlists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sourceType INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        username TEXT,
+        password TEXT,
+        language TEXT,
+        channelCount INTEGER NOT NULL,
+        groupCount INTEGER NOT NULL,
+        lastUpdated TEXT,
+        createdAt TEXT NOT NULL,
+        isFavorite INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS iptv_channels (
+        id TEXT PRIMARY KEY,
+        playlistId TEXT NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        logo TEXT,
+        grp TEXT NOT NULL,
+        tvgId TEXT,
+        tvgName TEXT,
+        country TEXT,
+        language TEXT,
+        audioOnly INTEGER NOT NULL,
+        isFavorite INTEGER NOT NULL,
+        position INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_iptv_channels_playlist ON iptv_channels(playlistId)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_iptv_channels_grp ON iptv_channels(grp)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_iptv_playlists_created ON iptv_playlists(createdAt DESC)',
+    );
   }
 
   /// Converter feature tables (version 3).
@@ -155,6 +204,7 @@ class DatabaseService {
         sourcePath TEXT NOT NULL,
         sourceName TEXT NOT NULL,
         outputPath TEXT,
+        presetName TEXT,
         settingsJson TEXT NOT NULL,
         status INTEGER NOT NULL,
         progress INTEGER NOT NULL,
@@ -212,6 +262,26 @@ class DatabaseService {
     }
     if (oldVersion < 3) {
       await _createConverterTables(db);
+    }
+    if (oldVersion < 4) {
+      // Add presetName to conversion_jobs for existing installs.
+      await db.execute(
+        'ALTER TABLE conversion_jobs ADD COLUMN presetName TEXT',
+      );
+    }
+    if (oldVersion < 5) {
+      await _createIptvTables(db);
+    }
+    if (oldVersion < 6) {
+      // Add language column to iptv_playlists for existing installs.
+      final cols = await db.rawQuery('PRAGMA table_info(iptv_playlists)');
+      final hasLanguage =
+          cols.any((c) => c['name'] == 'language');
+      if (!hasLanguage) {
+        await db.execute(
+          'ALTER TABLE iptv_playlists ADD COLUMN language TEXT',
+        );
+      }
     }
   }
 

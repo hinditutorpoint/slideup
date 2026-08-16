@@ -34,6 +34,7 @@ import '../features/documents/screens/unified_reader_screen.dart';
 import '../features/video_editor/video_editor_screen.dart';
 import '../features/private_browser/private_browser_screen.dart';
 import '../features/converter/screens/converter_home_screen.dart';
+import '../features/iptv/screens/iptv_home_screen.dart';
 
 // Quick action model
 class QuickAction {
@@ -229,6 +230,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
                         onPressed: () =>
                             _navigateTo(const ConverterHomeScreen()),
                         tooltip: 'Converter',
+                      ),
+                      const SizedBox(height: 8),
+                      IconButton(
+                        icon: const Icon(Icons.live_tv),
+                        onPressed: () => _navigateTo(const IptvHomeScreen()),
+                        tooltip: 'IPTV',
                       ),
                       const SizedBox(height: 8),
                       IconButton(
@@ -969,6 +976,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
                       title: 'Convert Media',
                       subtitle: 'Audio & video converter',
                       onTap: () => _navigateTo(const ConverterHomeScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.live_tv,
+                      title: 'IPTV',
+                      subtitle: 'Live TV & radio channels',
+                      onTap: () => _navigateTo(const IptvHomeScreen()),
                     ),
                     _DrawerItem(
                       icon: Icons.movie_edit,

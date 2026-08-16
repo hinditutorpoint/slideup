@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/exceptions/epub_exceptions.dart';
+import '../../../core/utils/download_location_helper.dart';
 import '../../../core/utils/safe_async.dart';
 import '../models/download_task.dart';
 
@@ -80,9 +81,15 @@ class EpubDownloadService {
       _dio.interceptors.add(_createRetryInterceptor());
 
       // Get download directory
-      final baseDir = await getExternalStorageDirectory();
-      final appDir = baseDir ?? await getApplicationDocumentsDirectory();
-      _downloadDirectory = path.join(appDir.path, AppConstants.downloadDir);
+      final configured =
+          await DownloadLocationHelper.configuredDirectory();
+      _downloadDirectory = configured?.path ??
+          path.join(
+            (await getExternalStorageDirectory() ??
+                    await getApplicationDocumentsDirectory())
+                .path,
+            AppConstants.downloadDir,
+          );
 
       // Create directory if not exists
       final downloadDir = Directory(_downloadDirectory!);

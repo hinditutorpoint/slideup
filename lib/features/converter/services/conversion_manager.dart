@@ -20,6 +20,7 @@ import '../../../services/permission_service.dart';
 import '../models/conversion_job.dart';
 import '../models/conversion_models.dart';
 import '../models/conversion_settings.dart';
+import '../models/converter_preset.dart';
 import 'converter_background_worker.dart';
 import 'converter_constants.dart';
 import 'converter_database_service.dart';
@@ -129,6 +130,7 @@ class ConversionManager {
     required List<String> sourceNames,
     required List<MediaProbeInfo> probes,
     required ConversionSettings settings,
+    String? presetName,
   }) async {
     final created = <ConversionJob>[];
     for (var i = 0; i < sourcePaths.length; i++) {
@@ -139,6 +141,7 @@ class ConversionManager {
         id: _uuid.v4().replaceAll('-', ''),
         sourcePath: sourcePaths[i],
         sourceName: sourceNames[i],
+        presetName: presetName,
         settings: settings,
         status: ConversionStatus.queued,
         notificationId: _nextNotificationId++,
@@ -187,6 +190,20 @@ class ConversionManager {
         .length;
     if (running >= maxConcurrent) return;
     unawaited(_startJob(job));
+  }
+
+  /// Applies a preset (its settings + name) to a specific queued/pending job.
+  Future<void> applyPresetToJob(String id, ConverterPreset preset) async {
+    final job = _jobs.firstWhereOrNull((j) => j.id == id);
+    if (job == null) return;
+    if (job.status != ConversionStatus.queued &&
+        job.status != ConversionStatus.pending) {
+      return;
+    }
+    job.settings = preset.settings;
+    job.presetName = preset.name;
+    await _db.updateJob(job);
+    _notify();
   }
 
   /// Stops the running FFmpeg process and returns the job to the queue so it

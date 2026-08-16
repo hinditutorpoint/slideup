@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../core/constants/archive_constants.dart';
 import '../core/database/database_helper.dart';
+import '../core/utils/download_location_helper.dart';
 import '../../features/documents/models/download_task.dart';
 import 'notification_service.dart';
 
@@ -68,6 +69,9 @@ class DownloadService {
 
   Future<String> getDownloadDirectory() async {
     try {
+      final configured = await DownloadLocationHelper.configuredDirectory();
+      if (configured != null) return configured.path;
+
       Directory? directory;
 
       if (Platform.isAndroid) {

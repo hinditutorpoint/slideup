@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -63,27 +64,23 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
           const _SettingsTab(),
         ],
       ),
-      bottomNavigationBar: Material(
+      bottomNavigationBar: CurvedNavigationBar(
+        index: _tabController.index,
+        height: 60.0,
+        items: const [
+          Icon(Icons.visibility_outlined, size: 24),
+          Icon(Icons.add_to_photos_outlined, size: 24),
+          Icon(Icons.playlist_play, size: 24),
+          Icon(Icons.history, size: 24),
+          Icon(Icons.tune, size: 24),
+          Icon(Icons.settings_outlined, size: 24),
+        ],
         color: Theme.of(context).colorScheme.surface,
-        elevation: 8,
-        child: SafeArea(
-          child: TabBar(
-            controller: _tabController,
-            labelColor: Theme.of(context).colorScheme.primary,
-            unselectedLabelColor: Theme.of(context)
-                .colorScheme
-                .onSurface
-                .withValues(alpha: 0.7),
-            tabs: const [
-              Tab(icon: Icon(Icons.visibility_outlined), text: 'Preview'),
-              Tab(icon: Icon(Icons.add_to_photos_outlined), text: 'Convert'),
-              Tab(icon: Icon(Icons.playlist_play), text: 'Queue'),
-              Tab(icon: Icon(Icons.history), text: 'History'),
-              Tab(icon: Icon(Icons.tune), text: 'Presets'),
-              Tab(icon: Icon(Icons.settings_outlined), text: 'Settings'),
-            ],
-          ),
-        ),
+        buttonBackgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Colors.transparent,
+        animationCurve: Curves.easeInOutCubic,
+        animationDuration: const Duration(milliseconds: 350),
+        onTap: (i) => setState(() => _tabController.animateTo(i)),
       ),
     );
   }
@@ -226,6 +223,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
         sourceNames: _pendingItems.map((i) => i.name).toList(),
         probes: _pendingItems.map((i) => i.probe).toList(),
         settings: settings,
+        presetName: _selectedPreset?.name,
       );
       if (mounted) {
         setState(_pendingItems.clear);
@@ -632,6 +630,7 @@ class _PreviewTab extends ConsumerStatefulWidget {
 class _PreviewTabState extends ConsumerState<_PreviewTab> {
   int _selectedIndex = 0;
   bool _picking = false;
+  String? _activePresetName;
 
   Future<void> _pickFiles() async {
     if (_picking) return;
@@ -681,6 +680,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
     final fitsType = defaultPreset != null &&
         defaultPreset.settings.format.isVideoContainer == hasVideo;
     if (fitsType) {
+      _activePresetName = defaultPreset.name;
       ref.read(converterDraftProvider.notifier).apply(defaultPreset.settings);
       return;
     }
@@ -691,6 +691,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       return true;
     }).toList();
     if (videoMatch.isNotEmpty) {
+      _activePresetName = videoMatch.first.name;
       ref.read(converterDraftProvider.notifier).apply(videoMatch.first.settings);
       return;
     }
@@ -700,6 +701,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       return true;
     }).toList();
     if (audioMatch.isNotEmpty) {
+      _activePresetName = audioMatch.first.name;
       ref.read(converterDraftProvider.notifier).apply(audioMatch.first.settings);
     }
   }
@@ -725,6 +727,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       sourceNames: items.map((i) => i.name).toList(),
       probes: items.map((i) => i.probe).toList(),
       settings: resolved,
+      presetName: _activePresetName,
     );
     ref.read(converterPreviewListProvider.notifier).clear();
     if (mounted) {
@@ -946,6 +949,52 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
     super.dispose();
   }
 
+  Future<void> _pickPresetForJob(BuildContext context, ConversionJob job) async {
+    final all = await ConverterDatabaseService.instance.getAllPresets();
+    if (!context.mounted) return;
+    ConverterPreset? selected;
+    final picked = await showDialog<ConverterPreset>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Change preset'),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return DropdownButtonFormField<ConverterPreset>(
+              value: selected ?? all.first,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Preset'),
+              items: all
+                  .map(
+                    (p) => DropdownMenuItem(
+                      value: p,
+                      child: Text(
+                        '${p.isDefault ? '★ ' : ''}${p.name}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) => setDialogState(() => selected = v),
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(selected ?? all.first),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    await ConversionManager.instance.applyPresetToJob(job.id, picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     final job = widget.job;
@@ -967,6 +1016,16 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (job.presetName != null) ...[
+              Text(
+                job.presetName!,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+            ],
             const SizedBox(height: 4),
             LinearProgressIndicator(value: _fraction),
             const SizedBox(height: 4),
@@ -996,6 +1055,11 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    tooltip: 'Change preset',
+                    icon: const Icon(Icons.tune),
+                    onPressed: () => _pickPresetForJob(context, job),
+                  ),
                   IconButton(
                     tooltip: 'Start',
                     icon: const Icon(Icons.play_arrow),
@@ -1456,6 +1520,20 @@ class _PresetsTab extends ConsumerWidget {
 class _SettingsTab extends ConsumerWidget {
   const _SettingsTab();
 
+  Widget _sectionHeader(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: Theme.of(context).primaryColor,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(converterPreferencesProvider);
@@ -1465,70 +1543,86 @@ class _SettingsTab extends ConsumerWidget {
       builder: (context, snapshot) {
         final presets = snapshot.data ?? [];
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-            DropdownButtonFormField<String>(
-              value: prefs.defaultPresetId ?? '',
-              decoration: const InputDecoration(labelText: 'Default preset'),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('None (system default)')),
-                ...presets.map(
-                  (p) => DropdownMenuItem(value: p.id, child: Text(p.name)),
+            _sectionHeader(context, 'Defaults'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<String>(
+                value: prefs.defaultPresetId ?? '',
+                decoration: const InputDecoration(labelText: 'Default preset'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('None (system default)')),
+                  ...presets.map(
+                    (p) => DropdownMenuItem(value: p.id, child: Text(p.name)),
+                  ),
+                ],
+                onChanged: (v) => notifier
+                    .update((c) => c.copyWith(defaultPresetId: (v ?? '').isEmpty ? null : v)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<OutputLocation>(
+                value: prefs.outputLocation,
+                decoration: const InputDecoration(
+                  labelText: 'Default output location',
                 ),
-              ],
-              onChanged: (v) => notifier
-                  .update((c) => c.copyWith(defaultPresetId: (v ?? '').isEmpty ? null : v)),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<OutputLocation>(
-              value: prefs.outputLocation,
-              decoration: const InputDecoration(
-                labelText: 'Default output location',
-              ),
-              items: OutputLocation.values
-                  .map(
-                    (o) => DropdownMenuItem(
-                      value: o,
-                      child: Text(_locationLabel(o)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => notifier
-                  .update((c) => c.copyWith(outputLocation: v ?? c.outputLocation)),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<DuplicateStrategy>(
-              value: prefs.duplicateStrategy,
-              decoration: const InputDecoration(labelText: 'If output exists'),
-              items: DuplicateStrategy.values
-                  .map(
-                    (d) => DropdownMenuItem(
-                      value: d,
-                      child: Text(_duplicateLabel(d)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => notifier.update(
-                (c) => c.copyWith(duplicateStrategy: v ?? c.duplicateStrategy),
+                items: OutputLocation.values
+                    .map(
+                      (o) => DropdownMenuItem(
+                        value: o,
+                        child: Text(_locationLabel(o)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => notifier
+                    .update((c) => c.copyWith(outputLocation: v ?? c.outputLocation)),
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<HardwareMode>(
-              value: prefs.hardwareMode,
-              decoration: const InputDecoration(labelText: 'Hardware acceleration'),
-              items: HardwareMode.values
-                  .map(
-                    (m) => DropdownMenuItem(
-                      value: m,
-                      child: Text(_hwLabel(m)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => notifier
-                  .update((c) => c.copyWith(hardwareMode: v ?? c.hardwareMode)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<DuplicateStrategy>(
+                value: prefs.duplicateStrategy,
+                decoration: const InputDecoration(labelText: 'If output exists'),
+                items: DuplicateStrategy.values
+                    .map(
+                      (d) => DropdownMenuItem(
+                        value: d,
+                        child: Text(_duplicateLabel(d)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => notifier.update(
+                  (c) => c.copyWith(duplicateStrategy: v ?? c.duplicateStrategy),
+                ),
+              ),
             ),
-            const SizedBox(height: 16),
-            Text('Concurrent conversions: ${prefs.maxSimultaneous}'),
+            _sectionHeader(context, 'Performance'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<HardwareMode>(
+                value: prefs.hardwareMode,
+                decoration: const InputDecoration(labelText: 'Hardware acceleration'),
+                items: HardwareMode.values
+                    .map(
+                      (m) => DropdownMenuItem(
+                        value: m,
+                        child: Text(_hwLabel(m)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => notifier
+                    .update((c) => c.copyWith(hardwareMode: v ?? c.hardwareMode)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('Concurrent conversions: ${prefs.maxSimultaneous}'),
+            ),
             Slider(
               value: prefs.maxSimultaneous.toDouble(),
               min: 1,
@@ -1538,28 +1632,24 @@ class _SettingsTab extends ConsumerWidget {
               onChanged: (v) => notifier
                   .update((c) => c.copyWith(maxSimultaneous: v.round())),
             ),
-            const SizedBox(height: 8),
+            _sectionHeader(context, 'Behaviour'),
             SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               title: const Text('Keep history'),
               value: prefs.keepHistory,
               onChanged: (v) => notifier.update((c) => c.copyWith(keepHistory: v)),
             ),
             SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               title: const Text('Open output when done'),
               value: prefs.autoOpenOutput,
               onChanged: (v) => notifier.update((c) => c.copyWith(autoOpenOutput: v)),
             ),
             SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               title: const Text('Progress notifications'),
               value: prefs.notificationsEnabled,
               onChanged: (v) =>
                   notifier.update((c) => c.copyWith(notificationsEnabled: v)),
             ),
             SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               title: const Text('Background conversion'),
               subtitle: const Text('Keeps running when the app is closed'),
               value: prefs.backgroundConversion,
@@ -1567,7 +1657,6 @@ class _SettingsTab extends ConsumerWidget {
                   notifier.update((c) => c.copyWith(backgroundConversion: v)),
             ),
             SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               title: const Text('Keep screen awake'),
               value: prefs.keepAwake,
               onChanged: (v) => notifier.update((c) => c.copyWith(keepAwake: v)),

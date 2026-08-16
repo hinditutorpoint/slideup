@@ -9,6 +9,7 @@ class ConversionJob {
     required this.id,
     required this.sourcePath,
     required this.sourceName,
+    this.presetName,
     this.outputPath,
     required this.settings,
     required this.status,
@@ -26,8 +27,9 @@ class ConversionJob {
   final String id;
   final String sourcePath;
   final String sourceName;
+  String? presetName;
   String? outputPath;
-  final ConversionSettings settings;
+  ConversionSettings settings;
   ConversionStatus status;
   int progress;
   int? durationMs;
@@ -44,6 +46,7 @@ class ConversionJob {
   bool get isActive => status.isActive;
 
   ConversionJob copyWith({
+    String? presetName,
     String? outputPath,
     ConversionStatus? status,
     int? progress,
@@ -58,6 +61,7 @@ class ConversionJob {
       id: id,
       sourcePath: sourcePath,
       sourceName: sourceName,
+      presetName: presetName ?? this.presetName,
       outputPath: outputPath ?? this.outputPath,
       settings: settings,
       status: status ?? this.status,
@@ -78,6 +82,7 @@ class ConversionJob {
       'id': id,
       'sourcePath': sourcePath,
       'sourceName': sourceName,
+      'presetName': presetName,
       'outputPath': outputPath,
       'settingsJson': jsonEncode(settings.toJson()),
       'status': status.index,
@@ -105,6 +110,7 @@ class ConversionJob {
       id: json['id'] as String,
       sourcePath: json['sourcePath'] as String? ?? '',
       sourceName: json['sourceName'] as String? ?? '',
+      presetName: json['presetName'] as String?,
       outputPath: json['outputPath'] as String?,
       settings: settings,
       status: statusIndex != null && statusIndex >= 0 && statusIndex < ConversionStatus.values.length

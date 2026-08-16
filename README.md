@@ -43,6 +43,17 @@ SlideUp is a feature-rich, high-performance multimedia player, document reader, 
 
 ---
 
+### 📺 IPTV & Live TV
+- **Multiple Playlist Sources**: Add playlists from an **M3U URL**, a **local .m3u file**, or an **XTream Codes** API (server + username + password).
+- **YouTube-Style Browsing**: Responsive channel grid/list with category chips, search, favorites filter, and live/radio badges.
+- **Language Quick-Start**: 28 one-tap language playlists (Hindi, English, Tamil, Telugu, Kannada, Malayalam, Bengali, etc.) from the public `iptv-org` catalog.
+- **Built-in Sample Playlist**: Load a ready-to-test public playlist with a single tap.
+- **Split Player Screen**: Watch live in the top player while browsing and switching channels from the list below — no need to leave the player.
+- **Video & Radio Channels**: Video streams play via `media_kit`; audio-only channels play through the background audio suite (`just_audio` + mini player).
+- **Favorites & Persistence**: Channels and playlists are persisted locally (sqflite) with per-channel favorites and swipe-to-delete playlists.
+
+---
+
 ### 🎵 Comprehensive Audio Player & Speaker Suite
 - **Background Playback & Lock Screen Controls**: Powered by `just_audio` and `audio_service` with notification media controls.
 - **Speaker Booster Player**: Built-in sound amplifier and loudness enhancer.
@@ -115,6 +126,7 @@ slideup/
 │   ├── features/              # Modular feature domains
 │   │   ├── documents/         # PDF reader, search, annotations & history
 │   │   ├── converter/         # Audio/video converter: queue, presets, history & FFmpeg runner
+│   │   ├── iptv/              # IPTV: M3U/XTream playlists, channel grid, split player screen
 │   │   ├── epub_reader/       # EPUB reader engine
 │   │   ├── private_browser/   # In-app browser & download manager
 │   │   ├── speaker_player/    # Audio amplifier & loudness booster

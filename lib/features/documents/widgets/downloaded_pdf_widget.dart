@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import '../../../../core/utils/download_location_helper.dart';
 import '../../../../core/utils/responsive_helper.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
 import '../../../../shared/widgets/error_widget.dart';
@@ -795,7 +796,8 @@ class _DownloadedPdfWidgetState extends ConsumerState<DownloadedPdfWidget> {
 
       Directory? downloadsDir;
       if (Platform.isAndroid) {
-        downloadsDir = Directory('/storage/emulated/0/Download');
+        downloadsDir = await DownloadLocationHelper.configuredDirectory();
+        downloadsDir ??= Directory('/storage/emulated/0/Download');
         if (!await downloadsDir.exists()) {
           downloadsDir = await AppDirectoryProvider.preferredBaseDir();
         }
