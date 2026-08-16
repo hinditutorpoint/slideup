@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SlideUp is an all-in-one media &amp; document suite: video player, video editor, media converter, IPTV, PDF/EPUB/TXT reader, private browser and file manager.">
+  <meta name="keywords" content="slideup, video player, video editor, media converter, IPTV, pdf reader, epub reader, txt reader, private browser, file manager, android">
+  <meta property="og:title" content="SlideUp — All-in-One Media &amp; Document Suite">
+  <meta property="og:description" content="Play any media, edit videos, convert formats, watch IPTV, read documents, and browse privately.">
+  <meta property="og:type" content="website">
+  <title>SlideUp — All-in-One Media &amp; Document Suite</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-soft: #1e293b;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #26a69a;
+      --accent-2: #00796b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    header {
+      text-align: center;
+      padding: 72px 0 48px;
+    }
+    .logo {
+      width: 84px;
+      height: 84px;
+      margin: 0 auto 24px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 30px rgba(38, 166, 154, 0.35);
+    }
+    .logo span { font-size: 42px; font-weight: 800; color: #fff; }
+    h1 { font-size: 2.6rem; font-weight: 800; letter-spacing: -0.5px; }
+    .tagline {
+      color: var(--muted);
+      font-size: 1.15rem;
+      margin-top: 12px;
+      max-width: 640px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .cta {
+      display: inline-block;
+      margin-top: 28px;
+      padding: 14px 34px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-weight: 700;
+      font-size: 1.05rem;
+      box-shadow: 0 8px 24px rgba(38, 166, 154, 0.35);
+    }
+    .cta:hover { text-decoration: none; filter: brightness(1.08); }
+
+    /* Feature grid */
+    section.features { padding: 24px 0 56px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .card .icon { font-size: 28px; }
+    .card h3 { margin: 10px 0 6px; font-size: 1.05rem; }
+    .card p { color: var(--muted); font-size: 0.92rem; }
+
+    /* About */
+    section.about { padding: 8px 0 40px; }
+    section.about p { color: var(--muted); max-width: 720px; }
+
+    /* Download */
+    section.download { padding: 8px 0 8px; }
+    section.download h2 { text-align: center; font-size: 1.7rem; margin-bottom: 8px; }
+    .download-note { text-align: center; color: var(--muted); font-size: 0.95rem; }
+    .download-note code { background: var(--bg-soft); padding: 2px 6px; border-radius: 5px; }
+    .dl-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px 18px;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .dl-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--accent);
+      text-decoration: none;
+    }
+    .dl-card .icon { font-size: 30px; }
+    .dl-card h3 { margin: 10px 0 4px; font-size: 1.1rem; color: var(--text); }
+    .dl-card p { color: var(--muted); font-size: 0.88rem; margin-bottom: 14px; }
+    .dl-badge {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 8px 22px;
+      border-radius: 999px;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 0 40px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--accent); text-decoration: none; }
+
+    @media (max-width: 600px) {
+      h1 { font-size: 2rem; }
+      header { padding: 48px 0 32px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="logo"><span>▲</span></div>
+      <h1>SlideUp</h1>
+      <p class="tagline">
+        All-in-one media &amp; document suite — play any video or audio, edit,
+        convert, stream live IPTV, read documents, and browse privately.
+      </p>
+      <a class="cta" href="https://github.com/hinditutorpoint/slideup" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+  </header>
+
+  <!-- Download -->
+  <section class="download">
+    <div class="container">
+      <h2>Download for Android</h2>
+      <p class="download-note">
+        Grab the APK for your device. Released APKs are built from the latest
+        <code>v*</code> tag via GitHub Actions.
+      </p>
+      <div class="grid">
+        <a class="dl-card" href="https://github.com/hinditutorpoint/slideup/releases/latest/download/app-arm64-v8a-release.apk" target="_blank" rel="noopener">
+          <div class="icon">📱</div>
+          <h3>ARM64</h3>
+          <p>Recommended — modern 64-bit phones &amp; tablets</p>
+          <span class="dl-badge">Download</span>
+        </a>
+        <a class="dl-card" href="https://github.com/hinditutorpoint/slideup/releases/latest/download/app-armeabi-v7a-release.apk" target="_blank" rel="noopener">
+          <div class="icon">📲</div>
+          <h3>ARMv7</h3>
+          <p>Older 32-bit devices</p>
+          <span class="dl-badge">Download</span>
+        </a>
+        <a class="dl-card" href="https://github.com/hinditutorpoint/slideup/releases/latest/download/app-x86_64-release.apk" target="_blank" rel="noopener">
+          <div class="icon">💻</div>
+          <h3>x86_64</h3>
+          <p>Emulators &amp; x86 devices</p>
+          <span class="dl-badge">Download</span>
+        </a>
+      </div>
+      <p class="download-note" style="margin-top: 14px;">
+        Not sure which one? Try <strong>ARM64</strong>. All versions are in the
+        <a href="https://github.com/hinditutorpoint/slideup/releases" target="_blank" rel="noopener">Releases</a> page.
+      </p>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="container">
+      <div class="grid">
+        <div class="card">
+          <div class="icon">🎬</div>
+          <h3>Video &amp; Audio Player</h3>
+          <p>Gesture controls, subtitles, speed control, equalizer, PiP, and hardware acceleration for virtually all formats.</p>
+        </div>
+        <div class="card">
+          <div class="icon">✂️</div>
+          <h3>Video Editor</h3>
+          <p>Trim, cut, crop, rotate, speed ramp, mix audio, add filters, text and watermarks — FFmpeg powered.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🔄</div>
+          <h3>Media Converter</h3>
+          <p>Convert audio &amp; video between formats with presets, advanced codec options, and batch background jobs.</p>
+        </div>
+        <div class="card">
+          <div class="icon">📺</div>
+          <h3>Live IPTV</h3>
+          <p>Stream M3U playlists, browse channels by group and language, favorites, and recent watching.</p>
+        </div>
+        <div class="card">
+          <div class="icon">📚</div>
+          <h3>Document Reader</h3>
+          <p>Read PDF, EPUB, and TXT with a smooth, customizable reading experience.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🛡️</div>
+          <h3>Private Browser</h3>
+          <p>Incognito mode, HTTPS-only, tracker &amp; ad blocking, and media extraction from any page.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🗂️</div>
+          <h3>File Manager</h3>
+          <p>Browse, search, and manage files with a secure vault to lock and hide private files.</p>
+        </div>
+        <div class="card">
+          <div class="icon">⚡</div>
+          <h3>Fast &amp; Ad-Free</h3>
+          <p>High-performance Flutter engine with Riverpod and MediaKit. No ads, no tracking.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="about">
+    <div class="container">
+      <p>
+        Built with Flutter, Riverpod, MediaKit, and FFmpeg, SlideUp delivers an
+        ultra-smooth, customizable experience — powerful enough for power users,
+        simple enough for everyone.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>
+        © <span id="year"></span> SlideUp ·
+        <a href="https://github.com/hinditutorpoint/slideup" target="_blank" rel="noopener">GitHub Repository</a>
+      </p>
+    </div>
+  </footer>
+
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

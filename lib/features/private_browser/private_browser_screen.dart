@@ -1,9 +1,11 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../../../features/video_player/video_player_launcher.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
 
@@ -64,6 +66,18 @@ class _HistoryEntry {
   final String url;
   String? title;
   _HistoryEntry(this.url);
+}
+
+/// A media element (video/audio) found on the current page by the scanner.
+class _ScannedMedia {
+  final String url;
+  final String title;
+  final bool isVideo;
+  _ScannedMedia({
+    required this.url,
+    required this.title,
+    required this.isVideo,
+  });
 }
 
 // ─── Tracker / ad-network hostname lists ─────────────────────────────────────
@@ -227,42 +241,6 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     });
   }
 
-  void _setHttpsOnly(bool value) {
-    setState(() => _httpsOnly = value);
-    BrowserSettings.instance.setHttpsOnly(value);
-    // No reload needed — HTTPS enforcement applies to future navigations.
-  }
-
-  void _setTrackerMode(TrackerBlockMode mode) {
-    setState(() => _trackerMode = mode);
-    BrowserSettings.instance.setTrackerMode(mode);
-    // Content blockers are baked into WebView settings; push+reload.
-    _applySettingsAndReload();
-  }
-
-  void _setJavaScript(bool value) {
-    setState(() => _javaScriptEnabled = value);
-    BrowserSettings.instance.setJavaScriptEnabled(value);
-    _applySettingsLive();
-  }
-
-  void _setBlockPopups(bool value) {
-    setState(() => _blockPopups = value);
-    BrowserSettings.instance.setBlockPopups(value);
-    _applySettingsLive();
-  }
-
-  /// Pushes updated settings to the live WebView without reloading.
-  void _applySettingsLive() {
-    final ctrl = _controller;
-    if (ctrl == null) return;
-    try {
-      ctrl.setSettings(settings: _buildWebViewSettings());
-    } catch (e) {
-      debugPrint('[PrivateBrowser] applySettingsLive: $e');
-    }
-  }
-
   /// Applies updated settings AND reloads. Required when content-blocker
   /// rules change (they are embedded in the WebView settings object).
   Future<void> _applySettingsAndReload() async {
@@ -277,9 +255,9 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
   }
 
   Future<void> _openSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const BrowserSettingsScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const BrowserSettingsScreen()));
     if (!mounted) return;
     await _loadSettings();
     await _applySettingsAndReload();
@@ -301,8 +279,8 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     if (!mounted) return;
     final resumeUrl =
         (_currentUrl?.isNotEmpty == true && _currentUrl != 'about:blank')
-            ? _currentUrl
-            : null;
+        ? _currentUrl
+        : null;
 
     setState(() {
       _incognito = !_incognito;
@@ -383,8 +361,7 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     return uri != null && uri.scheme == 'http';
   }
 
-  String _upgradeToHttps(String url) =>
-      url.replaceFirst('http://', 'https://');
+  String _upgradeToHttps(String url) => url.replaceFirst('http://', 'https://');
 
   /// Navigates to [url].
   ///
@@ -400,9 +377,9 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
           _urlController.text = url;
         });
       }
-      ctrl
-          .loadUrl(urlRequest: URLRequest(url: WebUri(url)))
-          .catchError((Object e) {
+      ctrl.loadUrl(urlRequest: URLRequest(url: WebUri(url))).catchError((
+        Object e,
+      ) {
         debugPrint('[PrivateBrowser] loadUrl: $e');
       });
     } else {
@@ -522,12 +499,13 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
 
     void addHostRule(String host) {
       final escaped = host.replaceAll('.', '\\.');
-      final pattern =
-          '^https?://([a-z0-9\\-]+\\.)*$escaped(/|\\?|#|\$)';
-      rules.add(ContentBlocker(
-        trigger: ContentBlockerTrigger(urlFilter: pattern),
-        action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
-      ));
+      final pattern = '^https?://([a-z0-9\\-]+\\.)*$escaped(/|\\?|#|\$)';
+      rules.add(
+        ContentBlocker(
+          trigger: ContentBlockerTrigger(urlFilter: pattern),
+          action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
+        ),
+      );
     }
 
     for (final h in _kTrackerHosts) {
@@ -540,10 +518,12 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     }
     if (_trackerMode == TrackerBlockMode.enhanced) {
       for (final seg in _kEnhancedPathSegments) {
-        rules.add(ContentBlocker(
-          trigger: ContentBlockerTrigger(urlFilter: _escapePath(seg)),
-          action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
-        ));
+        rules.add(
+          ContentBlocker(
+            trigger: ContentBlockerTrigger(urlFilter: _escapePath(seg)),
+            action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
+          ),
+        );
       }
     }
 
@@ -630,11 +610,13 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 3),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   void _showHistorySheet() {
@@ -654,8 +636,9 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final entry = entries[index];
-              final display =
-                  entry.title?.isNotEmpty == true ? entry.title! : entry.url;
+              final display = entry.title?.isNotEmpty == true
+                  ? entry.title!
+                  : entry.url;
               return ListTile(
                 dense: true,
                 leading: const Icon(Icons.public, size: 18),
@@ -681,6 +664,220 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     );
   }
 
+  // ── Scan Media ────────────────────────────────────────────────────────────────
+
+  /// Scans the current page for `<video>` / `<audio>` elements and their
+  /// source URLs, then shows a sheet with the found media.
+  ///
+  /// Uses `evaluateJavascript` to inspect the DOM. Blob/data URLs are skipped
+  /// (they are not directly playable by external players).
+  Future<void> _scanPageMedia() async {
+    final ctrl = _controller;
+    if (ctrl == null) {
+      _showSnack('No active page to scan');
+      return;
+    }
+
+    const script = '''
+(function() {
+  const found = [];
+  const seen = new Set();
+  function collect(node, type) {
+    const sources = [];
+    if (node.currentSrc) sources.push(node.currentSrc);
+    if (node.getAttribute('src')) sources.push(node.getAttribute('src'));
+    node.querySelectorAll('source').forEach(function(s) {
+      if (s.getAttribute('src')) sources.push(s.getAttribute('src'));
+    });
+    sources.forEach(function(raw) {
+      var abs = new URL(raw, location.href).href;
+      if (/^(blob:|data:)/.test(abs)) return;
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      found.push({type: type, url: abs, title: node.getAttribute('title') || document.title || ''});
+    });
+  }
+  document.querySelectorAll('video').forEach(function(v) { collect(v, 'video'); });
+  document.querySelectorAll('audio').forEach(function(a) { collect(a, 'audio'); });
+  // Also look for playlist manifests referenced in source list.
+  document.querySelectorAll('link[rel="alternate"][type*="hls"]').forEach(function(l) {
+    var abs = new URL(l.getAttribute('href'), location.href).href;
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    found.push({type: 'video', url: abs, title: document.title || ''});
+  });
+  return JSON.stringify(found);
+})();
+''';
+
+    String? result;
+    try {
+      final value = await ctrl.evaluateJavascript(source: script);
+      result = value is String ? value : null;
+    } catch (e) {
+      debugPrint('[PrivateBrowser] scanMedia: $e');
+    }
+
+    if (!mounted) return;
+
+    final media = <_ScannedMedia>[];
+    if (result != null && result.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map) {
+              media.add(
+                _ScannedMedia(
+                  url: (item['url'] ?? '').toString(),
+                  title: (item['title'] ?? '').toString(),
+                  isVideo: (item['type'] ?? '').toString() == 'video',
+                ),
+              );
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[PrivateBrowser] scanMedia decode: $e');
+      }
+    }
+
+    if (media.isEmpty) {
+      _showSnack('No media found on this page');
+      return;
+    }
+
+    _showScannedMediaSheet(media);
+  }
+
+  void _showScannedMediaSheet(List<_ScannedMedia> media) {
+    final videoCount = media.where((m) => m.isVideo).length;
+    final audioCount = media.length - videoCount;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.video_library_outlined,
+                    size: 20,
+                    color: Colors.teal,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Media on this page',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '$videoCount video · $audioCount audio',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: media.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final m = media[index];
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      m.isVideo
+                          ? Icons.videocam_outlined
+                          : Icons.audiotrack_outlined,
+                      size: 18,
+                      color: m.isVideo ? Colors.teal : Colors.orange,
+                    ),
+                    title: Text(
+                      m.title.isEmpty ? m.url : m.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      m.url,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Play',
+                      icon: const Icon(Icons.play_circle_outline, size: 22),
+                      color: Colors.teal,
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _playScannedMedia(m.url);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Opens a scanned media URL in the app's video player if it is a playable
+  /// media file, otherwise navigates the WebView to the URL.
+  /// Extensions treated as direct media files (open in the media player).
+  ///
+  /// Mirrors the app-wide media lists in `file_scanner_service.dart`
+  /// (`_videoExtensions` + `_audioExtensions`).
+  static const _kMediaExtensions = [
+    // Video
+    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.3gp', '.webm',
+    '.m4v', '.mpg', '.mpeg', '.ts', '.m3u8', '.mpd', '.f4v', '.vob',
+    '.ogv', '.drc', '.gifv', '.mng', '.qt', '.yuv', '.rm', '.rmvb',
+    '.asf', '.amv', '.mp2', '.mpe', '.mpv', '.m2v', '.svi', '.3g2',
+    '.mxf', '.roq', '.nsv',
+    // Audio
+    '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.wma', '.opus',
+    '.aiff', '.ape', '.alac', '.wv', '.tta', '.ac3', '.dts', '.mka',
+    '.ra', '.ram', '.oga', '.mogg', '.mid', '.midi', '.mus', '.psf',
+    '.spc',
+  ];
+
+  /// True when [url] points directly at a playable media file (matched by
+  /// path extension). Query strings and fragments are ignored.
+  static bool _isDirectMediaUrl(Uri uri) {
+    final path = uri.path.toLowerCase();
+    return _kMediaExtensions.any((ext) => path.endsWith(ext));
+  }
+
+  Future<void> _playScannedMedia(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+
+    if (uri.scheme == 'http' || uri.scheme == 'https') {
+      if (_isDirectMediaUrl(uri)) {
+        await VideoPlayerLauncher.smart(source: url, context: context);
+        return;
+      }
+    }
+
+    // Fallback: browse to the URL in the current WebView.
+    _navigate(url);
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────────
 
   @override
@@ -696,8 +893,9 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
         _goBack();
       },
       child: Scaffold(
-        backgroundColor:
-            dark ? const Color(0xFF121212) : const Color(0xFFFFFFFF),
+        backgroundColor: dark
+            ? const Color(0xFF121212)
+            : const Color(0xFFFFFFFF),
         body: SafeArea(
           child: Column(
             children: [
@@ -756,9 +954,7 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
             child: Container(
               height: 38,
               decoration: BoxDecoration(
-                color: dark
-                    ? const Color(0xFF2B2B2B)
-                    : const Color(0xFFF1F3F4),
+                color: dark ? const Color(0xFF2B2B2B) : const Color(0xFFF1F3F4),
                 borderRadius: BorderRadius.circular(19),
               ),
               child: TextField(
@@ -820,6 +1016,8 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
         switch (value) {
           case 'history':
             _showHistorySheet();
+          case 'scan_media':
+            _scanPageMedia();
           case 'incognito':
             _toggleIncognito();
           case 'clear':
@@ -835,6 +1033,13 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
           value: 'history',
           icon: Icons.history_rounded,
           label: 'History',
+        ),
+        _compactMenuDivider(),
+        _compactMenuItem(
+          value: 'scan_media',
+          icon: Icons.video_library_outlined,
+          label: 'Scan Media',
+          color: Colors.teal,
         ),
         _compactMenuDivider(),
         _compactMenuItemChecked(
@@ -924,7 +1129,6 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
   PopupMenuEntry<String> _compactMenuDivider() =>
       const PopupMenuDivider(height: 1);
 
-
   // ── WebView ───────────────────────────────────────────────────────────────────
 
   Widget _buildWebView() {
@@ -943,8 +1147,8 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
           controller
               .loadUrl(urlRequest: URLRequest(url: WebUri(pending)))
               .catchError((Object e) {
-            debugPrint('[PrivateBrowser] pending loadUrl: $e');
-          });
+                debugPrint('[PrivateBrowser] pending loadUrl: $e');
+              });
         } else {
           _pendingNavigationUrl = null;
         }
@@ -1018,15 +1222,21 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
           return NavigationActionPolicy.CANCEL;
         }
 
+        // Direct media file → open in the app media player instead of the WebView.
+        if (isMainFrame && _isDirectMediaUrl(url)) {
+          if (mounted) {
+            _playScannedMedia(url.toString());
+          }
+          return NavigationActionPolicy.CANCEL;
+        }
+
         // HTTPS-only: attempt automatic HTTPS upgrade for main-frame HTTP.
         // We upgrade rather than block to reduce user friction.
         if (_httpsOnly && isMainFrame && scheme == 'http') {
           final upgraded = _upgradeToHttps(url.toString());
           if (mounted) _showSnack('Upgrading to HTTPS...');
           unawaited(
-            controller.loadUrl(
-              urlRequest: URLRequest(url: WebUri(upgraded)),
-            ),
+            controller.loadUrl(urlRequest: URLRequest(url: WebUri(upgraded))),
           );
           return NavigationActionPolicy.CANCEL;
         }
@@ -1081,10 +1291,36 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
 
     const links = <(String, String, IconData, Color)>[
       (
+        'Google',
+        'https://www.google.com',
+        Icons.g_translate,
+        Color(0xFF4285F4),
+      ),
+      (
+        'YouTube',
+        'https://www.youtube.com',
+        Icons.play_circle_filled,
+        Color(0xFFEA4335),
+      ),
+      (
         'DuckDuckGo',
         'https://duckduckgo.com',
         Icons.travel_explore,
         Color(0xFFDE5833),
+      ),
+      (
+        'Wikipedia',
+        'https://www.wikipedia.org',
+        Icons.public,
+        Color(0xFF346DA4),
+      ),
+      ('GitHub', 'https://github.com', Icons.code, Color(0xFF24292F)),
+      ('X', 'https://x.com', Icons.alternate_email, Color(0xFF1DA1F2)),
+      (
+        'Gmail',
+        'https://mail.google.com',
+        Icons.mail_outline,
+        Color(0xFFD93025),
       ),
       (
         'Archive.org',
@@ -1093,16 +1329,28 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
         Color(0xFFF9A603),
       ),
       (
-        'Wikipedia',
-        'https://www.wikipedia.org',
-        Icons.public,
-        Color(0xFF346DA4),
-      ),
-      (
         'IA TV',
         'https://www.archive.org/details/',
         Icons.live_tv,
         Color(0xFFE12E1A),
+      ),
+      (
+        'Reddit',
+        'https://www.reddit.com',
+        Icons.forum_outlined,
+        Color(0xFFFF4500),
+      ),
+      (
+        'Stack Overflow',
+        'https://stackoverflow.com',
+        Icons.help_outline,
+        Color(0xFFF48024),
+      ),
+      (
+        'BBC News',
+        'https://www.bbc.com/news',
+        Icons.newspaper_outlined,
+        Color(0xFFBB1919),
       ),
     ];
 
@@ -1151,10 +1399,7 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
                           decoration: BoxDecoration(
                             color: Colors.teal.shade700,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white,
-                              width: 1.5,
-                            ),
+                            border: Border.all(color: Colors.white, width: 1.5),
                           ),
                           child: const Icon(
                             Icons.visibility_off,
@@ -1171,47 +1416,54 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
             Text(
               _incognito ? 'Private Browser' : 'Browser',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
               _incognito
                   ? 'Private session active. The platform WebView minimises '
-                      'disk persistence of cookies, cache and browsing data. '
-                      'History is kept only in memory and cleared on exit.'
+                        'disk persistence of cookies, cache and browsing data. '
+                        'History is kept only in memory and cleared on exit.'
                   : 'Standard browsing session. Cookies and cache may be '
-                      'saved locally by the WebView.',
+                        'saved locally by the WebView.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: muted),
             ),
             const SizedBox(height: 28),
-            Material(
-              color: card,
-              elevation: 1,
-              borderRadius: BorderRadius.circular(26),
-              child: InkWell(
+            Container(
+              height: 52,
+              decoration: BoxDecoration(
+                color: card,
                 borderRadius: BorderRadius.circular(26),
-                onTap: () => _urlFocus.requestFocus(),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 16,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search, size: 20, color: muted),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Search the web privately...',
-                          style: TextStyle(fontSize: 14, color: muted),
-                        ),
-                      ),
-                      Icon(Icons.arrow_forward_ios, size: 14, color: muted),
-                    ],
+                ],
+              ),
+              child: TextField(
+                controller: _urlController,
+                focusNode: _urlFocus,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _submitAddress(),
+                style: const TextStyle(fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: 'Search the web privately...',
+                  hintStyle: TextStyle(fontSize: 14, color: muted),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                  prefixIcon: Icon(Icons.search, size: 20, color: muted),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 20),
+                    color: Colors.teal,
+                    tooltip: 'Search with DuckDuckGo',
+                    onPressed: _submitAddress,
                   ),
                 ),
               ),
@@ -1229,7 +1481,7 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
             const SizedBox(height: 12),
             Row(
               children: [
-                for (final link in links)
+                for (final link in links.take(4))
                   Expanded(
                     child: _buildQuickTile(
                       icon: link.$3,
@@ -1240,9 +1492,22 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
                   ),
               ],
             ),
+            const SizedBox(height: 24),
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              alignment: WrapAlignment.start,
+              children: [
+                for (final link in links.skip(4))
+                  _buildQuickTile(
+                    icon: link.$3,
+                    color: link.$4,
+                    label: link.$1,
+                    url: link.$2,
+                  ),
+              ],
+            ),
             const SizedBox(height: 28),
-            _buildPrivacyCard(theme, card, muted),
-            const SizedBox(height: 20),
           ],
         ),
       ),
@@ -1279,163 +1544,10 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ],
       ),
-    );
-  }
-
-  // ── Privacy card ──────────────────────────────────────────────────────────────
-
-  Widget _buildPrivacyCard(ThemeData theme, Color card, Color muted) {
-    return Container(
-      decoration: BoxDecoration(
-        color: card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.shield_rounded, size: 18, color: Colors.teal),
-              SizedBox(width: 8),
-              Text(
-                'Privacy & security',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          _buildPrivacySwitch(
-            theme,
-            'HTTPS-only',
-            'Block non-encrypted http:// pages (auto-upgrades when possible)',
-            Icons.lock_outline,
-            _httpsOnly,
-            _setHttpsOnly,
-          ),
-          _buildTrackerModeTile(),
-          _buildPrivacySwitch(
-            theme,
-            'JavaScript',
-            'Disable for maximum privacy',
-            Icons.code_outlined,
-            _javaScriptEnabled,
-            _setJavaScript,
-          ),
-          _buildPrivacySwitch(
-            theme,
-            'Block pop-ups',
-            _blockPopups
-                ? 'New windows are blocked'
-                : 'New windows open in current tab',
-            Icons.open_in_new_outlined,
-            _blockPopups,
-            _setBlockPopups,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrackerModeTile() {
-    return ListTile(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      dense: true,
-      leading: const Icon(Icons.block_outlined, size: 20),
-      title: const Text(
-        'Block known trackers & ads',
-        style: TextStyle(fontSize: 14),
-      ),
-      subtitle: Text(
-        'Level: ${_trackerMode.label.toLowerCase()}',
-        style: const TextStyle(fontSize: 12),
-      ),
-      trailing: const Icon(Icons.chevron_right, size: 20),
-      onTap: _showTrackerModePicker,
-    );
-  }
-
-  void _showTrackerModePicker() {
-    showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: Text(
-                'Block known trackers & ads',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                'Known tracker/ad hostnames are blocked according to the '
-                'configured ruleset. This is not equivalent to a full '
-                'content-blocker extension.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ),
-            for (final mode in TrackerBlockMode.values)
-              RadioListTile<TrackerBlockMode>(
-                value: mode,
-                groupValue: _trackerMode,
-                activeColor: Colors.teal,
-                title: Text(mode.label),
-                subtitle: Text(mode.description),
-                onChanged: (selected) {
-                  Navigator.of(sheetContext).pop();
-                  if (selected != null) _setTrackerMode(selected);
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPrivacySwitch(
-    ThemeData theme,
-    String title,
-    String subtitle,
-    IconData icon,
-    bool value,
-    ValueChanged<bool> onChanged,
-  ) {
-    return SwitchListTile(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      activeColor: Colors.teal,
-      dense: true,
-      secondary: Icon(icon, size: 20),
-      title: Text(title, style: const TextStyle(fontSize: 14)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-      value: value,
-      onChanged: onChanged,
     );
   }
 }

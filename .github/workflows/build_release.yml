@@ -13,6 +13,11 @@ concurrency:
   group: slideup-release-${{ github.ref }}
   cancel-in-progress: true
 
+# Required so the default GITHUB_TOKEN can create releases (Resource not
+# accessible by integration → 403 without this).
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build, Test & Release Compact APKs
