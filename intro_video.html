@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SlideUp - Official App Promo Video Showcase</title>
+    <style>
+        :root {
+            --primary: #6C63FF;
+            --primary-glow: rgba(108, 99, 255, 0.4);
+            --accent: #00F0FF;
+            --accent-glow: rgba(0, 240, 255, 0.35);
+            --bg-dark: #0A0B10;
+            --card-bg: rgba(22, 24, 38, 0.85);
+            --text-light: #F3F4F6;
+            --text-dim: #9CA3AF;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow-x: hidden;
+            padding: 24px;
+        }
+
+        .header-bar {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header-bar h1 {
+            font-size: 28px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #FFF, var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+        }
+
+        .header-bar p {
+            color: var(--text-dim);
+            font-size: 14px;
+        }
+
+        /* 16:9 Cinema Container */
+        .stage-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 960px;
+            aspect-ratio: 16 / 9;
+            background: #000;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 40px var(--primary-glow);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #videoCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* Control Panel */
+        .controls-container {
+            margin-top: 24px;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary), #4834DF);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 15px var(--primary-glow);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px var(--primary-glow);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 4px 15px rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-record {
+            background: linear-gradient(135deg, #FF4757, #FF6B81);
+            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+        }
+
+        .btn-record.recording {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .status-pill {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .feature-chips {
+            margin-top: 18px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 800px;
+        }
+
+        .chip {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #D1D5DB;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-bar">
+        <h1>SlideUp — Official Intro Video Experience</h1>
+        <p>Dynamic 60FPS Promo Video Generator with Screenshots & Features</p>
+    </div>
+
+    <div class="stage-wrapper">
+        <canvas id="videoCanvas" width="1280" height="720"></canvas>
+    </div>
+
+    <div class="controls-container">
+        <button id="playBtn" class="btn">
+            <span>▶</span> Play Preview
+        </button>
+        <button id="recordBtn" class="btn btn-record">
+            <span>⏺</span> Record & Export Video (.webm/.mp4)
+        </button>
+        <button id="nextSceneBtn" class="btn btn-secondary">
+            Next Scene ⏭
+        </button>
+        <div id="statusPill" class="status-pill">Ready · Scene 1/6</div>
+    </div>
+
+    <div class="feature-chips">
+        <span class="chip">🎬 4K MediaKit Player</span>
+        <span class="chip">📺 IPTV Live Channels</span>
+        <span class="chip">✂️ Video Editor & Converter</span>
+        <span class="chip">📚 PDF & EPUB Reader</span>
+        <span class="chip">🔒 Biometric Vault</span>
+        <span class="chip">🌐 Private Browser</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        const playBtn = document.getElementById('playBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const nextSceneBtn = document.getElementById('nextSceneBtn');
+        const statusPill = document.getElementById('statusPill');
+
+        const W = 1280;
+        const H = 720;
+
+        // Screenshot image paths from the screenshots folder
+        const screenshotUrls = [
+            'screenshots/screenshot_1080x1920_20260817_210136.png',
+            'screenshots/screenshot_1080x1920_20260817_210155.png',
+            'screenshots/screenshot_1080x1920_20260817_210214.png',
+            'screenshots/screenshot_1080x1920_20260817_210227.png',
+            'screenshots/screenshot_1080x1920_20260817_210257.png',
+            'screenshots/screenshot_1080x1920_20260817_210414.png'
+        ];
+
+        const loadedImages = [];
+        screenshotUrls.forEach(url => {
+            const img = new Image();
+            img.src = url;
+            loadedImages.push(img);
+        });
+
+        // 6 Scene Definitions
+        const scenes = [
+            {
+                tag: 'ALL-IN-ONE MEDIA SUITE',
+                title: 'SlideUp Media Player',
+                subtitle: 'The Ultimate Video, Audio, IPTV & Document Reader for Android',
+                color: '#6C63FF',
+                duration: 4.5,
+                imgIndex: 0
+            },
+            {
+                tag: 'ULTRA-HD PLAYBACK',
+                title: 'Next-Gen Video Player',
+                subtitle: 'Dual-Gesture Seeking · Picture-in-Picture · Multi-Audio & Subtitles',
+                color: '#00F0FF',
+                duration: 4.0,
+                imgIndex: 1
+            },
+            {
+                tag: 'LIVE STREAMING',
+                title: 'IPTV & Live TV Channels',
+                subtitle: '1000+ Global Channels · M3U & XTream Support · Split Screen Player',
+                color: '#FF4757',
+                duration: 4.0,
+                imgIndex: 2
+            },
+            {
+                tag: 'OFFLINE READING',
+                title: 'PDF & EPUB Reader',
+                subtitle: 'Page Jumping · Chapter Navigation · Continuous Night Mode Reading',
+                color: '#2ED573',
+                duration: 4.0,
+                imgIndex: 3
+            },
+            {
+                tag: 'TOOLS & SECURITY',
+                title: 'Converter & Biometric Vault',
+                subtitle: 'FFmpeg Format Transcoding · Private Incognito Browser · File Encryption',
+                color: '#FFA502',
+                duration: 4.0,
+                imgIndex: 4
+            },
+            {
+                tag: 'OPEN SOURCE ON GITHUB',
+                title: 'Experience SlideUp Today',
+                subtitle: 'Fast · Free · No Tracking · Modern ColorOS & Android 8+ Ready',
+                color: '#9C88FF',
+                duration: 4.5,
+                imgIndex: 5
+            }
+        ];
+
+        let isPlaying = false;
+        let startTime = 0;
+        let totalDuration = scenes.reduce((acc, s) => acc + s.duration, 0);
+        let animationFrameId = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+
+        function renderFrame(now) {
+            if (!startTime) startTime = now;
+            const elapsed = (now - startTime) / 1000;
+            const cycleTime = elapsed % totalDuration;
+
+            // Find active scene
+            let accumulated = 0;
+            let currentScene = scenes[0];
+            let sceneProgress = 0;
+            let sceneIndex = 0;
+
+            for (let i = 0; i < scenes.length; i++) {
+                const s = scenes[i];
+                if (cycleTime >= accumulated && cycleTime < accumulated + s.duration) {
+                    currentScene = s;
+                    sceneIndex = i;
+                    sceneProgress = (cycleTime - accumulated) / s.duration;
+                    break;
+                }
+                accumulated += s.duration;
+            }
+
+            statusPill.textContent = `Scene ${sceneIndex + 1}/${scenes.length}: ${currentScene.title}`;
+
+            // 1. Background with animated nebula gradient
+            const bgGrad = ctx.createRadialGradient(
+                W * 0.4 + Math.sin(now * 0.001) * 100,
+                H * 0.5 + Math.cos(now * 0.001) * 80,
+                50,
+                W * 0.5,
+                H * 0.5,
+                W * 0.8
+            );
+            bgGrad.addColorStop(0, '#131524');
+            bgGrad.addColorStop(0.5, '#0B0C14');
+            bgGrad.addColorStop(1, '#05050A');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, W, H);
+
+            // Ambient scene glow
+            ctx.fillStyle = currentScene.color;
+            ctx.globalAlpha = 0.12;
+            ctx.beginPath();
+            ctx.arc(W * 0.75, H * 0.5, 300, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+
+            // Subtle animated grid
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+            ctx.lineWidth = 1;
+            const gridSpacing = 40;
+            for (let x = 0; x < W; x += gridSpacing) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, H);
+                ctx.stroke();
+            }
+
+            // 2. Left Typography Section (Slide-in and Fade)
+            const enterT = Math.min(sceneProgress * 3.5, 1.0);
+            const easeX = 80 + (1 - Math.pow(1 - enterT, 3)) * 0;
+            const alphaText = enterT;
+
+            ctx.save();
+            ctx.globalAlpha = alphaText;
+
+            // Badge
+            ctx.fillStyle = currentScene.color;
+            ctx.font = '700 13px sans-serif';
+            ctx.fillText(currentScene.tag, 80, 240);
+
+            // Title
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '800 42px sans-serif';
+            ctx.fillText(currentScene.title, 80, 295);
+
+            // Subtitle
+            ctx.fillStyle = '#9CA3AF';
+            ctx.font = '400 18px sans-serif';
+            wrapText(ctx, currentScene.subtitle, 80, 345, 520, 28);
+
+            // Branding footer
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.font = '500 14px sans-serif';
+            ctx.fillText('⚡ github.com/hinditutorpoint/slideup', 80, 560);
+
+            ctx.restore();
+
+            // 3. Right Phone Mockup with Live Screenshot / Recording
+            const phoneW = 260;
+            const phoneH = 550;
+            const phoneX = W * 0.68 + Math.sin(sceneProgress * Math.PI) * 8;
+            const phoneY = H * 0.5 - phoneH / 2 + Math.cos(sceneProgress * Math.PI) * 4;
+
+            ctx.save();
+            // Phone Drop Shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+            ctx.shadowBlur = 35;
+            ctx.shadowOffsetY = 15;
+
+            // Phone Body (Dark Slate Frame)
+            ctx.fillStyle = '#1A1C24';
+            roundRect(ctx, phoneX, phoneY, phoneW, phoneH, 32);
+            ctx.fill();
+
+            // Phone Inner Border
+            ctx.shadowColor = 'transparent';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 3;
+            roundRect(ctx, phoneX, phoneY, phoneW, phoneH, 32);
+            ctx.stroke();
+
+            // Screen Clip Area
+            ctx.save();
+            roundRect(ctx, phoneX + 8, phoneY + 8, phoneW - 16, phoneH - 16, 26);
+            ctx.clip();
+
+            // Draw Screen Image
+            const img = loadedImages[currentScene.imgIndex];
+            if (img && img.complete && img.naturalWidth > 0) {
+                ctx.drawImage(img, phoneX + 8, phoneY + 8, phoneW - 16, phoneH - 16);
+            } else {
+                ctx.fillStyle = '#10111A';
+                ctx.fillRect(phoneX + 8, phoneY + 8, phoneW - 16, phoneH - 16);
+                ctx.fillStyle = currentScene.color;
+                ctx.font = '600 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('SlideUp Screen', phoneX + phoneW / 2, phoneY + phoneH / 2);
+                ctx.textAlign = 'start';
+            }
+
+            // Glass Reflection
+            const glassGrad = ctx.createLinearGradient(phoneX, phoneY, phoneX + phoneW, phoneY + phoneH);
+            glassGrad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+            glassGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.03)');
+            glassGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = glassGrad;
+            ctx.fillRect(phoneX + 8, phoneY + 8, phoneW - 16, phoneH - 16);
+
+            ctx.restore();
+            ctx.restore();
+
+            // 4. Top/Bottom Progress Bar
+            const totalProgress = cycleTime / totalDuration;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.fillRect(0, H - 4, W, 4);
+
+            ctx.fillStyle = currentScene.color;
+            ctx.fillRect(0, H - 4, W * totalProgress, 4);
+
+            if (isPlaying) {
+                animationFrameId = requestAnimationFrame(renderFrame);
+            }
+        }
+
+        function roundRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+
+        function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            for (let n = 0; n < words.length; n++) {
+                const testLine = line + words[n] + ' ';
+                const metrics = ctx.measureText(testLine);
+                const testWidth = metrics.width;
+                if (testWidth > maxWidth && n > 0) {
+                    ctx.fillText(line, x, y);
+                    line = words[n] + ' ';
+                    y += lineHeight;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, x, y);
+        }
+
+        // Play / Pause Toggle
+        playBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                isPlaying = false;
+                playBtn.innerHTML = '<span>▶</span> Play Preview';
+                cancelAnimationFrame(animationFrameId);
+            } else {
+                isPlaying = true;
+                startTime = performance.now();
+                playBtn.innerHTML = '<span>⏸</span> Pause';
+                renderFrame(startTime);
+            }
+        });
+
+        // Jump to Next Scene
+        nextSceneBtn.addEventListener('click', () => {
+            startTime = performance.now() - ((startTime ? (performance.now() - startTime) / 1000 : 0) + 4.0) * 1000;
+            if (!isPlaying) {
+                renderFrame(performance.now());
+            }
+        });
+
+        // Record & Export Video Feature
+        recordBtn.addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                return;
+            }
+
+            const stream = canvas.captureStream(60); // 60 FPS Canvas Capture
+            recordedChunks = [];
+
+            try {
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm;codecs=vp9',
+                    videoBitsPerSecond: 6000000 // 6 Mbps High Quality
+                });
+            } catch (e) {
+                mediaRecorder = new MediaRecorder(stream);
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'slideup_intro_video.webm';
+                a.click();
+                URL.revokeObjectURL(url);
+
+                recordBtn.classList.remove('recording');
+                recordBtn.innerHTML = '<span>⏺</span> Record & Export Video (.webm/.mp4)';
+                statusPill.textContent = 'Exported slideup_intro_video.webm successfully!';
+            };
+
+            mediaRecorder.start();
+            recordBtn.classList.add('recording');
+            recordBtn.innerHTML = '<span>⏹</span> Stop & Save Video';
+
+            if (!isPlaying) {
+                isPlaying = true;
+                startTime = performance.now();
+                renderFrame(startTime);
+            }
+        });
+
+        // Initial Render
+        setTimeout(() => {
+            renderFrame(performance.now());
+        }, 300);
+    </script>
+</body>
+</html>
