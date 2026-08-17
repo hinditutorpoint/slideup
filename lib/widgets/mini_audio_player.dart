@@ -90,7 +90,9 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
 
   void _openFullPlayer() {
     final miniPlayerState = ref.read(miniPlayerProvider);
-    if (miniPlayerState.currentMedia != null) {
+    final audioHandler = ref.read(audioHandlerProvider);
+    if (miniPlayerState.currentMedia != null ||
+        audioHandler.mediaItem.value != null) {
       rootNavigatorKey.currentState?.pushNamed('/audio-player');
     }
   }

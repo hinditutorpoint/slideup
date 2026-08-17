@@ -7,7 +7,7 @@ import 'dart:async';
 import 'package:share_plus/share_plus.dart';
 import '../models/media_file.dart';
 import '../providers/audio_handler_provider.dart';
-import '../providers/mini_player_provider.dart';
+import '../providers/favorites_provider.dart';
 import '../helpers/format_helper.dart';
 import '../services/database_service.dart';
 
@@ -33,16 +33,18 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   late AnimationController _rotationController;
   Timer? _sleepTimer;
   bool _isFavorite = false;
+  String? _currentMediaId;
 
   @override
   void initState() {
     super.initState();
+    _currentMediaId = widget.mediaFile.id;
     _rotationController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 20),
     )..repeat();
 
-    // Listen to playback state for rotation
+    // Listen to playback state for rotation & active media changes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final audioHandler = ref.read(audioHandlerProvider);
       audioHandler.playbackState.listen((state) {
@@ -55,16 +57,22 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
         }
       });
 
+      audioHandler.mediaItem.listen((item) {
+        if (mounted && item != null) {
+          _loadFavoriteStatus(item.id);
+        }
+      });
+
       // Load favorite status
-      _loadFavoriteStatus();
+      _loadFavoriteStatus(widget.mediaFile.id);
     });
   }
 
-  Future<void> _loadFavoriteStatus() async {
+  Future<void> _loadFavoriteStatus([String? mediaId]) async {
+    final id = mediaId ?? _currentMediaId ?? widget.mediaFile.id;
+    _currentMediaId = id;
     try {
-      final isFav = await DatabaseService.instance.isMediaFileFavorite(
-        widget.mediaFile.id,
-      );
+      final isFav = await DatabaseService.instance.isMediaFileFavorite(id);
       if (mounted) {
         setState(() => _isFavorite = isFav);
       }
@@ -72,26 +80,32 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   }
 
   Future<void> _toggleFavorite() async {
+    final id = _currentMediaId ?? widget.mediaFile.id;
     try {
-      await DatabaseService.instance.toggleFavoriteMediaFile(
-        widget.mediaFile.id,
+      final newFav = await DatabaseService.instance.toggleFavoriteMediaFile(
+        id,
         widget.mediaFile,
       );
       if (mounted) {
-        setState(() => _isFavorite = !_isFavorite);
+        setState(() => _isFavorite = newFav);
+        ref.invalidate(allFavoritesProvider);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _isFavorite ? 'Added to favorites' : 'Removed from favorites',
+              newFav ? 'Added to favorites' : 'Removed from favorites',
             ),
             duration: const Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update favorite')),
+          const SnackBar(
+            content: Text('Failed to update favorite'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
@@ -108,35 +122,25 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   Widget build(BuildContext context) {
     final audioHandler = ref.watch(audioHandlerProvider);
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          ref.read(miniPlayerProvider.notifier).collapse();
-        } else {
-          ref.read(miniPlayerProvider.notifier).hide();
-        }
-      },
-      child: Scaffold(
-        body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                Theme.of(context).colorScheme.surface,
-                Theme.of(context).colorScheme.secondary.withValues(alpha: 0.2),
-              ],
-            ),
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+              Theme.of(context).colorScheme.surface,
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.2),
+            ],
           ),
-          child: SafeArea(
-            child: Column(
-              children: [
-                _buildAppBar(),
-                Expanded(child: _buildPlayerView(audioHandler)),
-              ],
-            ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildAppBar(),
+              Expanded(child: _buildPlayerView(audioHandler)),
+            ],
           ),
         ),
       ),
@@ -150,7 +154,8 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
         children: [
           IconButton(
             icon: const Icon(Icons.keyboard_arrow_down, size: 32),
-            onPressed: () => Navigator.pop(context),
+            tooltip: 'Minimize',
+            onPressed: () => Navigator.of(context).maybePop(),
           ),
           const Spacer(),
           IconButton(
@@ -418,19 +423,37 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
 
               return IconButton(
                 icon: Icon(icon, color: color),
+                tooltip: switch (repeatMode) {
+                  AudioServiceRepeatMode.none => 'Repeat: Off',
+                  AudioServiceRepeatMode.all => 'Repeat: All',
+                  AudioServiceRepeatMode.one => 'Repeat: One',
+                  _ => 'Repeat: Off',
+                },
                 onPressed: () {
                   AudioServiceRepeatMode nextMode;
+                  String msg;
                   switch (repeatMode) {
                     case AudioServiceRepeatMode.none:
                       nextMode = AudioServiceRepeatMode.all;
+                      msg = 'Repeat: All';
                       break;
                     case AudioServiceRepeatMode.all:
                       nextMode = AudioServiceRepeatMode.one;
+                      msg = 'Repeat: One';
                       break;
                     default:
                       nextMode = AudioServiceRepeatMode.none;
+                      msg = 'Repeat: Off';
                   }
                   audioHandler.setRepeatMode(nextMode);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(msg),
+                      duration: const Duration(milliseconds: 900),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
                 },
               );
             },
@@ -457,11 +480,23 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                       ? Theme.of(context).primaryColor
                       : Colors.grey,
                 ),
+                tooltip: isShuffling ? 'Shuffle: On' : 'Shuffle: Off',
                 onPressed: () {
-                  audioHandler.setShuffleMode(
-                    isShuffling
-                        ? AudioServiceShuffleMode.none
-                        : AudioServiceShuffleMode.all,
+                  final nextMode = isShuffling
+                      ? AudioServiceShuffleMode.none
+                      : AudioServiceShuffleMode.all;
+                  audioHandler.setShuffleMode(nextMode);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        nextMode == AudioServiceShuffleMode.all
+                            ? 'Shuffle: On'
+                            : 'Shuffle: Off',
+                      ),
+                      duration: const Duration(milliseconds: 900),
+                      behavior: SnackBarBehavior.floating,
+                    ),
                   );
                 },
               );

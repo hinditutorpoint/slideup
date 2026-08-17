@@ -30,7 +30,7 @@ class _AudioPlayerWrapperState extends ConsumerState<AudioPlayerWrapper> {
     final audioHandler = ref.watch(audioHandlerProvider);
 
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
           _onPop();

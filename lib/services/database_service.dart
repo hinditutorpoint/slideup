@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/media_file.dart';
@@ -390,18 +391,36 @@ class DatabaseService {
     return result.map((json) => MediaFile.fromJson(json)).toList();
   }
 
-  Future<void> toggleFavoriteMediaFile(String id, MediaFile? mediaFile) async {
+  Future<bool> toggleFavoriteMediaFile(String id, MediaFile? fallbackMediaFile) async {
     final db = await database;
-    final mediaFile = await getMediaFileById(id);
-    if (mediaFile != null) {
+    final existing = await getMediaFileById(id) ??
+        (fallbackMediaFile != null
+            ? await getMediaFileByPath(fallbackMediaFile.path)
+            : await getMediaFileByPath(id));
+
+    if (existing != null) {
+      final newFav = !existing.isFavorite;
       await db.update(
         'media_files',
-        {'isFavorite': !mediaFile.isFavorite},
+        {'isFavorite': newFav ? 1 : 0},
         where: 'id = ?',
-        whereArgs: [id],
+        whereArgs: [existing.id],
       );
+      return newFav;
     } else {
-      await insertMediaFile(mediaFile!);
+      MediaFile? toInsert = fallbackMediaFile;
+      if (toInsert == null) {
+        final file = File(id);
+        if (file.existsSync()) {
+          toInsert = MediaFile.fromFile(file);
+        }
+      }
+      if (toInsert != null) {
+        final withFav = toInsert.copyWith(isFavorite: true);
+        await insertMediaFile(withFav);
+        return true;
+      }
+      return false;
     }
   }
 
@@ -409,8 +428,8 @@ class DatabaseService {
     final db = await database;
     final result = await db.query(
       'media_files',
-      where: 'id = ? AND isFavorite = ?',
-      whereArgs: [id, 1],
+      where: '(id = ? OR path = ?) AND isFavorite = ?',
+      whereArgs: [id, id, 1],
       limit: 1,
     );
     return result.isNotEmpty;

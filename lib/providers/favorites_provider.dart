@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as path;
 import '../models/media_file.dart';
@@ -223,8 +224,18 @@ class FavoritesNotifier extends Notifier<AsyncValue<List<MediaFile>>> {
 
   Future<void> toggleFavorite(String mediaId) async {
     try {
-      final file = await _db.getMediaFileById(mediaId);
+      var file = await _db.getMediaFileById(mediaId) ??
+          await _db.getMediaFileByPath(mediaId);
       if (file == null) {
+        final f = File(mediaId);
+        if (f.existsSync()) {
+          file = MediaFile.fromFile(f);
+          if (file != null) {
+            await _db.insertMediaFile(file.copyWith(isFavorite: true));
+            await _loadFavorites();
+            return;
+          }
+        }
         throw Exception('Media file not found');
       }
 

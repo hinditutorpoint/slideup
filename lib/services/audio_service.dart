@@ -21,6 +21,14 @@ class AudioPlayerHandler extends BaseAudioHandler
 
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
 
+    _player.loopModeStream.listen((_) {
+      playbackState.add(_transformEvent(_player.playbackEvent));
+    });
+
+    _player.shuffleModeEnabledStream.listen((_) {
+      playbackState.add(_transformEvent(_player.playbackEvent));
+    });
+
     _player.sequenceStateStream.listen((sequenceState) {
       //if (sequenceState == null) return;
 
@@ -74,6 +82,8 @@ class AudioPlayerHandler extends BaseAudioHandler
         MediaAction.seek,
         MediaAction.seekForward,
         MediaAction.seekBackward,
+        MediaAction.setRepeatMode,
+        MediaAction.setShuffleMode,
       },
       androidCompactActionIndices: const [0, 1, 2],
       processingState: const {
@@ -88,6 +98,14 @@ class AudioPlayerHandler extends BaseAudioHandler
       bufferedPosition: _player.bufferedPosition,
       speed: _player.speed,
       queueIndex: event.currentIndex,
+      repeatMode: const {
+        LoopMode.off: AudioServiceRepeatMode.none,
+        LoopMode.one: AudioServiceRepeatMode.one,
+        LoopMode.all: AudioServiceRepeatMode.all,
+      }[_player.loopMode] ?? AudioServiceRepeatMode.none,
+      shuffleMode: _player.shuffleModeEnabled
+          ? AudioServiceShuffleMode.all
+          : AudioServiceShuffleMode.none,
     );
   }
 
@@ -258,21 +276,23 @@ class AudioPlayerHandler extends BaseAudioHandler
         await _player.setLoopMode(LoopMode.one);
         break;
       case AudioServiceRepeatMode.all:
+      case AudioServiceRepeatMode.group:
         await _player.setLoopMode(LoopMode.all);
         break;
-      case AudioServiceRepeatMode.group:
-        break;
     }
+    playbackState.add(_transformEvent(_player.playbackEvent));
   }
 
   @override
   Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
-    if (shuffleMode == AudioServiceShuffleMode.all) {
+    if (shuffleMode == AudioServiceShuffleMode.all ||
+        shuffleMode == AudioServiceShuffleMode.group) {
       await _player.shuffle();
       await _player.setShuffleModeEnabled(true);
     } else {
       await _player.setShuffleModeEnabled(false);
     }
+    playbackState.add(_transformEvent(_player.playbackEvent));
   }
 
   // ================= DISPOSE =================

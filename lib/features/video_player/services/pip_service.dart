@@ -47,21 +47,29 @@ class PiPService {
 
   // Custom PiP State
   PiPState _state = PiPState.inactive;
+  bool _wasCustomActive = false;
   PiPPosition _position = const PiPPosition(x: 20, y: 100);
   PiPSize _size = PiPSize.small;
 
   PiPService._internal() {
-    // ✅ Initialize SimplePip with Callbacks based on your source code
+    // ✅ Initialize SimplePip with Callbacks
     _simplePip = SimplePip(
       onPipEntered: () {
         debugPrint("📺 Native PiP Entered");
+        if (_state == PiPState.customActive) {
+          _wasCustomActive = true;
+        }
         _updateState(PiPState.nativeActive);
       },
       onPipExited: () {
         debugPrint("📺 Native PiP Exited");
-        // Only reset if we were in native mode (preserve custom pip)
         if (_state == PiPState.nativeActive) {
-          _updateState(PiPState.inactive);
+          if (_wasCustomActive) {
+            _updateState(PiPState.customActive);
+          } else {
+            _updateState(PiPState.inactive);
+          }
+          _wasCustomActive = false;
         }
       },
     );
@@ -143,11 +151,12 @@ class PiPService {
   // ═══════════════════════════════════════════════════════
 
   void enableCustomPiP() {
-    disableAutoNativePiP(); // Prevent conflict
     _updateState(PiPState.customActive);
+    enableAutoNativePiP(); // Keep native auto-enter active on home press
   }
 
   void disableCustomPiP() {
+    _wasCustomActive = false;
     _updateState(PiPState.inactive);
     _position = const PiPPosition(x: 20, y: 100);
     _size = PiPSize.small;

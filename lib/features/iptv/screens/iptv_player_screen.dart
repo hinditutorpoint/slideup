@@ -286,6 +286,8 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     final languages = _languages;
     final showLangFilter = languages.length > 1;
 
+    final current = _channelGroups.isNotEmpty ? _current : null;
+
     // Premium dark TV panel colours
     const panelBg = Color(0xFF0D0D14);
     const panelSurface = Color(0xFF13131F);
@@ -325,20 +327,34 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  switch (_tab) {
-                    _PanelTab.channels  => 'Channels',
-                    _PanelTab.favorites => 'Favourites',
-                    _PanelTab.watching  => 'Recently Watched',
-                  },
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
+                if (current != null) ...[
+                  _ChannelLogo(
+                    channel: current,
+                    selected: true,
+                    width: 32,
+                    height: 24,
+                    borderRadius: 6,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    current?.name ??
+                        switch (_tab) {
+                          _PanelTab.channels  => 'Channels',
+                          _PanelTab.favorites => 'Favourites',
+                          _PanelTab.watching  => 'Recently Watched',
+                        },
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 // Search toggle
                 _TvIconButton(
                   icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
@@ -817,10 +833,19 @@ class _LiveBadgeState extends State<_LiveBadge>
 }
 
 class _ChannelLogo extends StatelessWidget {
-  const _ChannelLogo({required this.channel, this.selected = false});
+  const _ChannelLogo({
+    required this.channel,
+    this.selected = false,
+    this.width = 48,
+    this.height = 36,
+    this.borderRadius = 10,
+  });
 
   final IptvChannel channel;
   final bool selected;
+  final double width;
+  final double height;
+  final double borderRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -828,8 +853,8 @@ class _ChannelLogo extends StatelessWidget {
     final logo = channel.logo;
 
     final fallback = Container(
-      width: 48,
-      height: 36,
+      width: width,
+      height: height,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: selected
@@ -838,14 +863,14 @@ class _ChannelLogo extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(
           color: selected ? accent.withValues(alpha: 0.5) : const Color(0xFF2A2A3F),
         ),
       ),
       child: Icon(
         channel.audioOnly ? Icons.radio_rounded : Icons.live_tv_rounded,
-        size: 18,
+        size: (height * 0.5).clamp(12.0, 20.0),
         color: selected ? accent : Colors.white30,
       ),
     );
@@ -853,11 +878,11 @@ class _ChannelLogo extends StatelessWidget {
     if (logo == null || logo.isEmpty) return fallback;
 
     return Container(
-      width: 48,
-      height: 36,
+      width: width,
+      height: height,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(
           color: selected ? accent : const Color(0xFF2A2A3F),
           width: selected ? 1.4 : 1,

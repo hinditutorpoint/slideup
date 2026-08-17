@@ -76,12 +76,6 @@ class PiPNotifier extends Notifier<PiPStateData> {
   // ─── NATIVE CONTROLS ───
 
   Future<void> updateAutoPiP({required bool isPlaying}) async {
-    // Don't enable auto-pip if custom pip is running
-    if (state.isCustomActive) {
-      await _service.disableAutoNativePiP();
-      return;
-    }
-
     if (isPlaying) {
       // Default 16:9
       await _service.enableAutoNativePiP(aspectX: 16, aspectY: 9);

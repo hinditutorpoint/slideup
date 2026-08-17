@@ -5,6 +5,7 @@ import '../providers/pip_provider.dart';
 import '../providers/video_player_provider.dart';
 import '../video_player_screen.dart';
 import 'pip_widget.dart';
+import 'native_pip_widget.dart';
 import '../../../navigation_service.dart';
 
 class PiPOverlay extends ConsumerWidget {
@@ -19,6 +20,10 @@ class PiPOverlay extends ConsumerWidget {
     return Stack(
       children: [
         child,
+        if (pipState.isNativeActive)
+          const Positioned.fill(
+            child: NativePiPWidget(),
+          ),
         if (pipState.isCustomActive)
           PiPWidget(
             onClose: () {
