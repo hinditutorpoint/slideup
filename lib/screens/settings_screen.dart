@@ -430,9 +430,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const Divider(),
           _buildSectionHeader('About'),
 
-          ListTile(title: const Text('Version'), subtitle: const Text('1.0.0')),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Version'),
+            subtitle: const Text('1.0.0+1 (Release)'),
+          ),
 
           ListTile(
+            leading: const Icon(Icons.gavel_outlined),
+            title: const Text('Open Source Licenses & Credits'),
+            subtitle: const Text('View licenses for all 3rd-party packages (FFmpeg, MediaKit, Flutter, etc.)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              showLicensePage(
+                context: context,
+                applicationName: 'SlideUp Media Player',
+                applicationVersion: '1.0.0+1',
+                applicationIcon: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6C63FF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.slideshow, color: Colors.white, size: 28),
+                ),
+                applicationLegalese: '© 2026 SlideUp Project. All rights reserved.',
+              );
+            },
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.privacy_tip_outlined),
             title: const Text('Privacy Policy'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(
@@ -442,6 +471,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
 
           ListTile(
+            leading: const Icon(Icons.description_outlined),
             title: const Text('Terms of Service'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(
@@ -450,7 +480,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 30),
         ],
       ),
     );
