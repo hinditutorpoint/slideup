@@ -7,6 +7,7 @@ import 'package:mime/mime.dart';
 import 'package:uuid/uuid.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/media_file.dart';
+import 'media_metadata_service.dart';
 import 'thumbnail_service.dart';
 
 class FileScannerService {
@@ -330,11 +331,25 @@ class FileScannerService {
 
       String? thumbnailPath;
       int? duration;
+      String? artist;
+      String? album;
 
       // Generate thumbnail for videos (except streaming formats)
       if (mediaType == MediaType.video &&
           !['m3u8', 'mpd'].contains(extension)) {
         thumbnailPath = await _generateVideoThumbnail(file.path);
+      }
+
+      // Extract metadata (artist, album, duration) for audio/video files
+      if (mediaType == MediaType.audio || mediaType == MediaType.video) {
+        try {
+          final meta = await MediaMetadataService.getMediaMetadata(file.path);
+          artist = MediaMetadataService.getArtist(meta);
+          album = MediaMetadataService.getAlbum(meta);
+          duration = MediaMetadataService.getDuration(meta)?.inMilliseconds;
+        } catch (e) {
+          debugPrint('Error extracting metadata from ${file.path}: $e');
+        }
       }
 
       return MediaFile(
@@ -353,8 +368,8 @@ class FileScannerService {
         thumbnailPath: thumbnailPath,
         duration: duration,
         parentFolder: path.dirname(file.path),
-        artist: null,
-        album: null,
+        artist: artist,
+        album: album,
       );
     } catch (e) {
       debugPrint('Error processing file ${file.path}: $e');

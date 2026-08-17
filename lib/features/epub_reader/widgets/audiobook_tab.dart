@@ -75,6 +75,7 @@ class AudiobookTab extends ConsumerStatefulWidget {
   final String bookId;
   final Future<String?> Function(int chapterIndex) getChapterText;
   final void Function(int chapterIndex)? onChapterTap;
+  final void Function(int chapterIndex)? onAutoAdvanceChapter;
   final void Function()? onStartAudiobook;
 
   const AudiobookTab({
@@ -85,6 +86,7 @@ class AudiobookTab extends ConsumerStatefulWidget {
     required this.bookId,
     required this.getChapterText,
     this.onChapterTap,
+    this.onAutoAdvanceChapter,
     this.onStartAudiobook,
   });
 
@@ -208,7 +210,8 @@ class _AudiobookTabState extends ConsumerState<AudiobookTab> {
     }
   }
 
-  Future<void> _playChapter(int chapterIndex) async {
+  Future<void> _playChapter(int chapterIndex,
+      {bool autoAdvance = false}) async {
     try {
       final info = _chapterAudioInfo[chapterIndex];
       if (info == null) return;
@@ -273,7 +276,7 @@ class _AudiobookTabState extends ConsumerState<AudiobookTab> {
 
               // Auto-play next chapter
               if (chapterIndex < widget.chapters.length - 1) {
-                _playChapter(chapterIndex + 1);
+                _playChapter(chapterIndex + 1, autoAdvance: true);
               }
             }
           },
@@ -292,8 +295,13 @@ class _AudiobookTabState extends ConsumerState<AudiobookTab> {
         );
       }
 
-      // Notify chapter change
-      widget.onChapterTap?.call(chapterIndex);
+      // Notify chapter change.
+      // Auto-advance uses the dedicated callback (no drawer pop) so the reader
+      // route is never popped from an already-closed drawer.
+      final navigate = autoAdvance
+          ? (widget.onAutoAdvanceChapter ?? widget.onChapterTap)
+          : widget.onChapterTap;
+      navigate?.call(chapterIndex);
     } catch (e) {
       debugPrint('[AudiobookTab] Play error: $e');
       _showMessage('Failed to play: $e');

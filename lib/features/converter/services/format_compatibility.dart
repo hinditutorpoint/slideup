@@ -77,6 +77,14 @@ class FormatCompatibility {
         ];
       case ContainerFormat.gif:
         return const [VideoCodec.copy];
+      case ContainerFormat.threeGp:
+        return const [
+          VideoCodec.auto,
+          VideoCodec.copy,
+          VideoCodec.h263,
+          VideoCodec.mpeg4,
+          VideoCodec.h264,
+        ];
       default:
         return const [];
     }
@@ -179,6 +187,14 @@ class FormatCompatibility {
         ];
       case ContainerFormat.gif:
         return const [];
+      case ContainerFormat.threeGp:
+        return const [
+          AudioCodec.auto,
+          AudioCodec.copy,
+          AudioCodec.amr_nb,
+          AudioCodec.aac,
+          AudioCodec.mp3,
+        ];
     }
   }
 
@@ -190,6 +206,8 @@ class FormatCompatibility {
         return VideoCodec.mpeg4;
       case ContainerFormat.mpg:
         return VideoCodec.mpeg2video;
+      case ContainerFormat.threeGp:
+        return VideoCodec.h263;
       default:
         return VideoCodec.h264;
     }
@@ -230,6 +248,8 @@ class FormatCompatibility {
         return AudioCodec.aac;
       case ContainerFormat.gif:
         return AudioCodec.auto;
+      case ContainerFormat.threeGp:
+        return AudioCodec.amr_nb;
     }
   }
 

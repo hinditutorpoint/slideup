@@ -212,6 +212,7 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
       var settings = _resolveSettings(_pendingItems);
       settings = settings.copyWith(
         outputLocation: prefs.outputLocation,
+        selectedFolderPath: prefs.selectedFolderPath,
         duplicateStrategy: prefs.duplicateStrategy,
         hardwareMode: _selectedPreset?.settings.hardwareMode ??
             settings.hardwareMode,
@@ -447,6 +448,55 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
     final s = _settings;
     final isAudio = s.format.isAudioContainer;
     return [
+      Text('Trim (extract a part)', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: TextFormField(
+              initialValue:
+                  s.trimStart > Duration.zero ? _formatTimeInput(s.trimStart) : '',
+              keyboardType: TextInputType.datetime,
+              decoration: const InputDecoration(
+                labelText: 'Start (hh:mm:ss)',
+                helperText: 'Leave blank for full media',
+              ),
+              onChanged: (v) => setState(
+                () => _updateSettings(s.copyWith(trimStart: _parseTimeInput(v))),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextFormField(
+              initialValue:
+                  s.trimEnd > Duration.zero ? _formatTimeInput(s.trimEnd) : '',
+              keyboardType: TextInputType.datetime,
+              decoration: const InputDecoration(
+                labelText: 'End (hh:mm:ss)',
+                helperText: 'Blank = until end',
+              ),
+              onChanged: (v) => setState(
+                () => _updateSettings(s.copyWith(trimEnd: _parseTimeInput(v))),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (s.trimStart > Duration.zero || s.trimEnd > Duration.zero)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => setState(
+              () => _updateSettings(
+                s.copyWith(trimStart: Duration.zero, trimEnd: Duration.zero),
+              ),
+            ),
+            icon: const Icon(Icons.clear, size: 16),
+            label: const Text('Clear trim'),
+          ),
+        ),
+      const SizedBox(height: 12),
       DropdownButtonFormField<VideoCodec>(
         value: s.videoCodec,
         decoration: const InputDecoration(labelText: 'Video codec'),
@@ -592,6 +642,27 @@ class _ConvertTabState extends ConsumerState<_ConvertTab> {
   }
 }
 
+/// Parses `ss`, `mm:ss` or `hh:mm:ss` into a [Duration]. Blank → `Duration.zero`.
+Duration _parseTimeInput(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return Duration.zero;
+  final parts = t.split(':').map((p) => int.tryParse(p.trim()) ?? 0).toList();
+  if (parts.length == 1) return Duration(seconds: parts[0]);
+  if (parts.length == 2) return Duration(minutes: parts[0], seconds: parts[1]);
+  if (parts.length == 3) {
+    return Duration(hours: parts[0], minutes: parts[1], seconds: parts[2]);
+  }
+  return Duration.zero;
+}
+
+String _formatTimeInput(Duration d) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  if (d.inHours > 0) {
+    return '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
+  }
+  return '${two(d.inMinutes)}:${two(d.inSeconds % 60)}';
+}
+
 String _locationLabel(OutputLocation o) {
   switch (o) {
     case OutputLocation.sameFolder:
@@ -632,6 +703,31 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
   bool _picking = false;
   String? _activePresetName;
 
+  /// Per-file trim points (start/end), keyed by source path. Kept separate
+  /// from the shared draft so each preview item keeps its own trim when sent
+  /// to the queue.
+  final Map<String, ({Duration start, Duration end})> _itemTrims = {};
+
+  ({Duration start, Duration end}) _trimFor(String path) {
+    return _itemTrims[path] ??
+        (start: Duration.zero, end: Duration.zero);
+  }
+
+  void _selectItem(int i) {
+    setState(() => _selectedIndex = i);
+    // Show the selected file's own trim in the player / Convert tab.
+    final item = ref.read(converterPreviewListProvider);
+    if (i >= 0 && i < item.length) {
+      final t = _trimFor(item[i].path);
+      final draft = ref.read(converterDraftProvider);
+      if (t.start != draft.trimStart || t.end != draft.trimEnd) {
+        ref.read(converterDraftProvider.notifier).apply(
+              draft.copyWith(trimStart: t.start, trimEnd: t.end),
+            );
+      }
+    }
+  }
+
   Future<void> _pickFiles() async {
     if (_picking) return;
     setState(() => _picking = true);
@@ -656,6 +752,17 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       if (items.isEmpty) return;
 
       ref.read(converterPreviewListProvider.notifier).addAll(items);
+      // New items inherit the currently-set trim so the value is "held" across
+      // batches until the user edits it per file.
+      final draft = ref.read(converterDraftProvider);
+      setState(() {
+        for (final item in items) {
+          _itemTrims[item.path] = (
+            start: draft.trimStart,
+            end: draft.trimEnd,
+          );
+        }
+      });
       _autoPickPreset(items);
     } catch (e) {
       if (mounted) {
@@ -718,18 +825,27 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
       videoMute: settings.videoMute || !hasVideo,
       audioMute: settings.audioMute || !hasAudio,
       outputLocation: prefs.outputLocation,
+      selectedFolderPath: prefs.selectedFolderPath,
       duplicateStrategy: prefs.duplicateStrategy,
       hardwareMode: settings.hardwareMode,
     );
+
+    // Each file keeps its own trim points from the preview.
+    final perItemSettings = items.map((i) {
+      final t = _trimFor(i.path);
+      return resolved.copyWith(trimStart: t.start, trimEnd: t.end);
+    }).toList();
 
     await ConversionManager.instance.enqueue(
       sourcePaths: items.map((i) => i.path).toList(),
       sourceNames: items.map((i) => i.name).toList(),
       probes: items.map((i) => i.probe).toList(),
       settings: resolved,
+      perItemSettings: perItemSettings,
       presetName: _activePresetName,
     );
     ref.read(converterPreviewListProvider.notifier).clear();
+    _itemTrims.clear();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -772,9 +888,12 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                 icon: const Icon(Icons.delete_sweep_outlined),
                 onPressed: items.isEmpty
                     ? null
-                    : () => ref
-                        .read(converterPreviewListProvider.notifier)
-                        .clear(),
+                    : () {
+                        _itemTrims.clear();
+                        ref
+                            .read(converterPreviewListProvider.notifier)
+                            .clear();
+                      },
               ),
             ],
           ),
@@ -791,12 +910,34 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: AspectRatio(
                         aspectRatio: 16 / 9,
-                        child: ConverterPreviewPlayer(
-                          key: ValueKey(items[_selectedIndex].path),
-                          path: items[_selectedIndex].path,
-                          title: items[_selectedIndex].name,
-                          hasVideo: items[_selectedIndex].hasVideo,
-                        ),
+                        child: Builder(builder: (context) {
+                          final draft = ref.watch(converterDraftProvider);
+                          final selectedPath = items[_selectedIndex].path;
+                          final trim = _trimFor(selectedPath);
+                          return ConverterPreviewPlayer(
+                            key: ValueKey(selectedPath),
+                            path: selectedPath,
+                            title: items[_selectedIndex].name,
+                            hasVideo: items[_selectedIndex].hasVideo,
+                            trimStart: trim.start,
+                            trimEnd: trim.end,
+                            onTrimChanged: (start, end) {
+                              setState(() {
+                                _itemTrims[selectedPath] = (start: start, end: end);
+                              });
+                              // Mirror into the shared draft so the Convert
+                              // tab fields reflect the selected file's trim.
+                              ref
+                                  .read(converterDraftProvider.notifier)
+                                  .apply(
+                                    draft.copyWith(
+                                      trimStart: start,
+                                      trimEnd: end,
+                                    ),
+                                  );
+                            },
+                          );
+                        }),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -839,14 +980,13 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                                         ? Icons.volume_up
                                         : Icons.play_arrow,
                                   ),
-                                  onPressed: () => setState(
-                                    () => _selectedIndex = i,
-                                  ),
+                                  onPressed: () => _selectItem(i),
                                 ),
                                 IconButton(
                                   tooltip: 'Remove',
                                   icon: const Icon(Icons.close),
                                   onPressed: () {
+                                    _itemTrims.remove(item.path);
                                     ref
                                         .read(
                                           converterPreviewListProvider.notifier,
@@ -861,7 +1001,7 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                                 ),
                               ],
                             ),
-                            onTap: () => setState(() => _selectedIndex = i),
+                            onTap: () => _selectItem(i),
                           );
                         },
                       ),
@@ -995,6 +1135,105 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
     await ConversionManager.instance.applyPresetToJob(job.id, picked);
   }
 
+  Future<void> _editTrimForJob(BuildContext context, ConversionJob job) async {
+    MediaProbeInfo? probe;
+    try {
+      probe = await FFprobeService.instance.probe(job.sourcePath);
+    } catch (_) {
+      // Probe is optional; fall back to the output format below.
+    }
+    if (!context.mounted) return;
+
+    var start = job.settings.trimStart;
+    var end = job.settings.trimEnd;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.content_cut),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Edit trim',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Scrub, then set Start / End points.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: ConverterPreviewPlayer(
+                    key: ValueKey(job.id),
+                    path: job.sourcePath,
+                    title: job.sourceName,
+                    hasVideo:
+                        probe?.hasVideo ?? job.settings.format.isVideoContainer,
+                    trimStart: start,
+                    trimEnd: end,
+                    onTrimChanged: (s, e) => setSheetState(() {
+                      start = s;
+                      end = e;
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        icon: const Icon(Icons.close),
+                        label: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          await ConversionManager.instance.updateJobSettings(
+                            job.id,
+                            job.settings.copyWith(trimStart: start, trimEnd: end),
+                          );
+                          if (sheetContext.mounted) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
+                        icon: const Icon(Icons.check),
+                        label: const Text('Save trim'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final job = widget.job;
@@ -1034,6 +1273,35 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
               '${_speed > 0 ? ' · ${_speed.toStringAsFixed(1)}x' : ''}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (job.settings.trimStart > Duration.zero ||
+                job.settings.trimEnd > Duration.zero) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(
+                    Icons.content_cut,
+                    size: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      _formatTrimRange(
+                        job.settings.trimStart,
+                        job.settings.trimEnd,
+                      ),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
         trailing: job.status == ConversionStatus.processing
@@ -1055,6 +1323,11 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    tooltip: 'Edit trim',
+                    icon: const Icon(Icons.content_cut),
+                    onPressed: () => _editTrimForJob(context, job),
+                  ),
                   IconButton(
                     tooltip: 'Change preset',
                     icon: const Icon(Icons.tune),
@@ -1082,6 +1355,18 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
 }
 
 // ─────────────────────────────── History ───────────────────────────────
+
+String _formatTrimRange(Duration start, Duration end) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  String f(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60);
+    return h > 0 ? '$h:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
+  }
+
+  return end > Duration.zero ? 'Trim ${f(start)} → ${f(end)}' : 'Trim ${f(start)} → end';
+}
 
 class _HistoryTab extends ConsumerStatefulWidget {
   const _HistoryTab({
@@ -1581,6 +1866,28 @@ class _SettingsTab extends ConsumerWidget {
                     .update((c) => c.copyWith(outputLocation: v ?? c.outputLocation)),
               ),
             ),
+            if (prefs.outputLocation == OutputLocation.selectedFolder) ...[
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.folder_open),
+                  title: Text(
+                    prefs.selectedFolderPath ?? 'Choose a folder…',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    final dir = await FilePicker.platform.getDirectoryPath();
+                    if (dir != null) {
+                      notifier.update(
+                        (c) => c.copyWith(selectedFolderPath: dir),
+                      );
+                    }
+                  },
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),

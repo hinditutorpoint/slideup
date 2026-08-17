@@ -292,5 +292,40 @@ void main() {
       final af = args[args.indexOf('-af') + 1];
       expect(af, 'volume=0.5');
     });
+
+    test('trim adds -ss and -to after the input', () {
+      final args = FFmpegCommandBuilder.instance.build(
+        sourcePath: '/src/song.flac',
+        outputPath: '/out/song.mp3',
+        probe: probe(),
+        settings: const ConversionSettings(
+          format: ContainerFormat.mp3,
+          audioCodec: AudioCodec.mp3,
+          trimStart: Duration(minutes: 1, seconds: 5),
+          trimEnd: Duration(minutes: 2, seconds: 30),
+        ),
+      );
+      final inputIndex = args.indexOf('-i');
+      expect(args[args.indexOf('-ss') + 1], '00:01:05');
+      expect(args[args.indexOf('-to') + 1], '00:02:30');
+      expect(args.indexOf('-ss'), greaterThan(inputIndex));
+      expect(args.indexOf('-to'), greaterThan(inputIndex));
+    });
+
+    test('trim omits -to when end is not after start', () {
+      final args = FFmpegCommandBuilder.instance.build(
+        sourcePath: '/src/song.flac',
+        outputPath: '/out/song.mp3',
+        probe: probe(),
+        settings: const ConversionSettings(
+          format: ContainerFormat.mp3,
+          audioCodec: AudioCodec.mp3,
+          trimStart: Duration(seconds: 30),
+          trimEnd: Duration(seconds: 10),
+        ),
+      );
+      expect(args, contains('-ss'));
+      expect(args, isNot(contains('-to')));
+    });
   });
 }

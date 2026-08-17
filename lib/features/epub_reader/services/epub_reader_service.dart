@@ -1110,17 +1110,42 @@ class EpubReaderService {
 
       // Get context around the highlight
       final textContent = chapter.textContent ?? '';
-      final contextStart = (startOffset - 30).clamp(0, textContent.length);
-      final contextEnd = (endOffset + 30).clamp(0, textContent.length);
+
+      // Validate offsets against the chapter text. Offsets that fall outside
+      // the chapter (e.g. paragraph-relative offsets from older versions)
+      // previously caused a RangeError; fall back to locating the selected
+      // text so context is still captured.
+      var start = startOffset;
+      var end = endOffset;
+      if (start < 0 ||
+          end > textContent.length ||
+          end < start ||
+          start > textContent.length) {
+        final idx = textContent.indexOf(selectedText);
+        if (idx >= 0) {
+          start = idx;
+          end = idx + selectedText.length;
+        } else {
+          start = 0;
+          end = 0;
+        }
+      }
+
+      final contextStart = (start - 30).clamp(0, textContent.length);
+      final contextEnd = (end + 30).clamp(0, textContent.length);
 
       final highlight = Highlight.create(
         chapterIndex: chapter.index,
         chapterId: chapter.id,
         selectedText: selectedText,
-        contextBefore: textContent.substring(contextStart, startOffset),
-        contextAfter: textContent.substring(endOffset, contextEnd),
-        startOffset: startOffset,
-        endOffset: endOffset,
+        contextBefore: start > 0
+            ? textContent.substring(contextStart, start)
+            : null,
+        contextAfter: end < textContent.length
+            ? textContent.substring(end, contextEnd)
+            : null,
+        startOffset: start,
+        endOffset: end,
         color: color,
         note: note,
       );

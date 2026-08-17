@@ -130,6 +130,7 @@ class ConversionManager {
     required List<String> sourceNames,
     required List<MediaProbeInfo> probes,
     required ConversionSettings settings,
+    List<ConversionSettings>? perItemSettings,
     String? presetName,
   }) async {
     final created = <ConversionJob>[];
@@ -137,12 +138,16 @@ class ConversionManager {
       final probe = i < probes.length ? probes[i] : null;
       if (probe == null) continue;
 
+      final itemSettings = (perItemSettings != null && i < perItemSettings.length)
+          ? perItemSettings[i]
+          : settings;
+
       final job = ConversionJob(
         id: _uuid.v4().replaceAll('-', ''),
         sourcePath: sourcePaths[i],
         sourceName: sourceNames[i],
         presetName: presetName,
-        settings: settings,
+        settings: itemSettings,
         status: ConversionStatus.queued,
         notificationId: _nextNotificationId++,
         queuedAt: DateTime.now(),
@@ -202,6 +207,20 @@ class ConversionManager {
     }
     job.settings = preset.settings;
     job.presetName = preset.name;
+    await _db.updateJob(job);
+    _notify();
+  }
+
+  /// Updates the settings (e.g. a changed trim range) of a queued/pending job
+  /// before it starts converting. Ignored once the job is processing.
+  Future<void> updateJobSettings(String id, ConversionSettings settings) async {
+    final job = _jobs.firstWhereOrNull((j) => j.id == id);
+    if (job == null) return;
+    if (job.status != ConversionStatus.queued &&
+        job.status != ConversionStatus.pending) {
+      return;
+    }
+    job.settings = settings;
     await _db.updateJob(job);
     _notify();
   }

@@ -23,6 +23,8 @@ class ConversionSettings {
     this.audioChannels = AudioChannels.auto,
     this.audioQuality,
     this.volume = 1.0,
+    this.trimStart = Duration.zero,
+    this.trimEnd = Duration.zero,
     this.faststart = false,
     this.keepMetadata = true,
     this.audioMute = false,
@@ -64,6 +66,10 @@ class ConversionSettings {
   /// Linear volume multiplier (0.0 = silent).
   final double volume;
 
+  /// Extract only a segment of the media. [Duration.zero] means "no trim".
+  final Duration trimStart;
+  final Duration trimEnd;
+
   final bool faststart;
   final bool keepMetadata;
 
@@ -99,6 +105,8 @@ class ConversionSettings {
     AudioChannels? audioChannels,
     int? audioQuality,
     double? volume,
+    Duration? trimStart,
+    Duration? trimEnd,
     bool? faststart,
     bool? keepMetadata,
     bool? audioMute,
@@ -125,6 +133,8 @@ class ConversionSettings {
       audioChannels: audioChannels ?? this.audioChannels,
       audioQuality: audioQuality ?? this.audioQuality,
       volume: volume ?? this.volume,
+      trimStart: trimStart ?? this.trimStart,
+      trimEnd: trimEnd ?? this.trimEnd,
       faststart: faststart ?? this.faststart,
       keepMetadata: keepMetadata ?? this.keepMetadata,
       audioMute: audioMute ?? this.audioMute,
@@ -154,6 +164,8 @@ class ConversionSettings {
       'audioChannels': audioChannels.index,
       'audioQuality': audioQuality,
       'volume': volume,
+      'trimStartMs': trimStart.inMilliseconds,
+      'trimEndMs': trimEnd.inMilliseconds,
       'faststart': faststart,
       'keepMetadata': keepMetadata,
       'audioMute': audioMute,
@@ -191,6 +203,8 @@ class ConversionSettings {
       audioChannels: AudioChannels.fromIndex(json['audioChannels'] as int?) ?? AudioChannels.auto,
       audioQuality: json['audioQuality'] as int?,
       volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
+      trimStart: Duration(milliseconds: json['trimStartMs'] as int? ?? 0),
+      trimEnd: Duration(milliseconds: json['trimEndMs'] as int? ?? 0),
       faststart: json['faststart'] as bool? ?? false,
       keepMetadata: json['keepMetadata'] as bool? ?? true,
       audioMute: json['audioMute'] as bool? ?? false,

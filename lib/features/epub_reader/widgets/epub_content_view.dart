@@ -246,6 +246,9 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
         RegExp(r'<(?:p|div|h[1-6]|br)[^>]*>', caseSensitive: false),
       );
 
+      // Running offset of each block within the canonical chapter plain text
+      int blockBase = 0;
+
       for (final block in blocks) {
         final cleanText = _stripHtmlTags(block).trim();
         if (cleanText.isEmpty) continue;
@@ -262,9 +265,14 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
               cleanText,
               theme,
               isHeading: isHeading,
+              baseOffset: blockBase,
             ),
           ),
         );
+
+        // Canonical plain text: blocks joined by '\n'. Kept in sync so
+        // selection offsets can be converted to chapter-wide offsets.
+        blockBase += cleanText.length + 1;
       }
 
       // Add images if present
@@ -286,6 +294,7 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
     String text,
     _ThemeColors theme, {
     bool isHeading = false,
+    int baseOffset = 0,
   }) {
     try {
       // Get highlights for this text
@@ -309,8 +318,8 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
             if (selection.baseOffset != selection.extentOffset) {
               _handleTextSelection(
                 text,
-                selection.baseOffset,
-                selection.extentOffset,
+                baseOffset + selection.baseOffset,
+                baseOffset + selection.extentOffset,
               );
             }
           },
@@ -318,7 +327,13 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
       }
 
       // Build text with highlights
-      return _buildHighlightedText(text, relevantHighlights, theme, isHeading);
+      return _buildHighlightedText(
+        text,
+        relevantHighlights,
+        theme,
+        isHeading,
+        baseOffset,
+      );
     } catch (e) {
       debugPrint('Build text with highlights error: $e');
       return Text(
@@ -336,6 +351,7 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
     List<Highlight> highlights,
     _ThemeColors theme,
     bool isHeading,
+    int baseOffset,
   ) {
     final spans = <TextSpan>[];
     int currentIndex = 0;
@@ -344,7 +360,14 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
     final sortedHighlights =
         highlights
             .map((h) {
-              final index = text.indexOf(h.selectedText);
+              // Prefer the stored absolute offset when it falls inside this
+              // block; otherwise fall back to matching the selected text
+              // (handles repeated text, translations, and legacy highlights).
+              final relative = h.startOffset - baseOffset;
+              final index = relative >= 0 &&
+                      relative + h.selectedText.length <= text.length
+                  ? relative
+                  : text.indexOf(h.selectedText);
               return index >= 0 ? (highlight: h, index: index) : null;
             })
             .whereType<({Highlight highlight, int index})>()
@@ -398,8 +421,8 @@ class _EpubContentViewState extends ConsumerState<EpubContentView> {
         if (selection.baseOffset != selection.extentOffset) {
           _handleTextSelection(
             text,
-            selection.baseOffset,
-            selection.extentOffset,
+            baseOffset + selection.baseOffset,
+            baseOffset + selection.extentOffset,
           );
         }
       },

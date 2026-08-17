@@ -182,6 +182,17 @@ class ConverterConstants {
           outputLocation: OutputLocation.appFolder,
         ),
       ),
+      build(
+        '3GP Old Phone',
+        'H.263 + AMR-NB in 3GP, plays on old phones',
+        const ConversionSettings(
+          format: ContainerFormat.threeGp,
+          videoCodec: VideoCodec.h263,
+          audioCodec: AudioCodec.amr_nb,
+          height: 240,
+          outputLocation: OutputLocation.appFolder,
+        ),
+      ),
     ];
   }
 

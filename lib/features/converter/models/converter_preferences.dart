@@ -5,6 +5,7 @@ class ConverterPreferences {
   const ConverterPreferences({
     this.defaultPresetId,
     this.outputLocation = OutputLocation.appFolder,
+    this.selectedFolderPath,
     this.maxSimultaneous = 1,
     this.duplicateStrategy = DuplicateStrategy.rename,
     this.keepHistory = true,
@@ -17,6 +18,7 @@ class ConverterPreferences {
 
   final String? defaultPresetId;
   final OutputLocation outputLocation;
+  final String? selectedFolderPath;
   final int maxSimultaneous;
   final DuplicateStrategy duplicateStrategy;
   final bool keepHistory;
@@ -33,6 +35,7 @@ class ConverterPreferences {
     String? defaultPresetId,
     bool clearDefaultPreset = false,
     OutputLocation? outputLocation,
+    String? selectedFolderPath,
     int? maxSimultaneous,
     DuplicateStrategy? duplicateStrategy,
     bool? keepHistory,
@@ -45,6 +48,8 @@ class ConverterPreferences {
     return ConverterPreferences(
       defaultPresetId: clearDefaultPreset ? null : (defaultPresetId ?? this.defaultPresetId),
       outputLocation: outputLocation ?? this.outputLocation,
+      selectedFolderPath:
+          selectedFolderPath ?? this.selectedFolderPath,
       maxSimultaneous: maxSimultaneous ?? this.maxSimultaneous,
       duplicateStrategy: duplicateStrategy ?? this.duplicateStrategy,
       keepHistory: keepHistory ?? this.keepHistory,
@@ -60,6 +65,7 @@ class ConverterPreferences {
     return {
       'defaultPresetId': defaultPresetId,
       'outputLocation': outputLocation.index,
+      'selectedFolderPath': selectedFolderPath,
       'maxSimultaneous': maxSimultaneous,
       'duplicateStrategy': duplicateStrategy.index,
       'keepHistory': keepHistory,
@@ -75,6 +81,7 @@ class ConverterPreferences {
     return ConverterPreferences(
       defaultPresetId: json['defaultPresetId'] as String?,
       outputLocation: OutputLocation.values.elementAtOrNull(json['outputLocation'] as int?) ?? OutputLocation.appFolder,
+      selectedFolderPath: json['selectedFolderPath'] as String?,
       maxSimultaneous: json['maxSimultaneous'] as int? ?? 1,
       duplicateStrategy: DuplicateStrategy.values.elementAtOrNull(json['duplicateStrategy'] as int?) ?? DuplicateStrategy.rename,
       keepHistory: json['keepHistory'] as bool? ?? true,

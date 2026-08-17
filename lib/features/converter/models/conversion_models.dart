@@ -58,7 +58,8 @@ enum ContainerFormat {
   mpg,
   ts,
   flv,
-  gif;
+  gif,
+  threeGp;
 
   static ContainerFormat? fromExtension(String ext) {
     for (final f in ContainerFormat.values) {
@@ -110,6 +111,8 @@ extension ContainerFormatX on ContainerFormat {
         return 'flv';
       case ContainerFormat.gif:
         return 'gif';
+      case ContainerFormat.threeGp:
+        return '3gp';
     }
   }
 
@@ -172,6 +175,8 @@ extension ContainerFormatX on ContainerFormat {
         return 'FLV';
       case ContainerFormat.gif:
         return 'GIF';
+      case ContainerFormat.threeGp:
+        return '3GP';
     }
   }
 
@@ -215,6 +220,8 @@ extension ContainerFormatX on ContainerFormat {
         return 'video/x-flv';
       case ContainerFormat.gif:
         return 'image/gif';
+      case ContainerFormat.threeGp:
+        return 'video/3gpp';
     }
   }
 
@@ -237,7 +244,8 @@ enum VideoCodec {
   vp8,
   vp9,
   mpeg4,
-  mpeg2video;
+  mpeg2video,
+  h263;
 
   static VideoCodec? fromIndex(int? index) {
     if (index == null) return null;
@@ -267,6 +275,8 @@ enum VideoCodec {
         return 'mpeg4';
       case VideoCodec.mpeg2video:
         return 'mpeg2video';
+      case VideoCodec.h263:
+        return 'h263';
     }
   }
 
@@ -290,6 +300,8 @@ enum VideoCodec {
         return 'MPEG-4 Part 2';
       case VideoCodec.mpeg2video:
         return 'MPEG-2';
+      case VideoCodec.h263:
+        return 'H.263 (old phones)';
     }
   }
 }
@@ -306,7 +318,9 @@ enum AudioCodec {
   vorbis,
   // ignore: constant_identifier_names
   pcm_s16le,
-  wmapro;
+  wmapro,
+  // ignore: constant_identifier_names
+  amr_nb;
 
   static AudioCodec? fromIndex(int? index) {
     if (index == null) return null;
@@ -337,6 +351,8 @@ enum AudioCodec {
         return 'pcm_s16le';
       case AudioCodec.wmapro:
         return 'wmav2';
+      case AudioCodec.amr_nb:
+        return 'libopencore_amrnb';
     }
   }
 
@@ -362,6 +378,8 @@ enum AudioCodec {
         return 'PCM 16-bit';
       case AudioCodec.wmapro:
         return 'WMA';
+      case AudioCodec.amr_nb:
+        return 'AMR-NB (old phones)';
     }
   }
 }

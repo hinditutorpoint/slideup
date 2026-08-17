@@ -31,10 +31,32 @@ class MediaMetadataService {
   // Tag helpers
   // -------------------------------
   static String? getTag(Map<String, dynamic> meta, String key) {
+    String? read(Map<String, dynamic>? tags) {
+      if (tags == null || tags.isEmpty) return null;
+
+      // Exact match first (ID3v2, MP4, etc.)
+      final direct = tags[key];
+      if (direct != null) return direct.toString();
+
+      // Case-insensitive fallback: ffprobe reports Vorbis/FLAC comments in
+      // UPPERCASE (ARTIST, ALBUM, TITLE...) so an exact lookup misses them.
+      final lowerKey = key.toLowerCase();
+      for (final entry in tags.entries) {
+        if (entry.key.toLowerCase() == lowerKey) {
+          return entry.value.toString();
+        }
+      }
+
+      return null;
+    }
+
     // 1️⃣ format.tags
     final formatTags = meta['format']?['tags'];
-    if (formatTags is Map && formatTags[key] != null) {
-      return formatTags[key].toString();
+    final fromFormat = read(
+      formatTags is Map ? Map<String, dynamic>.from(formatTags) : null,
+    );
+    if (fromFormat != null) {
+      return fromFormat;
     }
 
     // 2️⃣ streams[].tags (audio first)
@@ -42,8 +64,11 @@ class MediaMetadataService {
     if (streams is List) {
       for (final s in streams) {
         final tags = s['tags'];
-        if (tags is Map && tags[key] != null) {
-          return tags[key].toString();
+        if (tags is Map) {
+          final value = read(Map<String, dynamic>.from(tags));
+          if (value != null) {
+            return value;
+          }
         }
       }
     }

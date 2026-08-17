@@ -40,6 +40,16 @@ class FFmpegCommandBuilder {
 
     args.addAll(['-i', _readablePath(sourcePath)]);
 
+    // Trim segment (extract a part of the media). Output-side seeking keeps
+    // the result frame-accurate when re-encoding.
+    if (settings.trimStart > Duration.zero) {
+      args.addAll(['-ss', _ffmpegTime(settings.trimStart)]);
+    }
+    if (settings.trimEnd > Duration.zero &&
+        settings.trimEnd > settings.trimStart) {
+      args.addAll(['-to', _ffmpegTime(settings.trimEnd)]);
+    }
+
     if (settings.audioMute || !probe.hasAudio) {
       args.add('-an');
     } else if (settings.format.isVideoContainer && probe.hasVideo) {
@@ -185,4 +195,14 @@ class FFmpegCommandBuilder {
   }
 
   static String _readablePath(String path) => path;
+
+  /// Formats a [Duration] as `HH:MM:SS` (with `.mmm` when sub-second).
+  static String _ffmpegTime(Duration d) {
+    final h = d.inHours.toString().padLeft(2, '0');
+    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    final ms = d.inMilliseconds % 1000;
+    final base = '$h:$m:$s';
+    return ms > 0 ? '$base.${ms.toString().padLeft(3, '0')}' : base;
+  }
 }

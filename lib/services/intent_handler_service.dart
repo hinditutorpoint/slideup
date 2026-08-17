@@ -345,7 +345,7 @@ class IntentHandlerService {
           album = MediaMetadataService.getAlbum(meta);
           genre = MediaMetadataService.getGenre(meta);
           year = MediaMetadataService.getYear(meta);
-          duration = MediaMetadataService.getDuration(meta) as int?;
+          duration = MediaMetadataService.getDuration(meta)?.inMilliseconds;
         } catch (e) {
           debugPrint('⚠️ Could not extract metadata from $filePath: $e');
         }

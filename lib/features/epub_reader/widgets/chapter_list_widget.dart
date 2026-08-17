@@ -412,10 +412,11 @@ class _ChapterDrawerState extends ConsumerState<ChapterDrawer>
           bookId: widget.book.id,
           getChapterText: (chapterIndex) async {
             try {
-              // Load chapter content
+              // Use getChapter instead of goToChapter to avoid changing the
+              // reader's current position while browsing audio
               final chapter = await ref
-                  .read(readerNotifierProvider.notifier)
-                  .goToChapter(chapterIndex);
+                  .read(readerServiceProvider)
+                  .getChapter(chapterIndex);
               return chapter.data!.safeTextContent;
             } catch (e) {
               debugPrint('Failed to get chapter text: $e');
@@ -425,6 +426,9 @@ class _ChapterDrawerState extends ConsumerState<ChapterDrawer>
           onChapterTap: (index) async {
             Navigator.pop(context);
             await ref.read(readerNotifierProvider.notifier).goToChapter(index);
+          },
+          onAutoAdvanceChapter: (index) {
+            ref.read(readerNotifierProvider.notifier).goToChapter(index);
           },
         ),
       ],

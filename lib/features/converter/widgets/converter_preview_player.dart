@@ -15,11 +15,21 @@ class ConverterPreviewPlayer extends StatefulWidget {
     required this.path,
     required this.title,
     required this.hasVideo,
+    this.trimStart = Duration.zero,
+    this.trimEnd = Duration.zero,
+    this.onTrimChanged,
   });
 
   final String path;
   final String title;
   final bool hasVideo;
+
+  /// Trim range to display/preview on the timeline.
+  final Duration trimStart;
+  final Duration trimEnd;
+
+  /// Called when the user sets start/end points from the player.
+  final void Function(Duration start, Duration end)? onTrimChanged;
 
   @override
   State<ConverterPreviewPlayer> createState() => _ConverterPreviewPlayerState();
@@ -151,19 +161,6 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
     final player = _player;
     final controller = _controller;
 
-    final body = Column(
-      children: [
-        Expanded(
-          child: Container(
-            width: double.infinity,
-            color: Colors.black,
-            child: _buildSurface(context, player, controller),
-          ),
-        ),
-        _buildControls(context, colorScheme),
-      ],
-    );
-
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
@@ -171,7 +168,7 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
         color: Colors.black,
       ),
       clipBehavior: Clip.antiAlias,
-      child: body,
+      child: _buildSurface(context, player, controller),
     );
   }
 
@@ -210,47 +207,173 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
       );
     }
 
-    if (controller != null) {
-      return Video(controller: controller, controls: NoVideoControls);
-    }
+    // Video (or audio visual) fills the whole 16:9 surface.
+    final surface = controller != null
+        ? Video(controller: controller, controls: NoVideoControls)
+        : Center(
+            child: Icon(
+              _playing ? Icons.graphic_eq : Icons.music_note,
+              size: 56,
+              color: Colors.white,
+            ),
+          );
 
-    // Audio-only: show a simple visual.
-    return Center(
-      child: Icon(
-        _playing ? Icons.graphic_eq : Icons.music_note,
-        size: 56,
-        color: Colors.white,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _togglePlay,
+          child: surface,
+        ),
+        // Title, progress and timecode overlaid on the top of the player.
+        Positioned(top: 0, left: 0, right: 0, child: _buildTopOverlay(context)),
+        // Play / pause button centered on the player.
+        Center(child: _buildCenterPlayButton()),
+      ],
+    );
+  }
+
+  void _setTrimStart() {
+    if (_duration == Duration.zero) return;
+    var start = _position;
+    var end = widget.trimEnd;
+    // A start at/after the current end invalidates the end point.
+    if (end > Duration.zero && start >= end) end = Duration.zero;
+    widget.onTrimChanged?.call(start, end);
+  }
+
+  void _setTrimEnd() {
+    if (_duration == Duration.zero) return;
+    var end = _position;
+    var start = widget.trimStart;
+    // An end at/before the current start invalidates the start point.
+    if (start > Duration.zero && end <= start) start = Duration.zero;
+    widget.onTrimChanged?.call(start, end);
+  }
+
+  void _clearTrim() {
+    widget.onTrimChanged?.call(Duration.zero, Duration.zero);
+  }
+
+  bool get _hasTrim =>
+      widget.trimStart > Duration.zero || widget.trimEnd > Duration.zero;
+
+  String get _trimLabel {
+    if (!_hasTrim) return 'No trim';
+    return 'Trim ${_fmt(widget.trimStart)}'
+        '${widget.trimEnd > Duration.zero ? ' → ${_fmt(widget.trimEnd)}' : ' → end'}';
+  }
+
+  /// Thin timeline strip highlighting the trimmed segment.
+  Widget _buildTrimStrip() {
+    final totalMs = _duration.inMilliseconds;
+    if (totalMs <= 0) return const SizedBox.shrink();
+
+    final startMs = widget.trimStart.inMilliseconds.clamp(0, totalMs);
+    final endMs = widget.trimEnd.inMilliseconds > 0
+        ? widget.trimEnd.inMilliseconds.clamp(0, totalMs)
+        : totalMs;
+    final startFlex = ((startMs / totalMs) * 1000).round();
+    final midFlex = (((endMs - startMs) / totalMs) * 1000).round();
+    final endFlex = (((totalMs - endMs) / totalMs) * 1000).round();
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(2),
+      child: SizedBox(
+        height: 4,
+        child: Row(
+          children: [
+            Expanded(
+              flex: startFlex.clamp(0, 1) > 0 ? startFlex : 1,
+              child: Container(color: Colors.white24),
+            ),
+            Expanded(
+              flex: midFlex.clamp(0, 1) > 0 ? midFlex : 1,
+              child: Container(color: Colors.amber),
+            ),
+            Expanded(
+              flex: endFlex.clamp(0, 1) > 0 ? endFlex : 1,
+              child: Container(color: Colors.white24),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildControls(BuildContext context, ColorScheme colorScheme) {
+  Widget _buildTrimControls() {
+    final style = TextButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      textStyle: const TextStyle(fontSize: 11),
+      foregroundColor: Colors.white70,
+    );
+    return Row(
+      children: [
+        const Icon(Icons.content_cut, size: 13, color: Colors.white70),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            _trimLabel,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ),
+        TextButton(
+          style: style,
+          onPressed: _duration > Duration.zero ? _setTrimStart : null,
+          child: const Text('Start'),
+        ),
+        TextButton(
+          style: style,
+          onPressed: _duration > Duration.zero ? _setTrimEnd : null,
+          child: const Text('End'),
+        ),
+        if (_hasTrim)
+          TextButton(
+            style: style,
+            onPressed: _clearTrim,
+            child: const Text('✕'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildTopOverlay(BuildContext context) {
     final durationMs = _duration.inMilliseconds.toDouble();
     final positionMs = _position.inMilliseconds
         .clamp(0, _duration.inMilliseconds)
         .toDouble();
 
     return Container(
-      color: Colors.black87,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.7),
+            Colors.transparent,
+          ],
+        ),
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              IconButton(
-                tooltip: _playing ? 'Pause' : 'Play',
-                icon: Icon(
-                  _playing ? Icons.pause_circle : Icons.play_circle,
-                  color: Colors.white,
-                ),
-                onPressed: _togglePlay,
-              ),
               Expanded(
                 child: Text(
                   widget.title,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
               if (_buffering)
@@ -274,12 +397,28 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
           Slider(
             value: durationMs > 0 ? positionMs.clamp(0, durationMs) : 0,
             max: durationMs > 0 ? durationMs : 1,
-            activeColor: colorScheme.primary,
+            activeColor: Theme.of(context).colorScheme.primary,
             inactiveColor: Colors.white24,
             onChanged: _seekTo,
           ),
+          _buildTrimControls(),
+          const SizedBox(height: 4),
+          _buildTrimStrip(),
         ],
       ),
+    );
+  }
+
+  Widget _buildCenterPlayButton() {
+    return IconButton(
+      tooltip: _playing ? 'Pause' : 'Play',
+      iconSize: 64,
+      icon: Icon(
+        _playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+        color: Colors.white.withValues(alpha: 0.9),
+        shadows: const [Shadow(blurRadius: 8, color: Colors.black54)],
+      ),
+      onPressed: _togglePlay,
     );
   }
 }
