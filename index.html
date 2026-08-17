@@ -639,16 +639,47 @@
         <div class="showcase-tabs">
           <button class="tab-btn active" onclick="filterMockups('all')">All Features</button>
           <button class="tab-btn" onclick="filterMockups('video')">Video &amp; PiP</button>
+          <button class="tab-btn" onclick="filterMockups('editor')">Video Editor</button>
+          <button class="tab-btn" onclick="filterMockups('audio')">Audio Player</button>
           <button class="tab-btn" onclick="filterMockups('iptv')">Live IPTV</button>
-          <button class="tab-btn" onclick="filterMockups('reader')">Document Reader</button>
+          <button class="tab-btn" onclick="filterMockups('reader')">PDF Reader</button>
+          <button class="tab-btn" onclick="filterMockups('browser')">Browser &amp; Tools</button>
         </div>
 
         <div class="mockup-grid">
           <div class="phone-item" data-cat="video">
             <div class="phone-frame">
-              <img src="screenshots/recent-usage.png" alt="SlideUp Home & Recent Usage" loading="lazy">
+              <img src="screenshots/video-player.png" alt="SlideUp Video Player" loading="lazy">
             </div>
-            <div class="frame-label">🎬 Home &amp; 4K Media Player</div>
+            <div class="frame-label">🎬 4K Video Player</div>
+          </div>
+
+          <div class="phone-item" data-cat="video">
+            <div class="phone-frame">
+              <img src="screenshots/pip-mod.png" alt="SlideUp Picture-in-Picture" loading="lazy">
+            </div>
+            <div class="frame-label">🔲 Floating Picture-in-Picture</div>
+          </div>
+
+          <div class="phone-item" data-cat="editor">
+            <div class="phone-frame">
+              <img src="screenshots/video-editor-screen.png" alt="SlideUp Video Editor" loading="lazy">
+            </div>
+            <div class="frame-label">✂️ Video Editor &amp; Timeline</div>
+          </div>
+
+          <div class="phone-item" data-cat="editor">
+            <div class="phone-frame">
+              <img src="screenshots/video-editor-more-tools.png" alt="SlideUp Video Tools" loading="lazy">
+            </div>
+            <div class="frame-label">🛠️ Filters &amp; Speed Ramping</div>
+          </div>
+
+          <div class="phone-item" data-cat="audio">
+            <div class="phone-frame">
+              <img src="screenshots/audio-player.png" alt="SlideUp Audio Player" loading="lazy">
+            </div>
+            <div class="frame-label">🎵 Music Player &amp; Equalizer</div>
           </div>
 
           <div class="phone-item" data-cat="iptv">
@@ -665,25 +696,25 @@
             <div class="frame-label">📚 PDF &amp; EPUB Reader</div>
           </div>
 
-          <div class="phone-item" data-cat="video">
+          <div class="phone-item" data-cat="browser">
             <div class="phone-frame">
               <img src="screenshots/media-convertor.png" alt="SlideUp Media Converter" loading="lazy">
             </div>
             <div class="frame-label">🔄 FFmpeg Media Converter</div>
           </div>
 
-          <div class="phone-item" data-cat="reader">
-            <div class="phone-frame">
-              <img src="screenshots/document-archive-library.png" alt="SlideUp Archive Library" loading="lazy">
-            </div>
-            <div class="frame-label">🏛️ Public Archive Library</div>
-          </div>
-
-          <div class="phone-item" data-cat="video">
+          <div class="phone-item" data-cat="browser">
             <div class="phone-frame">
               <img src="screenshots/private-browser.png" alt="SlideUp Private Browser" loading="lazy">
             </div>
             <div class="frame-label">🌐 Private Web Browser</div>
+          </div>
+
+          <div class="phone-item" data-cat="video">
+            <div class="phone-frame">
+              <img src="screenshots/recent-usage.png" alt="SlideUp Home Dashboard" loading="lazy">
+            </div>
+            <div class="frame-label">🏠 Home &amp; Recent Media</div>
           </div>
         </div>
       </div>

@@ -204,11 +204,13 @@
         // Screenshot image paths from the screenshots folder
         const screenshotUrls = [
             'screenshots/recent-usage.png',
-            'screenshots/audio.png',
+            'screenshots/video-player.png',
+            'screenshots/pip-mod.png',
+            'screenshots/video-editor-screen.png',
+            'screenshots/audio-player.png',
             'screenshots/iptv-player.png',
             'screenshots/docs.png',
-            'screenshots/media-convertor.png',
-            'screenshots/private-browser.png'
+            'screenshots/media-convertor.png'
         ];
 
         const loadedImages = [];
@@ -218,55 +220,71 @@
             loadedImages.push(img);
         });
 
-        // 6 Scene Definitions
+        // 8 Dynamic Scene Definitions
         const scenes = [
             {
                 tag: 'ALL-IN-ONE MEDIA SUITE',
                 title: 'SlideUp Media Player',
                 subtitle: 'The Ultimate Video, Audio, IPTV & Document Reader for Android',
                 color: '#6C63FF',
-                duration: 4.5,
+                duration: 4.0,
                 imgIndex: 0
             },
             {
                 tag: 'ULTRA-HD PLAYBACK',
-                title: 'Next-Gen Video Player',
-                subtitle: 'Dual-Gesture Seeking · Picture-in-Picture · Multi-Audio & Subtitles',
+                title: '4K Ultra Video Player',
+                subtitle: 'Dual-Gesture Seeking · Hardware Decoding · Multi-Audio & Subtitles',
                 color: '#00F0FF',
-                duration: 4.0,
+                duration: 3.5,
                 imgIndex: 1
             },
             {
-                tag: 'LIVE STREAMING',
-                title: 'IPTV & Live TV Channels',
-                subtitle: '1000+ Global Channels · M3U & XTream Support · Split Screen Player',
-                color: '#FF4757',
-                duration: 4.0,
+                tag: 'MULTITASKING FREEDOM',
+                title: 'Picture-in-Picture (PiP)',
+                subtitle: 'Watch video in floating mini-window while using other apps seamlessly',
+                color: '#FF6B81',
+                duration: 3.5,
                 imgIndex: 2
             },
             {
-                tag: 'OFFLINE READING',
-                title: 'PDF & EPUB Reader',
-                subtitle: 'Page Jumping · Chapter Navigation · Continuous Night Mode Reading',
-                color: '#2ED573',
-                duration: 4.0,
+                tag: 'BUILT-IN VIDEO EDITOR',
+                title: 'Timeline Video Editor',
+                subtitle: 'Precision Trim & Cut · Speed Ramping · Filters & Audio Replacement',
+                color: '#FF4757',
+                duration: 3.5,
                 imgIndex: 3
             },
             {
-                tag: 'TOOLS & SECURITY',
-                title: 'Converter & Biometric Vault',
-                subtitle: 'FFmpeg Format Transcoding · Private Incognito Browser · File Encryption',
+                tag: 'HIGH FIDELITY SOUND',
+                title: 'Audio Player & Equalizer',
+                subtitle: 'Lossless Flac/MP3 Playback · 10-Band EQ · Bass Boost & Sleep Timer',
                 color: '#FFA502',
-                duration: 4.0,
+                duration: 3.5,
                 imgIndex: 4
             },
             {
-                tag: 'OPEN SOURCE ON GITHUB',
-                title: 'Experience SlideUp Today',
+                tag: 'GLOBAL LIVE STREAMING',
+                title: '1000+ IPTV Channels',
+                subtitle: 'M3U & XTream Codes Support · YouTube-Style Split Player & Favorites',
+                color: '#2ED573',
+                duration: 3.5,
+                imgIndex: 5
+            },
+            {
+                tag: 'DISTRACTION-FREE READING',
+                title: 'PDF & EPUB Reader',
+                subtitle: 'Continuous Reading · Text Search · Font Scaling & Night Reading Mode',
+                color: '#1E90FF',
+                duration: 3.5,
+                imgIndex: 6
+            },
+            {
+                tag: 'EXPERIENCE SLIDEUP',
+                title: 'Converter & Biometric Vault',
                 subtitle: 'Fast · Free · No Tracking · Modern ColorOS & Android 8+ Ready',
                 color: '#9C88FF',
-                duration: 4.5,
-                imgIndex: 5
+                duration: 4.0,
+                imgIndex: 7
             }
         ];
 
