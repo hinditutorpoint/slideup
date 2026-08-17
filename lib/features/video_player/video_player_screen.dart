@@ -197,13 +197,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     final pipState = ref.watch(pipProvider);
 
     // ✅ Sync Auto-PiP with player state
+    // NOTE: We always call updateAutoPiP regardless of custom PiP mode
+    // so the native system-level PiP (Home button) always works correctly.
     ref.listen<VideoPlayerState>(videoPlayerProvider, (prev, next) {
       if (prev?.isPlaying != next.isPlaying) {
-        if (!pipState.isCustomActive) {
-          ref
-              .read(pipProvider.notifier)
-              .updateAutoPiP(isPlaying: next.isPlaying);
-        }
+        ref
+            .read(pipProvider.notifier)
+            .updateAutoPiP(isPlaying: next.isPlaying);
       }
     });
 

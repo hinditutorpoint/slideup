@@ -52,7 +52,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   late Offset _position;
   late AnimationController _dismissAnimationController;
   late Animation<double> _dismissAnimation;
-  TabController? _playlistTabController;
+  // NOTE: TabController removed — tab switching is driven by _selectedPlaylistTab state
+  //       which avoids allocating an unused controller object.
 
   bool _isDragging = false;
   bool _isInDismissZone = false;
@@ -61,7 +62,14 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   bool _showPlaylist = false;
   int _selectedPlaylistTab = 0;
 
+  // UI 8: Dismiss zone stays visible briefly after drag ends for smooth fade-out
+  bool _showDismissZone = false;
+
   final _bgGenerator = BackgroundChapterGenerator.instance;
+
+  // Cache of generated chapters — refreshed reactively when job stream emits
+  List<dynamic> _cachedChapters = [];
+  bool _cacheLoading = false;
 
   static const double _controlsWidth = 340.0;
   static const double _baseControlsHeight = 240.0;
@@ -69,10 +77,27 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   static const double _miniHeight = 60.0;
   static const double _dismissZoneHeight = 100.0;
 
+  /// Safe widget width — never wider than screen minus 16px padding
+  double get _safeWidth =>
+      _controlsWidth.clamp(0.0, widget.screenSize.width - 16.0);
+
+  /// Safe max height — never taller than usable screen area
+  double get _maxAllowedHeight =>
+      widget.screenSize.height -
+      widget.safeArea.top -
+      widget.safeArea.bottom -
+      24.0; // 24px breathing room
+
   double get _currentHeight {
     if (!_isExpanded) return _miniHeight;
-    if (_showSettings) return 280.0;
-    return _baseControlsHeight + (_showPlaylist ? _playlistHeight : 0);
+    double raw;
+    if (_showSettings) {
+      raw = 280.0;
+    } else {
+      raw = _baseControlsHeight + (_showPlaylist ? _playlistHeight : 0);
+    }
+    // Clamp so widget never overflows on small phones
+    return raw.clamp(0.0, _maxAllowedHeight);
   }
 
   static const List<double> _speedOptions = [
@@ -98,12 +123,17 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   void initState() {
     super.initState();
 
+    final safeWidth = _controlsWidth.clamp(0.0, widget.screenSize.width - 16.0);
     _position = Offset(
-      (widget.screenSize.width - _controlsWidth) / 2,
-      widget.screenSize.height -
-          _baseControlsHeight -
-          widget.safeArea.bottom -
-          80,
+      ((widget.screenSize.width - safeWidth) / 2).clamp(0.0, widget.screenSize.width - safeWidth),
+      (widget.screenSize.height -
+              _baseControlsHeight -
+              widget.safeArea.bottom -
+              80)
+          .clamp(
+            widget.safeArea.top,
+            widget.screenSize.height - _baseControlsHeight - widget.safeArea.bottom,
+          ),
     );
 
     _dismissAnimationController = AnimationController(
@@ -117,23 +147,45 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
       ),
     );
 
-    _playlistTabController = TabController(length: 3, vsync: this);
-    _playlistTabController!.addListener(() {
-      if (!_playlistTabController!.indexIsChanging) {
-        setState(() => _selectedPlaylistTab = _playlistTabController!.index);
-      }
+    // Load cache once eagerly, then refresh whenever a job finishes
+    _refreshCache();
+    _bgGenerator.jobStatusStream.listen((_) {
+      if (mounted) _refreshCache();
     });
   }
 
   @override
   void dispose() {
     _dismissAnimationController.dispose();
-    _playlistTabController?.dispose();
+    // _playlistTabController already removed — nothing extra to dispose
     super.dispose();
   }
 
+  /// Fetch the cached chapter list from TtsController and store in state.
+  /// Called once on init and again whenever a generation job emits an event.
+  Future<void> _refreshCache() async {
+    if (widget.bookId == null) return;
+    if (!mounted) return;
+    setState(() => _cacheLoading = true);
+    try {
+      final chapters = await TtsController.instance
+          .getGeneratedAudioForBook(widget.bookId!);
+      if (mounted) {
+        setState(() {
+          _cachedChapters = chapters;
+          _cacheLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _cacheLoading = false);
+    }
+  }
+
   void _onPanStart(DragStartDetails details) {
-    setState(() => _isDragging = true);
+    setState(() {
+      _isDragging = true;
+      _showDismissZone = true; // UI 8: show dismiss zone when drag starts
+    });
     HapticFeedback.selectionClick();
   }
 
@@ -141,7 +193,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     setState(() {
       _position += details.delta;
       _position = Offset(
-        _position.dx.clamp(0, widget.screenSize.width - _controlsWidth),
+        // Use safeWidth so widget never goes off-screen on small phones
+        _position.dx.clamp(0.0, widget.screenSize.width - _safeWidth),
         _position.dy.clamp(
           widget.safeArea.top,
           widget.screenSize.height - _currentHeight - widget.safeArea.bottom,
@@ -168,6 +221,11 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
     } else {
       _snapToEdge();
     }
+
+    // UI 8: Keep dismiss zone visible briefly then fade it out smoothly
+    Future.delayed(const Duration(milliseconds: 250), () {
+      if (mounted) setState(() => _showDismissZone = false);
+    });
   }
 
   void _snapToEdge() {
@@ -207,22 +265,33 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
   }
 
   void _adjustPosition() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final maxY =
-          widget.screenSize.height - _currentHeight - widget.safeArea.bottom;
-      if (_position.dy > maxY) {
-        setState(() => _position = Offset(_position.dx, maxY));
-      }
-    });
+    // Calculate maxY BEFORE setState (same frame) to avoid a visible 1-frame jump.
+    // _currentHeight has already been updated by the caller's setState.
+    final maxY =
+        widget.screenSize.height - _currentHeight - widget.safeArea.bottom;
+    if (_position.dy > maxY) {
+      // Already inside a setState call from togglePlaylist/toggleSettings,
+      // so we call setState again only when necessary.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _position.dy > maxY) {
+          setState(() => _position = Offset(_position.dx, maxY));
+        }
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // UI 6: dynamic width — never wider than screen minus 16px margin
+    final safeWidth = _safeWidth;
+
     return Stack(
       children: [
-        // Dismiss zone
-        if (_isDragging)
-          Positioned(
+        // UI 8: Dismiss zone with AnimatedOpacity for smooth fade-out
+        AnimatedOpacity(
+          opacity: _showDismissZone ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 250),
+          child: Positioned(
             bottom: 0,
             left: 0,
             right: 0,
@@ -264,6 +333,7 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
               ),
             ),
           ),
+        ),
 
         // Controls
         AnimatedPositioned(
@@ -282,7 +352,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                 onPanEnd: _onPanEnd,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  width: _controlsWidth,
+                  // UI 6: use safeWidth so widget never clips on small phones
+                  width: safeWidth,
                   constraints: BoxConstraints(
                     maxHeight:
                         widget.screenSize.height -
@@ -675,8 +746,8 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
             ),
           ),
           Divider(height: 1, color: fgColor.withValues(alpha: 0.1)),
-          // Tab content
-          Expanded(child: _buildPlaylistContent(fgColor)),
+          // Tab content — Flexible fills remaining height of the 220px Container
+          Flexible(child: _buildPlaylistContent(fgColor)),
         ],
       ),
     );
@@ -730,41 +801,55 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
       return _buildEmptyState('No book loaded', Icons.book_outlined, fgColor);
     }
 
-    return StreamBuilder<GenerationJob>(
-      stream: _bgGenerator.jobStatusStream,
-      builder: (context, snapshot) {
-        return FutureBuilder<List<dynamic>>(
-          future: TtsController.instance.getGeneratedAudioForBook(
-            widget.bookId!,
-          ),
-          builder: (context, cacheSnapshot) {
-            final cachedChapters = cacheSnapshot.data ?? [];
-            final jobs = _bgGenerator.allJobs
-                .where((j) => j.bookId == widget.bookId)
-                .toList();
+    // UI 7: Show loading shimmer while initial cache fetch is in progress
+    if (_cacheLoading && _cachedChapters.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(
+                  fgColor.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Loading chapters...',
+              style: TextStyle(
+                color: fgColor.withValues(alpha: 0.5),
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              itemCount: widget.status.totalChapters,
-              itemBuilder: (context, index) {
-                final isCurrent = index == widget.status.currentChapter;
-                final isCached = cachedChapters.any(
-                  (c) => c.pageNumber == index,
-                );
-                final job = jobs
-                    .where((j) => j.chapterIndex == index)
-                    .firstOrNull;
+    // Use cached data + live job list — no nested FutureBuilder
+    final jobs = _bgGenerator.allJobs
+        .where((j) => j.bookId == widget.bookId)
+        .toList();
 
-                return _buildPlaylistItem(
-                  index: index,
-                  fgColor: fgColor,
-                  isCurrent: isCurrent,
-                  isCached: isCached,
-                  job: job,
-                );
-              },
-            );
-          },
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: widget.status.totalChapters,
+      itemBuilder: (context, index) {
+        final isCurrent = index == widget.status.currentChapter;
+        final isCached = _cachedChapters.any((c) => c.pageNumber == index);
+        final job = jobs.where((j) => j.chapterIndex == index).firstOrNull;
+
+        return _buildPlaylistItem(
+          index: index,
+          fgColor: fgColor,
+          isCurrent: isCurrent,
+          isCached: isCached,
+          job: job,
         );
       },
     );
@@ -775,44 +860,39 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
       return _buildEmptyState('No book loaded', Icons.book_outlined, fgColor);
     }
 
-    return FutureBuilder<List<dynamic>>(
-      future: TtsController.instance.getGeneratedAudioForBook(widget.bookId!),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
-        }
+    // Show loading indicator while cache is being fetched
+    if (_cacheLoading && _cachedChapters.isEmpty) {
+      return const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
 
-        final cachedChapters = snapshot.data ?? [];
-        if (cachedChapters.isEmpty) {
-          return _buildEmptyState(
-            'No chapters ready',
-            Icons.hourglass_empty,
-            fgColor,
-          );
-        }
+    if (_cachedChapters.isEmpty) {
+      return _buildEmptyState(
+        'No chapters ready',
+        Icons.hourglass_empty,
+        fgColor,
+      );
+    }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          itemCount: cachedChapters.length,
-          itemBuilder: (context, index) {
-            final entry = cachedChapters[index];
-            final chapterIndex = entry.pageNumber ?? 0;
-            final isCurrent = chapterIndex == widget.status.currentChapter;
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: _cachedChapters.length,
+      itemBuilder: (context, index) {
+        final entry = _cachedChapters[index];
+        final chapterIndex = entry.pageNumber ?? 0;
+        final isCurrent = chapterIndex == widget.status.currentChapter;
 
-            return _buildPlaylistItem(
-              index: chapterIndex,
-              fgColor: fgColor,
-              isCurrent: isCurrent,
-              isCached: true,
-              job: null,
-            );
-          },
+        return _buildPlaylistItem(
+          index: chapterIndex,
+          fgColor: fgColor,
+          isCurrent: isCurrent,
+          isCached: true,
+          job: null,
         );
       },
     );
@@ -1574,9 +1654,11 @@ class _DraggableAudiobookControlsState extends State<DraggableAudiobookControls>
                 child: SizedBox(
                   width: 12,
                   height: 12,
-                  child: const CircularProgressIndicator(
+                  // Bug 4 fix: remove `const` — AlwaysStoppedAnimation(Colors.amber)
+                  // is not a const expression in all Flutter versions
+                  child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.amber),
+                    valueColor: const AlwaysStoppedAnimation(Colors.amber),
                   ),
                 ),
               ),

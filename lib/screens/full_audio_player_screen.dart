@@ -10,6 +10,7 @@ import '../providers/audio_handler_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../helpers/format_helper.dart';
 import '../services/database_service.dart';
+import '../widgets/lyrics_view_widget.dart';
 
 class FullAudioPlayerScreen extends ConsumerStatefulWidget {
   final MediaFile mediaFile;
@@ -34,6 +35,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   Timer? _sleepTimer;
   bool _isFavorite = false;
   String? _currentMediaId;
+  bool _showLyrics = false;
 
   @override
   void initState() {
@@ -159,6 +161,18 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
           ),
           const Spacer(),
           IconButton(
+            icon: Icon(
+              _showLyrics ? Icons.lyrics : Icons.lyrics_outlined,
+              color: _showLyrics ? Theme.of(context).primaryColor : null,
+            ),
+            tooltip: _showLyrics ? 'Show Album Art' : 'Show Lyrics',
+            onPressed: () {
+              setState(() {
+                _showLyrics = !_showLyrics;
+              });
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.playlist_play),
             onPressed: _showPlaylist,
           ),
@@ -176,23 +190,88 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
       stream: audioHandler.mediaItem,
       builder: (context, snapshot) {
         final mediaItem = snapshot.data;
+        final currentTitle = mediaItem?.title ?? widget.mediaFile.name;
+        final currentArtist = mediaItem?.artist ?? widget.mediaFile.artist;
+        final currentDuration = mediaItem?.duration ??
+            (widget.mediaFile.duration != null
+                ? Duration(milliseconds: widget.mediaFile.duration!)
+                : null);
 
-        return SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              _buildAlbumArt(mediaItem),
-              const SizedBox(height: 30),
-              _buildTrackInfo(mediaItem),
-              const SizedBox(height: 30),
-              _buildProgressBar(audioHandler),
-              const SizedBox(height: 30),
-              _buildControls(audioHandler),
-              const SizedBox(height: 30),
-              _buildAdditionalControls(audioHandler),
-              const SizedBox(height: 20),
-            ],
-          ),
+        // Use LayoutBuilder so lyrics panel fits correctly on all screen sizes
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // Lyrics panel height = screen height minus fixed controls area
+            // Approximate: appbar ~72, trackInfo ~80, progress ~70,
+            // controls ~90, additionalControls ~60, padding ~80
+            final lyricsPanelHeight =
+                (constraints.maxHeight - 454).clamp(220.0, 400.0);
+
+            return SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+
+                  // ── Album Art  OR  Lyrics Panel ─────────────────────────
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: child,
+                    ),
+                    child: _showLyrics
+                        ? SizedBox(
+                            key: const ValueKey('lyrics'),
+                            height: lyricsPanelHeight,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                              child: LyricsViewWidget(
+                                songTitle: currentTitle,
+                                artist: currentArtist,
+                                duration: currentDuration,
+                                onClose: () =>
+                                    setState(() => _showLyrics = false),
+                              ),
+                            ),
+                          )
+                        : SizedBox(
+                            key: const ValueKey('albumArt'),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildAlbumArt(mediaItem),
+                                const SizedBox(height: 10),
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    foregroundColor:
+                                        Theme.of(context).primaryColor,
+                                  ),
+                                  onPressed: () =>
+                                      setState(() => _showLyrics = true),
+                                  icon: const Icon(
+                                    Icons.lyrics_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text('Show Lyrics'),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  _buildTrackInfo(mediaItem),
+                  const SizedBox(height: 24),
+                  _buildProgressBar(audioHandler),
+                  const SizedBox(height: 24),
+                  _buildControls(audioHandler),
+                  const SizedBox(height: 24),
+                  _buildAdditionalControls(audioHandler),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -727,6 +806,14 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                     }
                   }
                 }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lyrics),
+              title: const Text('Lyrics'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _showLyrics = true);
               },
             ),
             ListTile(
