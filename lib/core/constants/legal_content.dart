@@ -2,7 +2,7 @@ class LegalContent {
   LegalContent._();
 
   static const String appName = 'Slideup Media Player';
-  static const String companyName = 'Inkpad IT Solutions.';
+  static const String companyName = 'SlideUp Open Source Project';
   static const String companyEmail =
       'https://github.com/hinditutorpoint/slideup/issues';
   static const String companyWebsite =
