@@ -46,9 +46,16 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   }
 
   Future<void> _initialize() async {
+    final startTime = DateTime.now();
+    const minSplashDuration = Duration(milliseconds: 2200);
+
     try {
-      setState(() => _statusMessage = 'Starting SlideUp...');
-      setState(() => _progress = 0.2);
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Starting SlideUp...';
+          _progress = 0.25;
+        });
+      }
 
       // 1. Mandatory First-Launch Privacy Policy & User Agreement consent (OPPO guideline)
       if (mounted) {
@@ -59,25 +66,51 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         }
       }
 
-      setState(() => _statusMessage = 'Checking permissions...');
-      setState(() => _progress = 0.5);
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Loading media engine...';
+          _progress = 0.55;
+        });
+      }
 
       // 2. Request permissions ONLY after privacy policy consent
       await PermissionService.instance.requestPermissions();
-      setState(() => _progress = 0.8);
+
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Ready';
+          _progress = 0.90;
+        });
+      }
 
       // Trigger media scan in background without blocking screen transition
       unawaited(ref.read(mediaProvider.notifier).scanMedia().catchError((e) {
         debugPrint('Media scan background error: $e');
       }));
 
-      setState(() => _progress = 1.0);
+      // Ensure splash screen remains visible for a comfortable duration
+      final elapsed = DateTime.now().difference(startTime);
+      if (elapsed < minSplashDuration) {
+        await Future.delayed(minSplashDuration - elapsed);
+      }
 
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
+        setState(() => _progress = 1.0);
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              transitionDuration: const Duration(milliseconds: 450),
+              pageBuilder: (_, __, ___) => const MainScreen(),
+              transitionsBuilder: (_, animation, __, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          );
+        }
       }
     } catch (e) {
       debugPrint('Splash error: $e');

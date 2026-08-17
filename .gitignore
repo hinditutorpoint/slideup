@@ -19,6 +19,9 @@
 .swiftpm/
 migrate_working_dir/
 build_error.log
+launch_scrcpy.bat
+take_screenshot.bat
+screenshots/
 
 # -----------------------------------------------------------------------------
 # Security & Signing Keys (CRITICAL FOR PUBLIC REPOS)
