@@ -22,7 +22,6 @@ build_error.log
 launch_scrcpy.bat
 take_screenshot.bat
 record_video.bat
-screenshots/
 recordings/
 
 # -----------------------------------------------------------------------------
