@@ -4,7 +4,8 @@ class LegalContent {
   static const String appName = 'Slideup Media Player';
   static const String companyName = 'Inkpad IT Solutions.';
   static const String companyEmail = 'support@smplus.in';
-  static const String companyWebsite = 'https://smplus.in';
+  static const String companyWebsite =
+      'https://hinditutorpoint.github.io/slideup/';
   static const String lastUpdated = 'January 1, 2025';
 
   static const String privacyPolicy =
