@@ -2,8 +2,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:disk_space_plus/disk_space_plus.dart';
 import '../models/storage_info.dart';
+import 'permission_service.dart';
 
 class StorageService {
   static final StorageService instance = StorageService._();
@@ -11,51 +12,133 @@ class StorageService {
 
   Future<List<StorageInfo>> getAvailableStorageLocations() async {
     final locations = <StorageInfo>[];
+    final addedPaths = <String>{};
 
     if (Platform.isAndroid) {
-      // ── Permission check ───────────────────────────────────────────────
-      // On Android 11+ (API 30+) any directory listing throws errno=13
-      // unless MANAGE_EXTERNAL_STORAGE is granted.  We ask here so the
-      // file browser never blindly calls list() without it.
-      final sdkInt = await _androidSdkInt();
-      if (sdkInt >= 30) {
-        final hasAll = await Permission.manageExternalStorage.status.isGranted;
-        if (!hasAll) {
-          await Permission.manageExternalStorage.request();
-          // Re-check; if still not granted, skip all file-system enumeration
-          // to avoid errno=13. Return an empty list so the caller can show
-          // a "Grant permission" prompt instead of crashing.
-          final granted =
-              await Permission.manageExternalStorage.status.isGranted;
-          if (!granted) return locations;
-        }
-      } else if (sdkInt >= 23) {
-        // Android 6–10: plain READ_EXTERNAL_STORAGE is enough
-        final status = await Permission.storage.status;
-        if (status.isDenied) await Permission.storage.request();
-        final granted = await Permission.storage.status.isGranted;
-        if (!granted) return locations;
+      // 1. Check/Request permissions if needed
+      final hasPermission =
+          await PermissionService.instance.hasAllPermissions();
+      if (!hasPermission) {
+        await PermissionService.instance.requestPermissions();
       }
 
-      // Internal storage
-      await _addStorageLocation(
-        locations,
-        '/storage/emulated/0',
-        'Internal Storage',
-        StorageType.internal,
-      );
+      // 2. Primary Internal Storage (/storage/emulated/0)
+      const primaryPath = '/storage/emulated/0';
+      if (await Directory(primaryPath).exists()) {
+        await _addStorageLocation(
+          locations,
+          addedPaths,
+          primaryPath,
+          'Internal Storage',
+          StorageType.internal,
+        );
+      } else {
+        const altPrimary = '/sdcard';
+        if (await Directory(altPrimary).exists()) {
+          await _addStorageLocation(
+            locations,
+            addedPaths,
+            altPrimary,
+            'Internal Storage',
+            StorageType.internal,
+          );
+        }
+      }
 
-      // External SD card and USB
-      await _scanExternalStorage(locations);
+      // 3. Scan external SD cards and USB drives via getExternalStorageDirectories
+      try {
+        final extDirs = await getExternalStorageDirectories();
+        if (extDirs != null) {
+          for (final dir in extDirs) {
+            final parts = path.split(dir.path);
+            final storageIdx = parts.indexOf('storage');
+            if (storageIdx != -1 && storageIdx + 1 < parts.length) {
+              final volumeName = parts[storageIdx + 1];
+              if (volumeName != 'emulated' && volumeName != 'self') {
+                final volumePath = '/storage/$volumeName';
+                if (!addedPaths.contains(volumePath) &&
+                    await Directory(volumePath).exists()) {
+                  final isUsb = volumeName.toLowerCase().contains('usb') ||
+                      volumeName.toLowerCase().contains('otg');
+                  await _addStorageLocation(
+                    locations,
+                    addedPaths,
+                    volumePath,
+                    isUsb ? 'USB Storage' : 'SD Card ($volumeName)',
+                    isUsb ? StorageType.usb : StorageType.external,
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error getting external storage directories: $e');
+      }
+
+      // 4. Scan /storage directory directly for any additional mounted volumes
+      await _scanExternalStorage(locations, addedPaths);
     } else if (Platform.isIOS) {
-      // iOS app sandbox
       final appDir = await getApplicationDocumentsDirectory();
       await _addStorageLocation(
         locations,
+        addedPaths,
         appDir.path,
         'App Documents',
         StorageType.internal,
       );
+    } else if (Platform.isWindows) {
+      for (final letter in ['C', 'D', 'E', 'F', 'G', 'H']) {
+        final drivePath = '$letter:\\';
+        if (await Directory(drivePath).exists()) {
+          await _addStorageLocation(
+            locations,
+            addedPaths,
+            drivePath,
+            'Drive ($letter:)',
+            letter == 'C' ? StorageType.internal : StorageType.external,
+          );
+        }
+      }
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        if (!addedPaths.contains(docs.path) && await docs.exists()) {
+          await _addStorageLocation(
+            locations,
+            addedPaths,
+            docs.path,
+            'Documents',
+            StorageType.internal,
+          );
+        }
+      } catch (_) {}
+    } else if (Platform.isLinux || Platform.isMacOS) {
+      try {
+        final appDir = await getApplicationDocumentsDirectory();
+        await _addStorageLocation(
+          locations,
+          addedPaths,
+          appDir.path,
+          'Documents',
+          StorageType.internal,
+        );
+      } catch (_) {}
+    }
+
+    // Safety fallback: if no locations found at all, try getApplicationDocumentsDirectory
+    if (locations.isEmpty) {
+      try {
+        final fallbackDir = await getApplicationDocumentsDirectory();
+        if (await fallbackDir.exists()) {
+          await _addStorageLocation(
+            locations,
+            addedPaths,
+            fallbackDir.path,
+            'Storage',
+            StorageType.internal,
+          );
+        }
+      } catch (_) {}
     }
 
     return locations;
@@ -63,42 +146,60 @@ class StorageService {
 
   Future<void> _addStorageLocation(
     List<StorageInfo> locations,
-    String path,
+    Set<String> addedPaths,
+    String dirPath,
     String name,
     StorageType type,
   ) async {
-    final directory = Directory(path);
+    if (addedPaths.contains(dirPath)) return;
+    final directory = Directory(dirPath);
     if (!await directory.exists()) return;
 
-    try {
-      //final stat = await directory.stat();
+    addedPaths.add(dirPath);
 
-      locations.add(
-        StorageInfo(
-          name: name,
-          path: path,
-          type: type,
-          totalSpace: await _getTotalSpace(path),
-          freeSpace: await _getFreeSpace(path),
-          isAccessible: true,
-        ),
-      );
+    int totalSpace = 0;
+    int freeSpace = 0;
+    bool isAccessible = true;
+
+    try {
+      final diskSpacePlus = DiskSpacePlus();
+      final freeMb = await diskSpacePlus.getFreeDiskSpaceForPath(dirPath) ??
+          await diskSpacePlus.getFreeDiskSpace;
+      final totalMb = await diskSpacePlus.getTotalDiskSpace;
+
+      if (totalMb != null && totalMb > 0) {
+        totalSpace = (totalMb * 1024 * 1024).round();
+      }
+      if (freeMb != null && freeMb > 0) {
+        freeSpace = (freeMb * 1024 * 1024).round();
+      }
     } catch (e) {
-      debugPrint('Error accessing storage location $path: $e');
-      locations.add(
-        StorageInfo(
-          name: name,
-          path: path,
-          type: type,
-          totalSpace: 0,
-          freeSpace: 0,
-          isAccessible: false,
-        ),
-      );
+      debugPrint('Error getting disk space for $dirPath: $e');
     }
+
+    // Test directory readability safely
+    try {
+      await directory.list().take(1).drain();
+    } catch (e) {
+      debugPrint('Directory $dirPath may have limited access: $e');
+    }
+
+    locations.add(
+      StorageInfo(
+        name: name,
+        path: dirPath,
+        type: type,
+        totalSpace: totalSpace,
+        freeSpace: freeSpace,
+        isAccessible: isAccessible,
+      ),
+    );
   }
 
-  Future<void> _scanExternalStorage(List<StorageInfo> locations) async {
+  Future<void> _scanExternalStorage(
+    List<StorageInfo> locations,
+    Set<String> addedPaths,
+  ) async {
     try {
       final storage = Directory('/storage');
       if (!await storage.exists()) return;
@@ -107,80 +208,36 @@ class StorageService {
         if (entity is Directory) {
           final dirName = path.basename(entity.path);
 
-          // Skip emulated and self directories
-          if (dirName == 'emulated' || dirName == 'self') continue;
-
-          // Check if it's accessible — wrap in try/catch so errno=13 on
-          // an individual volume doesn't crash the whole scan.
-          try {
-            await entity.list().first;
-
-            // Determine storage type
-            StorageType type = StorageType.external;
-            String name = 'SD Card';
-
-            if (dirName.toLowerCase().contains('usb') ||
-                dirName.toLowerCase().contains('otg')) {
-              type = StorageType.usb;
-              name = 'USB Storage';
-            }
-
-            await _addStorageLocation(locations, entity.path, name, type);
-          } on FileSystemException catch (e) {
-            // errno=13 = EACCES (Permission denied) — silently skip the volume.
-            debugPrint(
-              'Skipping inaccessible storage ${entity.path}: ${e.osError}',
-            );
-          } catch (e) {
-            debugPrint('Skipping storage ${entity.path}: $e');
+          // Skip emulated, self, and system directories
+          if (dirName == 'emulated' ||
+              dirName == 'self' ||
+              dirName == 'knox' ||
+              dirName.startsWith('.')) {
+            continue;
           }
+
+          if (addedPaths.contains(entity.path)) continue;
+
+          StorageType type = StorageType.external;
+          String name = 'SD Card ($dirName)';
+
+          if (dirName.toLowerCase().contains('usb') ||
+              dirName.toLowerCase().contains('otg')) {
+            type = StorageType.usb;
+            name = 'USB Storage ($dirName)';
+          }
+
+          await _addStorageLocation(
+            locations,
+            addedPaths,
+            entity.path,
+            name,
+            type,
+          );
         }
       }
-    } on FileSystemException catch (e) {
-      debugPrint('Cannot list /storage: ${e.osError}');
     } catch (e) {
-      debugPrint('Error scanning external storage: $e');
-    }
-  }
-
-  Future<int> _getTotalSpace(String path) async {
-    try {
-      // This is a simplified implementation
-      // In production, you might want to use platform channels
-      final file = File(path);
-      if (await file.exists()) {
-        return 1024 * 1024 * 1024; // 1GB placeholder
-      }
-    } catch (e) {
-      debugPrint('Error getting total space: $e');
-    }
-    return 0;
-  }
-
-  Future<int> _getFreeSpace(String path) async {
-    try {
-      // This is a simplified implementation
-      // In production, you might want to use platform channels
-      final file = File(path);
-      if (await file.exists()) {
-        return 512 * 1024 * 1024; // 512MB placeholder
-      }
-    } catch (e) {
-      debugPrint('Error getting free space: $e');
-    }
-    return 0;
-  }
-
-  /// Returns the Android SDK integer (e.g. 33 for Android 13).
-  /// Falls back to 0 on non-Android or parse error.
-  Future<int> _androidSdkInt() async {
-    if (!Platform.isAndroid) return 0;
-    try {
-      final version = Platform.operatingSystemVersion;
-      final match = RegExp(r'(\d+)').firstMatch(version);
-      return int.tryParse(match?.group(1) ?? '0') ?? 0;
-    } catch (_) {
-      return 0;
+      debugPrint('Error scanning /storage: $e');
     }
   }
 }

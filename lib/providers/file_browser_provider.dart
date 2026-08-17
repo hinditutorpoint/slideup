@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
+import 'package:path/path.dart' as path;
 import '../models/media_file.dart';
 import '../services/file_operations_service.dart';
 import '../services/settings_service.dart';
 import '../services/search_service.dart';
 import '../services/supported_extensions_service.dart';
+import '../services/storage_service.dart';
 
 class FileBrowserState {
   final Directory? currentDirectory;
@@ -95,9 +98,17 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
       sortOrder: sortOrder,
     );
 
-    // Navigate to last location if available
-    if (lastLocation != null) {
+    // Navigate to last location if available, otherwise navigate to first available storage
+    if (lastLocation != null && Directory(lastLocation).existsSync()) {
       await navigateToDirectory(Directory(lastLocation));
+    } else {
+      final storageLocations =
+          await StorageService.instance.getAvailableStorageLocations();
+      final target = storageLocations.where((s) => s.isAccessible).firstOrNull ??
+          storageLocations.firstOrNull;
+      if (target != null && Directory(target.path).existsSync()) {
+        await navigateToDirectory(Directory(target.path));
+      }
     }
   }
 
@@ -109,7 +120,15 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
         throw Exception('Directory does not exist');
       }
 
-      final entities = await directory.list().toList();
+      final entities = <FileSystemEntity>[];
+      try {
+        await for (final entity in directory.list()) {
+          entities.add(entity);
+        }
+      } catch (listErr) {
+        debugPrint('Partial/full error listing directory: $listErr');
+      }
+
       final filteredEntities = _filterAndSortEntities(entities);
 
       state = state.copyWith(
@@ -138,7 +157,7 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
     if (!state.showHiddenFiles) {
       filtered = entities.where((entity) {
         if (entity.path.endsWith('.slock')) return true;
-        final name = entity.path.split('/').last;
+        final name = path.basename(entity.path);
         return !name.startsWith('.');
       }).toList();
     }
@@ -156,8 +175,8 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
       if (a is Directory && b is File) return -1;
       if (a is File && b is Directory) return 1;
 
-      final nameA = a.path.split('/').last;
-      final nameB = b.path.split('/').last;
+      final nameA = path.basename(a.path);
+      final nameB = path.basename(b.path);
 
       int comparison = 0;
       switch (state.sortBy) {
@@ -177,8 +196,8 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
           comparison = dateA.compareTo(dateB);
           break;
         case SortBy.type:
-          final extA = a.path.split('.').last.toLowerCase();
-          final extB = b.path.split('.').last.toLowerCase();
+          final extA = path.extension(a.path).toLowerCase();
+          final extB = path.extension(b.path).toLowerCase();
           comparison = extA.compareTo(extB);
           break;
       }

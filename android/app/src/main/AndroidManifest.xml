@@ -35,6 +35,9 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
 
+    <!-- Floating Window / Overlay (Popup Playback) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+
     <!-- ══════════════════════════════════════════════════════════════════ -->
     <!-- FEATURES -->
     <!-- ══════════════════════════════════════════════════════════════════ -->

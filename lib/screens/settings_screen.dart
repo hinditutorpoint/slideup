@@ -20,6 +20,7 @@ import '../services/thumbnail_service.dart';
 import 'locked_files_screen.dart';
 import 'file_extensions_screen.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // Import enums from settings service
 export '../services/settings_service.dart' show SortBy, SortOrder;
@@ -204,9 +205,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: const Text('Video Popup Playback'),
             subtitle: const Text('Play videos in floating window'),
             value: settings.videoPopupEnabled,
-            onChanged: (value) {
-              ref.read(settingsProvider.notifier).setVideoPopupEnabled(value);
-            },
+            onChanged: (value) => _handleVideoPopupToggle(value),
           ),
 
           SwitchListTile(
@@ -775,6 +774,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               foregroundColor: Colors.white,
             ),
             child: const Text('Clear Now'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleVideoPopupToggle(bool value) async {
+    if (value) {
+      if (Platform.isAndroid) {
+        final status = await Permission.systemAlertWindow.status;
+        if (!status.isGranted) {
+          final reqStatus = await Permission.systemAlertWindow.request();
+          if (!reqStatus.isGranted) {
+            if (!mounted) return;
+            _showOverlayPermissionDialog();
+            return;
+          }
+        }
+      }
+      await ref.read(settingsProvider.notifier).setVideoPopupEnabled(true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Video Popup Playback enabled'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } else {
+      await ref.read(settingsProvider.notifier).setVideoPopupEnabled(false);
+    }
+  }
+
+  void _showOverlayPermissionDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.picture_in_picture_alt, color: Color(0xFF6C63FF)),
+            SizedBox(width: 10),
+            Text('Permission Required'),
+          ],
+        ),
+        content: const Text(
+          '"Display over other apps" (Floating Window / Popup) permission is required to play videos in popup mode over other apps.\n\nPlease enable the permission in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await openAppSettings();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6C63FF),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
           ),
         ],
       ),

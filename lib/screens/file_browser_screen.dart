@@ -72,11 +72,21 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         _showPermissionDialog();
       }
     } else {
-      // Load last location or default
+      // Load last location or default to first available storage
       final lastLocation = await SettingsService.instance.getLastLocation();
-      if (lastLocation != null && mounted) {
-        final notifier = ref.read(fileBrowserProvider.notifier);
-        await notifier.navigateToDirectory(Directory(lastLocation));
+      final notifier = ref.read(fileBrowserProvider.notifier);
+      if (lastLocation != null && Directory(lastLocation).existsSync()) {
+        if (mounted) {
+          await notifier.navigateToDirectory(Directory(lastLocation));
+        }
+      } else {
+        final storageLocations =
+            await StorageService.instance.getAvailableStorageLocations();
+        final target = storageLocations.where((s) => s.isAccessible).firstOrNull ??
+            storageLocations.firstOrNull;
+        if (target != null && mounted) {
+          await notifier.navigateToDirectory(Directory(target.path));
+        }
       }
     }
   }
@@ -376,8 +386,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   ) {
     if (state.currentDirectory == null) return const SizedBox.shrink();
 
+    final isWindows = Platform.isWindows;
+    final separator = isWindows ? r'\' : '/';
     final pathSegments = state.currentDirectory!.path
-        .split('/')
+        .split(separator)
         .where((s) => s.isNotEmpty)
         .toList();
 
@@ -1033,7 +1045,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     int index,
     FileBrowserNotifier notifier,
   ) async {
-    final targetPath = '/${pathSegments.sublist(0, index + 1).join('/')}';
+    String targetPath;
+    if (Platform.isWindows) {
+      targetPath = pathSegments.sublist(0, index + 1).join(r'\');
+    } else {
+      targetPath =
+          '/${pathSegments.where((s) => s != '/').toList().sublist(0, index + 1).join('/')}';
+    }
     _navigationStack.clear();
     await notifier.navigateToDirectory(Directory(targetPath));
   }
@@ -1044,8 +1062,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
     if (!mounted) return;
 
+    final currentDirPath = ref.read(fileBrowserProvider).currentDirectory?.path;
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: BoxDecoration(
@@ -1054,53 +1075,135 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text(
-                'Storage Locations',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Storage Locations',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showStorageSelection();
+                    },
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Refresh'),
+                  ),
+                ],
               ),
             ),
-            ...storageLocations.map((location) {
-              final isInternal = location.type == StorageType.internal;
-              final isUsb = location.type == StorageType.usb;
-
-              IconData icon;
-              if (isUsb) {
-                icon = Icons.usb;
-              } else if (isInternal) {
-                icon = Icons.phone_android;
-              } else {
-                icon = Icons.sd_card;
-              }
-
-              return ListTile(
-                leading: Icon(icon, color: Theme.of(context).primaryColor),
-                title: Text(location.name),
-                subtitle: Text(location.path),
-                trailing: location.isAccessible
-                    ? null
-                    : const Icon(Icons.lock, color: Colors.red),
-                onTap: location.isAccessible
-                    ? () {
+            if (storageLocations.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  children: [
+                    const Icon(Icons.storage, size: 48, color: Colors.grey),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No accessible storage found',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Storage permissions may be required.',
+                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () {
                         Navigator.pop(context);
-                        _navigationStack.clear();
-                        final notifier = ref.read(fileBrowserProvider.notifier);
-                        notifier.navigateToDirectory(Directory(location.path));
-                      }
-                    : null,
-              );
-            }),
+                        _handlePermissionRequest();
+                      },
+                      child: const Text('Grant Storage Permissions'),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...storageLocations.map((location) {
+                final isInternal = location.type == StorageType.internal;
+                final isUsb = location.type == StorageType.usb;
+
+                IconData icon;
+                if (isUsb) {
+                  icon = Icons.usb;
+                } else if (isInternal) {
+                  icon = Icons.phone_android;
+                } else {
+                  icon = Icons.sd_card;
+                }
+
+                final isCurrent = currentDirPath != null &&
+                    (currentDirPath == location.path ||
+                        currentDirPath.startsWith(location.path));
+
+                String subtitle = location.path;
+                if (location.totalSpace > 0 && location.freeSpace > 0) {
+                  subtitle =
+                      '${_formatFileSize(location.freeSpace)} free of ${_formatFileSize(location.totalSpace)}\n${location.path}';
+                }
+
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: isCurrent
+                        ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                        : Colors.grey.withValues(alpha: 0.1),
+                    child: Icon(
+                      icon,
+                      color: isCurrent
+                          ? Theme.of(context).primaryColor
+                          : Theme.of(context).iconTheme.color,
+                    ),
+                  ),
+                  title: Text(
+                    location.name,
+                    style: TextStyle(
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                    ),
+                  ),
+                  subtitle: Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  isThreeLine: location.totalSpace > 0,
+                  trailing: !location.isAccessible
+                      ? const Icon(Icons.lock, color: Colors.red)
+                      : isCurrent
+                          ? Icon(Icons.check_circle,
+                              color: Theme.of(context).primaryColor)
+                          : const Icon(Icons.chevron_right, color: Colors.grey),
+                  onTap: location.isAccessible
+                      ? () {
+                          Navigator.pop(context);
+                          _navigationStack.clear();
+                          final notifier =
+                              ref.read(fileBrowserProvider.notifier);
+                          notifier.navigateToDirectory(Directory(location.path));
+                        }
+                      : () {
+                          _showSnackBar(
+                              'This storage location is not accessible');
+                        },
+                );
+              }),
             const SizedBox(height: 20),
           ],
         ),
