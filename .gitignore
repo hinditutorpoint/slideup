@@ -1,8 +1,15 @@
-# Miscellaneous
+# -----------------------------------------------------------------------------
+# General / Miscellaneous
+# -----------------------------------------------------------------------------
 *.class
 *.log
 *.pyc
 *.swp
+*~
+*.bak
+*.backup
+*.tmp
+*.temp
 .DS_Store
 .atom/
 .build/
@@ -10,41 +17,110 @@
 .history
 .svn/
 .swiftpm/
-.vscode/
 migrate_working_dir/
+build_error.log
 
-# IntelliJ related
+# -----------------------------------------------------------------------------
+# Security & Signing Keys (CRITICAL FOR PUBLIC REPOS)
+# -----------------------------------------------------------------------------
+*.keystore
+*.jks
+*.p12
+*.pem
+*.cer
+*.crt
+*.key
+**/my-release-key.keystore
+**/upload-keystore.jks
+keystore.txt
+key.properties
+**/key.properties
+**/local.properties
+android/local.properties
+android/key.properties
+android/upload-keystore.jks
+android/app/*.keystore
+android/app/*.jks
+android/app/my-release-key.keystore
+
+# Sensitive configuration / Secrets
+.env
+.env.*
+*.env
+google-services.json
+GoogleService-Info.plist
+
+# -----------------------------------------------------------------------------
+# IDEs and Editors
+# -----------------------------------------------------------------------------
+# IntelliJ IDEA / Android Studio
 *.iml
 *.ipr
 *.iws
 .idea/
+.gradle/
+.kotlin/
+slideup_android.iml
+slideup.iml
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-.vscode/launch.json
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 
-# Flutter/Dart/Pub related
+# -----------------------------------------------------------------------------
+# Flutter / Dart / Pub
+# -----------------------------------------------------------------------------
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
 /build/
+build/
+android/build/
+android/app/build/
 
-# Symbolication related
+# Symbolication & Obfuscation
 app.*.symbols
-
-# Obfuscation related
 app.*.map.json
 
-keystore.txt
-upload-keystore.jks
-android/gradle.properties
+# Code Coverage
+coverage/
+*.lcov
 
-# Android Studio will place build artifacts here
+# -----------------------------------------------------------------------------
+# Android Build Outputs & Captures
+# -----------------------------------------------------------------------------
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/captures/
+.cxx/
+android/.cxx/
+android/.gradle/
+android/app/.cxx/
+
+# -----------------------------------------------------------------------------
+# iOS / macOS
+# -----------------------------------------------------------------------------
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.framework
+**/macos/Pods/
+**/macos/.symlinks/
+**/macos/Flutter/ephemeral/
+
+# -----------------------------------------------------------------------------
+# Windows / Linux
+# -----------------------------------------------------------------------------
+**/windows/flutter/ephemeral/
+**/linux/flutter/ephemeral/

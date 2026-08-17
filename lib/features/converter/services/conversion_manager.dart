@@ -547,20 +547,32 @@ class ConversionManager {
 
   Future<bool> _checkDiskSpace(ConversionJob job) async {
     try {
-      final free = (await DiskSpacePlus().getFreeDiskSpace ?? 0).round();
-      final sourceSize = await File(job.sourcePath).length();
-      final estimate =
+      // DiskSpacePlus.getFreeDiskSpace returns free space in MEGABYTES (MB).
+      // File.length() returns size in BYTES.
+      // Convert free MB → bytes before comparing to avoid a unit-mismatch
+      // false-positive ("Not enough space") that always fired previously.
+      final freeMb = await DiskSpacePlus().getFreeDiskSpace ?? 0;
+      final freeBytes = (freeMb * 1024 * 1024).round(); // MB → bytes
+
+      final sourceSize = await File(job.sourcePath).length(); // bytes
+      final estimateBytes =
           (sourceSize * ConverterConstants.outputSizeEstimateFactor).ceil();
-      if (free > 0 && estimate > free) {
+
+      // Always keep at least 50 MB free as a safety buffer.
+      const safetyBufferBytes = 50 * 1024 * 1024;
+      final needed = estimateBytes + safetyBufferBytes;
+
+      if (freeBytes > 0 && needed > freeBytes) {
         await _fail(
           job,
-          'Not enough free disk space. Need ~${_humanBytes(estimate)} but '
-          'only ${_humanBytes(free)} is available.',
+          'Not enough free disk space. Need ~${_humanBytes(needed)} but '
+          'only ${_humanBytes(freeBytes)} is available.',
         );
         return false;
       }
       return true;
     } catch (_) {
+      // If we can't determine disk space, let FFmpeg try anyway.
       return true;
     }
   }

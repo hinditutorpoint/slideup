@@ -711,7 +711,7 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
           return ThumbnailGridItem(
             thumbnail: thumb,
             identifier: _identifier,
-            isFavorite: false,
+            isFavorite: state.isThumbnailLiked(thumb.name),
             onTap: () => _viewImage(thumb),
             onDownload: () => _downloadImage(thumb),
             onShare: () => _shareImage(thumb),
@@ -736,7 +736,7 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
           return ThumbnailListItem(
             thumbnail: thumb,
             identifier: _identifier,
-            isFavorite: false,
+            isFavorite: state.isThumbnailLiked(thumb.name),
             onTap: () => _viewImage(thumb),
             onDownload: () => _downloadImage(thumb),
             onShare: () => _shareImage(thumb),
@@ -958,14 +958,17 @@ class _PdfMetaScreenState extends ConsumerState<PdfMetaScreen>
 
   Future<void> _toggleFavorite(ThumbnailFile thumb) async {
     try {
-      await SharePlus.instance.share(
-        ShareParams(
-          title: 'Share Archive Url',
-          uri: Uri.parse(thumb.getUrl(_identifier)),
-        ),
+      final wasLiked = ref
+          .read(pdfMetadataNotifierProvider(_identifier))
+          .isThumbnailLiked(thumb.name);
+      ref
+          .read(pdfMetadataNotifierProvider(_identifier).notifier)
+          .toggleThumbnailLike(thumb.name);
+      _showSnackBar(
+        wasLiked ? 'Removed from favorites' : 'Added to favorites',
       );
     } catch (e) {
-      _showSnackBar('Error sharing');
+      _showSnackBar('Failed to update favorite status');
     }
   }
 

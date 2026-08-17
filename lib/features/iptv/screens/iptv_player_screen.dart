@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -280,46 +281,68 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   }
 
   Widget _buildChannelPanel(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final entries = _visibleGroups;
     final groups = _groups;
     final languages = _languages;
     final showLangFilter = languages.length > 1;
 
+    // Premium dark TV panel colours
+    const panelBg = Color(0xFF0D0D14);
+    const panelSurface = Color(0xFF13131F);
+    const accent = Color(0xFF6C63FF);
+    const accentGlow = Color(0x406C63FF);
+    const dividerColor = Color(0xFF1E1E2E);
+
     return Container(
       height: MediaQuery.sizeOf(context).height * 0.6,
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
+      decoration: const BoxDecoration(
+        color: panelBg,
         border: Border(
-          top: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-          ),
+          top: BorderSide(color: Color(0xFF1E1E2E), width: 1),
         ),
       ),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 8, 0),
+          // ── Header ────────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 8, 4),
+            decoration: const BoxDecoration(
+              color: panelSurface,
+              border: Border(
+                bottom: BorderSide(color: dividerColor),
+              ),
+            ),
             child: Row(
               children: [
+                // Coloured accent bar
+                Container(
+                  width: 3,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: BorderRadius.circular(2),
+                    boxShadow: const [BoxShadow(color: accentGlow, blurRadius: 6)],
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Text(
                   switch (_tab) {
-                    _PanelTab.channels => 'Channels',
-                    _PanelTab.favorites => 'Favorites',
-                    _PanelTab.watching => 'My Watching',
+                    _PanelTab.channels  => 'Channels',
+                    _PanelTab.favorites => 'Favourites',
+                    _PanelTab.watching  => 'Recently Watched',
                   },
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
                   ),
                 ),
                 const Spacer(),
-                IconButton(
-                  tooltip: 'Search',
-                  icon: Icon(
-                    _searchOpen ? Icons.close : Icons.search,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  onPressed: () => setState(() {
+                // Search toggle
+                _TvIconButton(
+                  icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
+                  onTap: () => setState(() {
                     _searchOpen = !_searchOpen;
                     if (!_searchOpen) {
                       _searchCtrl.clear();
@@ -330,121 +353,147 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
               ],
             ),
           ),
+
+          // ── Search bar ────────────────────────────────────────────────────
           if (_searchOpen)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            Container(
+              color: panelSurface,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
               child: TextField(
                 controller: _searchCtrl,
                 autofocus: true,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                cursorColor: accent,
                 decoration: InputDecoration(
                   hintText: 'Search channels…',
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 13),
                   isDense: true,
-                  prefixIcon: const Icon(Icons.search, size: 20),
+                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: accent),
                   filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  fillColor: const Color(0xFF1A1A2B),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF2A2A3F)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF2A2A3F)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: accent),
                   ),
                 ),
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),
+
+          // ── Category filter chips ─────────────────────────────────────────
           if (!_searchOpen && _tab == _PanelTab.channels && groups.isNotEmpty)
             SizedBox(
-              height: 42,
+              height: 40,
               child: ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 scrollDirection: Axis.horizontal,
                 itemCount: groups.length + 1,
                 separatorBuilder: (_, __) => const SizedBox(width: 6),
                 itemBuilder: (context, i) {
                   final isAll = i == 0;
-                  final group = isAll ? '' : groups[i - 1];
-                  final selected = group == _selectedGroup;
-                  return ChoiceChip(
-                    label: Text(
-                      isAll ? 'All' : group,
-                      style: const TextStyle(fontSize: 11),
-                    ),
+                  final grp   = isAll ? '' : groups[i - 1];
+                  final selected = grp == _selectedGroup;
+                  return _TvFilterChip(
+                    label: isAll ? 'All' : grp,
                     selected: selected,
-                    onSelected: (_) => setState(() => _selectedGroup = group),
-                    visualDensity: VisualDensity.compact,
-                    selectedColor: colorScheme.primaryContainer,
+                    onTap: () => setState(() => _selectedGroup = grp),
+                    accent: accent,
                   );
                 },
               ),
             ),
+
+          // ── Language filter chips ─────────────────────────────────────────
           if (!_searchOpen && showLangFilter && groups.isNotEmpty)
             SizedBox(
-              height: 40,
+              height: 38,
               child: ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 2,
-                ),
+                padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
                 scrollDirection: Axis.horizontal,
                 itemCount: languages.length + 1,
                 separatorBuilder: (_, __) => const SizedBox(width: 6),
                 itemBuilder: (context, i) {
                   final isAll = i == 0;
-                  final lang = isAll ? '' : languages[i - 1];
+                  final lang  = isAll ? '' : languages[i - 1];
                   final selected = lang == _selectedLanguage;
-                  return ChoiceChip(
-                    avatar: isAll ? const Icon(Icons.language, size: 13) : null,
-                    label: Text(
-                      isAll ? 'All languages' : lang,
-                      style: const TextStyle(fontSize: 11),
-                    ),
+                  return _TvFilterChip(
+                    label: isAll ? '🌐  All' : lang,
                     selected: selected,
-                    onSelected: (_) => setState(() => _selectedLanguage = lang),
-                    visualDensity: VisualDensity.compact,
-                    selectedColor: colorScheme.secondaryContainer,
+                    onTap: () => setState(() => _selectedLanguage = lang),
+                    accent: const Color(0xFF00C9A7),
                   );
                 },
               ),
             ),
-          const Divider(height: 1),
+
+          const SizedBox(height: 1),
+
+          // ── Channel list ─────────────────────────────────────────────────
           Expanded(
             child: entries.isEmpty
                 ? Center(
-                    child: Text(switch (_tab) {
-                      _PanelTab.favorites => 'No favorite channels yet',
-                      _PanelTab.watching =>
-                        'Nothing watched yet — start playing',
-                      _PanelTab.channels => 'No channels found',
-                    }, style: TextStyle(color: colorScheme.onSurfaceVariant)),
-                  )
-                : ListView.separated(
-                    controller: _scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 16),
-                    itemCount: entries.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 4),
-                    itemBuilder: (context, i) {
-                      final entry = entries[i];
-                      final globalIndex = _channelGroups.indexOf(entry);
-                      final selected = globalIndex == _index;
-                      final selectedVariant =
-                          _selectedVariant[entry.baseName] ?? 0;
-                      return _ChannelTile(
-                        key: selected ? _currentTileKey : null,
-                        channel: entry.variants[selectedVariant],
-                        displayName: entry.baseName,
-                        variantCount: entry.variants.length,
-                        selected: selected,
-                        isFavorite: entry.variants.any(
-                          (c) => _favoriteIds.contains(c.id),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          switch (_tab) {
+                            _PanelTab.favorites => Icons.favorite_border_rounded,
+                            _PanelTab.watching  => Icons.history_rounded,
+                            _PanelTab.channels  => Icons.search_off_rounded,
+                          },
+                          size: 40,
+                          color: Colors.white24,
                         ),
-                        onToggleFavorite: () => _toggleFavoriteGroup(entry),
-                        onTap: () => _switchTo(globalIndex),
+                        const SizedBox(height: 10),
+                        Text(
+                          switch (_tab) {
+                            _PanelTab.favorites => 'No favourite channels yet',
+                            _PanelTab.watching  => 'Nothing watched yet',
+                            _PanelTab.channels  => 'No channels found',
+                          },
+                          style: const TextStyle(color: Colors.white38, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollCtrl,
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                    itemCount: entries.length,
+                    itemBuilder: (context, i) {
+                      final entry       = entries[i];
+                      final globalIndex = _channelGroups.indexOf(entry);
+                      final selected    = globalIndex == _index;
+                      final selVariant  = _selectedVariant[entry.baseName] ?? 0;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _ChannelTile(
+                          key: selected ? _currentTileKey : null,
+                          channel: entry.variants[selVariant],
+                          displayName: entry.baseName,
+                          variantCount: entry.variants.length,
+                          selected: selected,
+                          isFavorite: entry.variants.any(
+                            (c) => _favoriteIds.contains(c.id),
+                          ),
+                          onToggleFavorite: () => _toggleFavoriteGroup(entry),
+                          onTap: () => _switchTo(globalIndex),
+                        ),
                       );
                     },
                   ),
           ),
+
+          // ── Bottom tab bar ────────────────────────────────────────────────
           _CurvedTabBar(
             index: _tab.index,
             onTap: (i) => setState(() {
@@ -462,6 +511,79 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   }
 }
 
+// ─── Premium TV Filter Chip ────────────────────────────────────────────────────
+class _TvFilterChip extends StatelessWidget {
+  const _TvFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    required this.accent,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? accent.withValues(alpha: 0.18) : const Color(0xFF1A1A2B),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? accent : const Color(0xFF2A2A3F),
+            width: selected ? 1.2 : 1,
+          ),
+          boxShadow: selected
+              ? [BoxShadow(color: accent.withValues(alpha: 0.25), blurRadius: 8)]
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? accent : Colors.white54,
+            fontSize: 11,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Small TV Icon Button ──────────────────────────────────────────────────────
+class _TvIconButton extends StatelessWidget {
+  const _TvIconButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        margin: const EdgeInsets.only(right: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A2B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF2A2A3F)),
+        ),
+        child: Icon(icon, size: 18, color: Colors.white70),
+      ),
+    );
+  }
+}
+
+// ─── Premium Channel Tile ──────────────────────────────────────────────────────
 class _ChannelTile extends StatelessWidget {
   const _ChannelTile({
     super.key,
@@ -482,93 +604,212 @@ class _ChannelTile extends StatelessWidget {
   final VoidCallback onToggleFavorite;
   final VoidCallback onTap;
 
+  static const _accent = Color(0xFF6C63FF);
+  static const _accentGlow = Color(0x406C63FF);
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      elevation: 0,
-      color: selected
-          ? colorScheme.primaryContainer.withValues(alpha: 0.5)
-          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: selected
-              ? colorScheme.primary
-              : colorScheme.outlineVariant.withValues(alpha: 0.35),
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1A1730) : const Color(0xFF131320),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? _accent : const Color(0xFF1F1F32),
+            width: selected ? 1.4 : 1,
+          ),
+          boxShadow: selected
+              ? [
+                  const BoxShadow(
+                    color: _accentGlow,
+                    blurRadius: 14,
+                    spreadRadius: -2,
+                  )
+                ]
+              : null,
         ),
-      ),
-      child: ListTile(
-        dense: true,
-        onTap: onTap,
-        leading: _ChannelLogo(channel: channel),
-        title: Row(
-          children: [
-            Flexible(
-              child: Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: selected ? FontWeight.bold : FontWeight.w500,
-                ),
-              ),
-            ),
-            if (selected) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: colorScheme.error,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: const Text(
-                  'LIVE',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 8,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: Stack(
+            children: [
+              // Left accent strip for selected
+              if (selected)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 3,
+                    decoration: const BoxDecoration(
+                      color: _accent,
+                      boxShadow: [BoxShadow(color: _accentGlow, blurRadius: 6)],
+                    ),
                   ),
+                ),
+              Padding(
+                padding: EdgeInsets.only(
+                  left: selected ? 14 : 10,
+                  right: 6,
+                  top: 8,
+                  bottom: 8,
+                ),
+                child: Row(
+                  children: [
+                    // Channel logo
+                    _ChannelLogo(channel: channel, selected: selected),
+                    const SizedBox(width: 10),
+
+                    // Channel info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              // LIVE badge
+                              if (selected) ...[
+                                _LiveBadge(),
+                                const SizedBox(width: 6),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  displayName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: selected ? Colors.white : Colors.white70,
+                                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                                    fontSize: 13,
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (channel.group.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              channel.group,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: selected
+                                    ? _accent.withValues(alpha: 0.8)
+                                    : Colors.white38,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    // Trailing: favourite + playing indicator
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: onToggleFavorite,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 300),
+                              child: Icon(
+                                isFavorite
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                key: ValueKey(isFavorite),
+                                size: 17,
+                                color: isFavorite
+                                    ? const Color(0xFFEF4444)
+                                    : Colors.white30,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (selected)
+                          _PlayingIndicator(color: _accent)
+                        else
+                          const Padding(
+                            padding: EdgeInsets.all(6),
+                            child: Icon(
+                              Icons.play_circle_outline_rounded,
+                              size: 18,
+                              color: Colors.white24,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ],
-          ],
+          ),
         ),
-        subtitle: channel.group.isEmpty
-            ? null
-            : Text(
-                channel.group,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11),
-              ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: isFavorite
-                  ? 'Remove from favorites'
-                  : 'Add to favorites',
-              icon: Icon(
-                isFavorite ? Icons.favorite : Icons.favorite_border,
-                size: 18,
-                color: isFavorite
-                    ? colorScheme.error
-                    : colorScheme.onSurfaceVariant,
-              ),
-              onPressed: onToggleFavorite,
+      ),
+    );
+  }
+}
+
+// ─── Pulsing LIVE Badge ────────────────────────────────────────────────────────
+class _LiveBadge extends StatefulWidget {
+  const _LiveBadge();
+
+  @override
+  State<_LiveBadge> createState() => _LiveBadgeState();
+}
+
+class _LiveBadgeState extends State<_LiveBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _fade = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _fade,
+      builder: (_, __) => Opacity(
+        opacity: _fade.value,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEF4444),
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: const [
+              BoxShadow(color: Color(0x60EF4444), blurRadius: 6),
+            ],
+          ),
+          child: const Text(
+            '⬤  LIVE',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 7.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
             ),
-            if (selected)
-              _PlayingIndicator(color: colorScheme.primary)
-            else
-              Icon(
-                Icons.play_circle_outline,
-                color: colorScheme.onSurfaceVariant,
-              ),
-          ],
+          ),
         ),
       ),
     );
@@ -576,38 +817,60 @@ class _ChannelTile extends StatelessWidget {
 }
 
 class _ChannelLogo extends StatelessWidget {
-  const _ChannelLogo({required this.channel});
+  const _ChannelLogo({required this.channel, this.selected = false});
 
   final IptvChannel channel;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    const accent = Color(0xFF6C63FF);
     final logo = channel.logo;
+
     final fallback = Container(
-      width: 52,
-      height: 34,
+      width: 48,
+      height: 36,
       decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(6),
+        gradient: LinearGradient(
+          colors: selected
+              ? [const Color(0xFF2A2560), const Color(0xFF1A1730)]
+              : [const Color(0xFF1E1E30), const Color(0xFF131320)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: selected ? accent.withValues(alpha: 0.5) : const Color(0xFF2A2A3F),
+        ),
       ),
       child: Icon(
-        channel.audioOnly ? Icons.radio : Icons.live_tv,
+        channel.audioOnly ? Icons.radio_rounded : Icons.live_tv_rounded,
         size: 18,
-        color: colorScheme.onSecondaryContainer,
+        color: selected ? accent : Colors.white30,
       ),
     );
+
     if (logo == null || logo.isEmpty) return fallback;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: SizedBox(
-        width: 52,
-        height: 34,
-        child: Image.network(
-          logo,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => fallback,
+
+    return Container(
+      width: 48,
+      height: 36,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: selected ? accent : const Color(0xFF2A2A3F),
+          width: selected ? 1.4 : 1,
         ),
+        boxShadow: selected
+            ? [const BoxShadow(color: Color(0x406C63FF), blurRadius: 8)]
+            : null,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.network(
+        logo,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => fallback,
       ),
     );
   }
@@ -747,86 +1010,73 @@ String _qualityLabel(IptvChannel c) {
   return m == null ? 'Auto' : m.group(1)!.toUpperCase();
 }
 
-/// Curved bottom tab bar with labels, styled to match the home screen's
-/// `CurvedNavigationBar` (primary circular button, transparent background).
+/// Premium dark TV-style bottom tab bar
 class _CurvedTabBar extends StatelessWidget {
   const _CurvedTabBar({required this.index, required this.onTap});
 
   final int index;
   final ValueChanged<int> onTap;
 
+  static const _accent = Color(0xFF6C63FF);
+
   static const _tabs = [
-    (
-      icon: Icons.live_tv_outlined,
-      selectedIcon: Icons.live_tv,
-      label: 'Channels',
-    ),
-    (
-      icon: Icons.favorite_outline,
-      selectedIcon: Icons.favorite,
-      label: 'Favorites',
-    ),
-    (
-      icon: Icons.history_outlined,
-      selectedIcon: Icons.history,
-      label: 'Watching',
-    ),
+    (icon: Icons.live_tv_outlined,   selectedIcon: Icons.live_tv_rounded,    label: 'Channels'),
+    (icon: Icons.favorite_outline,   selectedIcon: Icons.favorite_rounded,   label: 'Favourites'),
+    (icon: Icons.history_outlined,   selectedIcon: Icons.history_rounded,    label: 'Watching'),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return SafeArea(
       top: false,
       child: Container(
-        height: 60,
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          border: Border(
-            top: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-            ),
-          ),
+        height: 62,
+        decoration: const BoxDecoration(
+          color: Color(0xFF0D0D14),
+          border: Border(top: BorderSide(color: Color(0xFF1E1E2E))),
         ),
         child: Row(
           children: [
             for (var i = 0; i < _tabs.length; i++)
               Expanded(
-                child: InkWell(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: () => onTap(i),
-                  borderRadius: BorderRadius.circular(12),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        width: 42,
-                        height: 32,
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        width: 46,
+                        height: 30,
                         decoration: BoxDecoration(
                           color: i == index
-                              ? colorScheme.primary
+                              ? _accent.withValues(alpha: 0.18)
                               : Colors.transparent,
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(10),
+                          border: i == index
+                              ? Border.all(color: _accent.withValues(alpha: 0.4))
+                              : null,
+                          boxShadow: i == index
+                              ? [const BoxShadow(color: Color(0x306C63FF), blurRadius: 10)]
+                              : null,
                         ),
                         child: Icon(
                           i == index ? _tabs[i].selectedIcon : _tabs[i].icon,
-                          size: 22,
-                          color: i == index
-                              ? colorScheme.onPrimary
-                              : colorScheme.onSurfaceVariant,
+                          size: 19,
+                          color: i == index ? _accent : Colors.white30,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _tabs[i].label,
+                      const SizedBox(height: 3),
+                      AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
                         style: TextStyle(
                           fontSize: 10,
-                          fontWeight: i == index
-                              ? FontWeight.w600
-                              : FontWeight.w500,
-                          color: i == index
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
+                          fontWeight: i == index ? FontWeight.w700 : FontWeight.w400,
+                          color: i == index ? _accent : Colors.white30,
+                          letterSpacing: 0.3,
                         ),
+                        child: Text(_tabs[i].label),
                       ),
                     ],
                   ),

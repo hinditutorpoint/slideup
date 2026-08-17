@@ -79,9 +79,10 @@ class _PdfSearchScreenState extends ConsumerState<PdfSearchScreen> {
 
   void _likePdf(ArchiveItem item) {
     try {
+      final wasLiked = item.isLiked;
       ref.read(pdfSearchProvider.notifier).toggleLike(item);
       _showSnackBar(
-        item.isLiked ? 'Removed from favorites' : 'Added to favorites',
+        wasLiked ? 'Removed from favorites' : 'Added to favorites',
       );
     } catch (e) {
       debugPrint('Like error: $e');

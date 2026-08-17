@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
+import '../widgets/privacy_policy_dialog.dart';
 import '../services/permission_service.dart';
 import '../providers/media_provider.dart';
 import 'main_screen.dart';
@@ -39,14 +40,29 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     );
 
     _animationController.forward();
-    _initialize();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initialize();
+    });
   }
 
   Future<void> _initialize() async {
     try {
       setState(() => _statusMessage = 'Starting SlideUp...');
-      setState(() => _progress = 0.4);
+      setState(() => _progress = 0.2);
 
+      // 1. Mandatory First-Launch Privacy Policy & User Agreement consent (OPPO guideline)
+      if (mounted) {
+        final agreed = await PrivacyPolicyManager.ensurePrivacyAgreed(context);
+        if (!agreed) {
+          // User declined consent
+          return;
+        }
+      }
+
+      setState(() => _statusMessage = 'Checking permissions...');
+      setState(() => _progress = 0.5);
+
+      // 2. Request permissions ONLY after privacy policy consent
       await PermissionService.instance.requestPermissions();
       setState(() => _progress = 0.8);
 

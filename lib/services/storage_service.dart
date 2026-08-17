@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/storage_info.dart';
 
 class StorageService {
@@ -12,6 +13,30 @@ class StorageService {
     final locations = <StorageInfo>[];
 
     if (Platform.isAndroid) {
+      // ── Permission check ───────────────────────────────────────────────
+      // On Android 11+ (API 30+) any directory listing throws errno=13
+      // unless MANAGE_EXTERNAL_STORAGE is granted.  We ask here so the
+      // file browser never blindly calls list() without it.
+      final sdkInt = await _androidSdkInt();
+      if (sdkInt >= 30) {
+        final hasAll = await Permission.manageExternalStorage.status.isGranted;
+        if (!hasAll) {
+          await Permission.manageExternalStorage.request();
+          // Re-check; if still not granted, skip all file-system enumeration
+          // to avoid errno=13. Return an empty list so the caller can show
+          // a "Grant permission" prompt instead of crashing.
+          final granted =
+              await Permission.manageExternalStorage.status.isGranted;
+          if (!granted) return locations;
+        }
+      } else if (sdkInt >= 23) {
+        // Android 6–10: plain READ_EXTERNAL_STORAGE is enough
+        final status = await Permission.storage.status;
+        if (status.isDenied) await Permission.storage.request();
+        final granted = await Permission.storage.status.isGranted;
+        if (!granted) return locations;
+      }
+
       // Internal storage
       await _addStorageLocation(
         locations,
@@ -85,7 +110,8 @@ class StorageService {
           // Skip emulated and self directories
           if (dirName == 'emulated' || dirName == 'self') continue;
 
-          // Check if it's accessible
+          // Check if it's accessible — wrap in try/catch so errno=13 on
+          // an individual volume doesn't crash the whole scan.
           try {
             await entity.list().first;
 
@@ -100,11 +126,18 @@ class StorageService {
             }
 
             await _addStorageLocation(locations, entity.path, name, type);
+          } on FileSystemException catch (e) {
+            // errno=13 = EACCES (Permission denied) — silently skip the volume.
+            debugPrint(
+              'Skipping inaccessible storage ${entity.path}: ${e.osError}',
+            );
           } catch (e) {
-            debugPrint('Skipping inaccessible storage: ${entity.path}');
+            debugPrint('Skipping storage ${entity.path}: $e');
           }
         }
       }
+    } on FileSystemException catch (e) {
+      debugPrint('Cannot list /storage: ${e.osError}');
     } catch (e) {
       debugPrint('Error scanning external storage: $e');
     }
@@ -136,5 +169,18 @@ class StorageService {
       debugPrint('Error getting free space: $e');
     }
     return 0;
+  }
+
+  /// Returns the Android SDK integer (e.g. 33 for Android 13).
+  /// Falls back to 0 on non-Android or parse error.
+  Future<int> _androidSdkInt() async {
+    if (!Platform.isAndroid) return 0;
+    try {
+      final version = Platform.operatingSystemVersion;
+      final match = RegExp(r'(\d+)').firstMatch(version);
+      return int.tryParse(match?.group(1) ?? '0') ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 }

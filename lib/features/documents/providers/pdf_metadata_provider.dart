@@ -52,12 +52,14 @@ class PdfMetadataState {
   final PdfMetadata? metadata;
   final String? error;
   final Set<String> likedFiles;
+  final Set<String> likedThumbnails;
 
   const PdfMetadataState({
     this.isLoading = false,
     this.metadata,
     this.error,
     this.likedFiles = const {},
+    this.likedThumbnails = const {},
   });
 
   List<PdfFile> get allFiles => metadata?.documentFiles ?? [];
@@ -114,18 +116,21 @@ class PdfMetadataState {
   }
 
   bool isFileLiked(String fileName) => likedFiles.contains(fileName);
+  bool isThumbnailLiked(String thumbName) => likedThumbnails.contains(thumbName);
 
   PdfMetadataState copyWith({
     bool? isLoading,
     PdfMetadata? metadata,
     String? error,
     Set<String>? likedFiles,
+    Set<String>? likedThumbnails,
   }) {
     return PdfMetadataState(
       isLoading: isLoading ?? this.isLoading,
       metadata: metadata ?? this.metadata,
       error: error,
       likedFiles: likedFiles ?? this.likedFiles,
+      likedThumbnails: likedThumbnails ?? this.likedThumbnails,
     );
   }
 }
@@ -158,6 +163,14 @@ class PdfMetadataNotifier extends StateNotifier<PdfMetadataState> {
         ? newLiked.remove(fileName)
         : newLiked.add(fileName);
     state = state.copyWith(likedFiles: newLiked);
+  }
+
+  void toggleThumbnailLike(String thumbName) {
+    final newLiked = Set<String>.from(state.likedThumbnails);
+    newLiked.contains(thumbName)
+        ? newLiked.remove(thumbName)
+        : newLiked.add(thumbName);
+    state = state.copyWith(likedThumbnails: newLiked);
   }
 
   Future<void> refresh() async => _loadMetadata();

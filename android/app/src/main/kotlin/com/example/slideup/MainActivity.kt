@@ -1,15 +1,17 @@
 package com.slideup.mediaplayer
 
-import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.os.Build
-import android.provider.MediaStore
-import android.app.WallpaperManager
 import android.app.PictureInPictureParams
+import android.app.WallpaperManager
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
-import android.util.Rational
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
+import android.util.Rational
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -33,6 +35,9 @@ class MainActivity : AudioServiceActivity() {
     private var initialIntentPath: String? = null
     private var pendingIntentPath: String? = null
     private var callbackHelper = PipCallbackHelper()
+
+    // Whether PiP auto-enter is currently enabled (set by Flutter when a video is playing)
+    private var pipAutoEnterEnabled = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         // IMPORTANT: Explicitly register all plugins, including Workmanager
@@ -91,7 +96,21 @@ class MainActivity : AudioServiceActivity() {
                     enterPiPMode(result)
                 }
                 "isPiPSupported" -> {
-                    result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    result.success(isPiPSupported())
+                }
+                // Called by Flutter when playback starts/stops so we know
+                // whether to auto-enter PiP when the user presses Home.
+                "setPiPAutoEnter" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    pipAutoEnterEnabled = enabled
+                    // On Android 12+ we can tell the system up-front so it
+                    // can animate the transition without a separate call.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setPictureInPictureParams(
+                            buildPipParams(autoEnter = enabled)
+                        )
+                    }
+                    result.success(true)
                 }
                 else -> result.notImplemented()
             }
@@ -299,28 +318,67 @@ class MainActivity : AudioServiceActivity() {
 
     /* ---------------- Picture-in-Picture ---------------- */
 
-    private fun enterPiPMode(result: MethodChannel.Result) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                val aspectRatio = Rational(16, 9)
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(aspectRatio)
-                    .build()
+    /** Returns true if the device supports PiP (Android 8+). */
+    private fun isPiPSupported(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
 
-                val success = enterPictureInPictureMode(params)
-                result.success(success)
-            } catch (e: Exception) {
-                Log.e(TAG, "PiP error", e)
-                result.error("PIP_ERROR", e.message, null)
-            }
-        } else {
-            result.error("PIP_NOT_SUPPORTED", "PiP requires Android 8.0+", null)
+    /**
+     * Builds a [PictureInPictureParams] with a 16:9 aspect ratio.
+     * On Android 12+ also sets [autoEnter] so the system can smoothly
+     * transition without a separate [enterPictureInPictureMode] call.
+     */
+    private fun buildPipParams(autoEnter: Boolean = false): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(autoEnter)
+        }
+        return builder.build()
+    }
+
+    /**
+     * Explicitly enter PiP (called from Flutter via MethodChannel).
+     * Works on Android 8+ (API 26+).
+     */
+    private fun enterPiPMode(result: MethodChannel.Result) {
+        if (!isPiPSupported()) {
+            result.error("PIP_NOT_SUPPORTED", "PiP requires Android 8.0+ with PiP feature", null)
+            return
+        }
+        try {
+            val success = enterPictureInPictureMode(buildPipParams(autoEnter = false))
+            result.success(success)
+        } catch (e: Exception) {
+            Log.e(TAG, "PiP error", e)
+            result.error("PIP_ERROR", e.message, null)
         }
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+    /**
+     * AUTO-ENTER PiP when the user presses Home or switches apps.
+     * This is the KEY method that was missing — without it PiP only works
+     * when triggered explicitly (e.g. a button tap inside the app).
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (pipAutoEnterEnabled && isPiPSupported()) {
+            Log.d(TAG, "🏠 Home pressed — auto-entering PiP")
+            try {
+                enterPictureInPictureMode(buildPipParams(autoEnter = false))
+            } catch (e: Exception) {
+                Log.e(TAG, "Auto-PiP on home failed", e)
+            }
+        }
+    }
+
+    /** Called by Android when PiP mode changes. Notifies the Flutter layer. */
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         callbackHelper.onPictureInPictureModeChanged(isInPictureInPictureMode)
         Log.d(TAG, if (isInPictureInPictureMode) "✅ Entered PiP" else "❌ Exited PiP")
     }

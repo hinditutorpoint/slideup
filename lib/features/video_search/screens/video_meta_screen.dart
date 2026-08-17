@@ -8,6 +8,7 @@ import '../../../../shared/widgets/error_widget.dart';
 import '../../../../shared/widgets/loading_widget.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
 import '../../../providers/download_providers.dart';
+import '../../private_browser/private_browser_screen.dart';
 import '../models/thumbnail_file.dart';
 import '../models/video_file.dart';
 import '../models/video_item.dart';
@@ -610,6 +611,7 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
     return ThumbnailGridItem(
       thumbnail: thumbnail,
       identifier: _identifier,
+      isFavorite: state.isThumbnailFavorite(thumbnail.name),
       onTap: () => _viewImage(thumbnail),
       onDownload: () => _downloadImage(thumbnail),
       onShare: () => _shareImage(thumbnail),
@@ -746,16 +748,21 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
   }
 
   void _saveRelatedVideo(VideoItem item) {
+    // Capture the CURRENT state before the toggle — the async toggle mutates
+    // item in the provider, so reading item.isSaved after would give the NEW
+    // value, making the snackbar message show the opposite of what happened.
+    final wasSaved = item.isSaved;
     ref.read(videoSearchProvider.notifier).toggleSave(item);
     _showSnackBar(
-      item.isSaved ? 'Removed from saved' : 'Added to saved videos',
+      wasSaved ? 'Removed from saved' : 'Added to saved videos',
     );
   }
 
   void _toggleRelatedLike(VideoItem item) {
+    final wasLiked = item.isLiked;
     ref.read(videoSearchProvider.notifier).toggleLike(item);
     _showSnackBar(
-      item.isLiked ? 'Removed from favorites' : 'Added to favorites',
+      wasLiked ? 'Removed from favorites' : 'Added to favorites',
     );
   }
 
@@ -938,14 +945,13 @@ class _VideoMetaScreenState extends ConsumerState<VideoMetaScreen>
   }
 
   Future<void> _openInBrowser(String url) async {
-    try {
-      /* final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } */
-    } catch (e) {
-      _showSnackBar('Could not open browser');
-    }
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PrivateBrowserScreen(initialUrl: url),
+      ),
+    );
   }
 
   Future<void> _shareVideo() async {

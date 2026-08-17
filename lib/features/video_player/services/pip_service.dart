@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:simple_pip_mode/simple_pip.dart';
 import 'package:simple_pip_mode/aspect_ratio.dart' as sar;
 
@@ -84,18 +85,20 @@ class PiPService {
     }
   }
 
-  /// ✅ AUTO-ENTER (Android 12+)
+  /// ✅ AUTO-ENTER (Android 12+ via simple_pip, Android 8-11 via native channel)
   Future<void> enableAutoNativePiP({int aspectX = 16, int aspectY = 9}) async {
     try {
       if (await SimplePip.isPipAvailable) {
-        // Using setAutoPipMode with AspectRatio class
+        // Android 12+: simple_pip handles autoEnter natively
         sar.AspectRatio aspectRatio = (aspectX, aspectY);
         await _simplePip.setAutoPipMode(
           aspectRatio: aspectRatio,
-          seamlessResize: false, // Defaulting to false for stability
+          seamlessResize: false,
           autoEnter: true,
         );
       }
+      // Android 8–11: tell our Kotlin onUserLeaveHint to enter PiP on Home press
+      await _setNativeAutoEnter(true);
     } catch (e) {
       debugPrint('❌ Auto-PiP Error: $e');
     }
@@ -104,10 +107,21 @@ class PiPService {
   /// ✅ DISABLE AUTO-ENTER
   Future<void> disableAutoNativePiP() async {
     try {
-      // Passing autoEnter: false to disable it
       await _simplePip.setAutoPipMode(autoEnter: false);
+      await _setNativeAutoEnter(false);
     } catch (e) {
       debugPrint('❌ Disable Auto-PiP Error: $e');
+    }
+  }
+
+  /// Notifies the Kotlin [MainActivity] whether to auto-enter PiP
+  /// when the user presses Home (Android 8–11 fallback path).
+  Future<void> _setNativeAutoEnter(bool enabled) async {
+    try {
+      await const MethodChannel('com.slideup.mediaplayer/background_video')
+          .invokeMethod<void>('setPiPAutoEnter', {'enabled': enabled});
+    } catch (e) {
+      debugPrint('⚠️ setPiPAutoEnter channel error: $e');
     }
   }
 

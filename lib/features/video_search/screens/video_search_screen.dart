@@ -90,6 +90,9 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
   }
 
   void _saveVideo(VideoItem item) async {
+    // Capture the CURRENT state before the toggle so the snackbar message
+    // correctly says what action was just performed.
+    final wasSaved = item.isSaved;
     final result = await SafeAsync.run(
       () => ref.read(videoSearchProvider.notifier).toggleSave(item),
       operationName: 'Toggle Save',
@@ -99,7 +102,7 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
     result.when(
       success: (_) {
         _showSnackBar(
-          item.isSaved ? 'Removed from saved' : 'Added to saved videos',
+          wasSaved ? 'Removed from saved' : 'Added to saved videos',
         );
       },
       failure: (error, _) {
@@ -109,6 +112,9 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
   }
 
   void _toggleLike(VideoItem item) async {
+    // Capture the CURRENT state before the toggle so the snackbar message
+    // correctly says what action was just performed.
+    final wasLiked = item.isLiked;
     final result = await SafeAsync.run(
       () => ref.read(videoSearchProvider.notifier).toggleLike(item),
       operationName: 'Toggle Like',
@@ -118,7 +124,7 @@ class _VideoSearchScreenState extends ConsumerState<VideoSearchScreen> {
     result.when(
       success: (_) {
         _showSnackBar(
-          item.isLiked ? 'Removed from favorites' : 'Added to favorites',
+          wasLiked ? 'Removed from favorites' : 'Added to favorites',
         );
       },
       failure: (error, _) {

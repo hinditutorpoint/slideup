@@ -1,11 +1,18 @@
-// ignore_for_file: deprecated_member_use
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../features/video_player/video_player_launcher.dart';
+import '../../../helpers/audio_playback_helper.dart';
+import '../../../models/media_file.dart';
+import '../documents/screens/unified_reader_screen.dart';
+import '../iptv/providers/iptv_providers.dart';
+import '../iptv/screens/iptv_player_screen.dart';
+import '../iptv/services/m3u_parser.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
 
@@ -50,13 +57,13 @@ import 'browser_settings_screen.dart';
 /// History is kept only in memory and discarded when the screen closes.
 ///
 /// See the file-level platform notes above for precise platform guarantees.
-class PrivateBrowserScreen extends StatefulWidget {
+class PrivateBrowserScreen extends ConsumerStatefulWidget {
   final String? initialUrl;
 
   const PrivateBrowserScreen({super.key, this.initialUrl});
 
   @override
-  State<PrivateBrowserScreen> createState() => _PrivateBrowserScreenState();
+  ConsumerState<PrivateBrowserScreen> createState() => _PrivateBrowserScreenState();
 }
 
 // ─── Data model ───────────────────────────────────────────────────────────────
@@ -161,7 +168,7 @@ const _kEnhancedPathSegments = <String>[
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
+class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     with WidgetsBindingObserver {
   // Controllers / keys
   final TextEditingController _urlController = TextEditingController();
@@ -822,7 +829,7 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
                       color: Colors.teal,
                       onPressed: () {
                         Navigator.of(sheetContext).pop();
-                        _playScannedMedia(m.url);
+                        _playScannedMedia(m.url, isVideo: m.isVideo);
                       },
                     ),
                   );
@@ -836,39 +843,176 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
     );
   }
 
-  /// Opens a scanned media URL in the app's video player if it is a playable
-  /// media file, otherwise navigates the WebView to the URL.
-  /// Extensions treated as direct media files (open in the media player).
-  ///
-  /// Mirrors the app-wide media lists in `file_scanner_service.dart`
-  /// (`_videoExtensions` + `_audioExtensions`).
-  static const _kMediaExtensions = [
-    // Video
+  static const _kDocumentExtensions = [
+    '.pdf', '.epub', '.txt', '.doc', '.docx', '.rtf', '.fb2', '.mobi',
+  ];
+
+  static const _kAudioExtensions = [
+    '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.wma', '.opus',
+    '.aiff', '.ape', '.alac', '.wv', '.tta', '.ac3', '.dts', '.mka',
+    '.ra', '.ram', '.oga', '.mogg', '.mid', '.midi', '.mus', '.psf',
+    '.spc', '.m4b', '.amr',
+  ];
+
+  static const _kVideoExtensions = [
     '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.3gp', '.webm',
     '.m4v', '.mpg', '.mpeg', '.ts', '.m3u8', '.mpd', '.f4v', '.vob',
     '.ogv', '.drc', '.gifv', '.mng', '.qt', '.yuv', '.rm', '.rmvb',
     '.asf', '.amv', '.mp2', '.mpe', '.mpv', '.m2v', '.svi', '.3g2',
     '.mxf', '.roq', '.nsv',
-    // Audio
-    '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.wma', '.opus',
-    '.aiff', '.ape', '.alac', '.wv', '.tta', '.ac3', '.dts', '.mka',
-    '.ra', '.ram', '.oga', '.mogg', '.mid', '.midi', '.mus', '.psf',
-    '.spc',
   ];
 
-  /// True when [url] points directly at a playable media file (matched by
-  /// path extension). Query strings and fragments are ignored.
-  static bool _isDirectMediaUrl(Uri uri) {
+  static bool _isM3uUrl(Uri uri) {
     final path = uri.path.toLowerCase();
-    return _kMediaExtensions.any((ext) => path.endsWith(ext));
+    return path.endsWith('.m3u') ||
+        path.endsWith('.m3u_plus') ||
+        path.endsWith('.m3u8_plus');
   }
 
-  Future<void> _playScannedMedia(String url) async {
+  static bool _isDocumentUrl(Uri uri) {
+    final path = uri.path.toLowerCase();
+    return _kDocumentExtensions.any((ext) => path.endsWith(ext));
+  }
+
+  static bool _isAudioUrl(Uri uri) {
+    final path = uri.path.toLowerCase();
+    return _kAudioExtensions.any((ext) => path.endsWith(ext));
+  }
+
+  static bool _isVideoUrl(Uri uri) {
+    final path = uri.path.toLowerCase();
+    return _kVideoExtensions.any((ext) => path.endsWith(ext));
+  }
+
+  static String _getFileNameFromUri(Uri uri, String fallback) {
+    if (uri.pathSegments.isNotEmpty && uri.pathSegments.last.isNotEmpty) {
+      try {
+        return Uri.decodeComponent(uri.pathSegments.last);
+      } catch (_) {
+        return uri.pathSegments.last;
+      }
+    }
+    return fallback;
+  }
+
+  /// Intercepts and handles M3U Playlists, Documents (PDF/EPUB/TXT), Audio (MP3/etc), and Video.
+  /// Returns true if the URL was handled.
+  bool _handleSpecialUrl(Uri uri) {
+    if (!mounted) return false;
+    final urlStr = uri.toString();
+
+    // 1. M3U / IPTV Playlist files -> Parse and open in IPTV Player
+    if (_isM3uUrl(uri)) {
+      final fileName = _getFileNameFromUri(uri, 'IPTV Playlist');
+      _openM3uPlaylist(urlStr, fileName);
+      return true;
+    }
+
+    // 2. Documents (PDF, EPUB, TXT, etc.) -> Open in UnifiedReaderScreen
+    if (_isDocumentUrl(uri)) {
+      final fileName = _getFileNameFromUri(uri, 'Document');
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => UnifiedReaderScreen(
+            documentUrl: urlStr,
+            title: fileName,
+          ),
+        ),
+      );
+      _showSnack('Opening $fileName in reader');
+      return true;
+    }
+
+    // 3. Audio files (MP3, WAV, FLAC, etc.) -> Open in Audio Player
+    if (_isAudioUrl(uri)) {
+      final fileName = _getFileNameFromUri(uri, 'Audio Stream');
+      final mediaFile = MediaFile(
+        id: urlStr,
+        name: fileName,
+        path: urlStr,
+        displayPath: urlStr,
+        type: MediaType.audio,
+        size: 0,
+        dateModified: DateTime.now(),
+        dateAdded: DateTime.now(),
+      );
+      AudioPlaybackHelper.playAudio(ref, mediaFile, [mediaFile]);
+      _showSnack('Playing $fileName in audio player');
+      return true;
+    }
+
+    // 4. Video files -> Open in Video Player
+    if (_isVideoUrl(uri)) {
+      VideoPlayerLauncher.smart(source: urlStr, context: context);
+      return true;
+    }
+
+    return false;
+  }
+
+  Future<void> _openM3uPlaylist(String url, String name) async {
+    _showSnack('Loading IPTV playlist: $name...');
+    try {
+      final datasource = ref.read(iptvDatasourceProvider);
+      final content = await datasource.fetchM3uUrl(url);
+      final playlistId = const Uuid().v4().replaceAll('-', '');
+      final channels = M3uParser.parse(content: content, playlistId: playlistId);
+
+      if (!mounted) return;
+      if (channels.isNotEmpty) {
+        // Persist to IPTV playlists database in background
+        unawaited(
+          ref.read(iptvPlaylistsProvider.notifier).addFromUrl(
+                url: url,
+                name: name,
+              ),
+        );
+
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => IptvPlayerScreen(
+              channels: channels,
+              playlistName: name,
+              startIndex: 0,
+            ),
+          ),
+        );
+      } else {
+        VideoPlayerLauncher.smart(source: url, context: context);
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnack('Opening stream in video player...');
+        VideoPlayerLauncher.smart(source: url, context: context);
+      }
+    }
+  }
+
+  Future<void> _playScannedMedia(String url, {bool isVideo = true}) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
 
     if (uri.scheme == 'http' || uri.scheme == 'https') {
-      if (_isDirectMediaUrl(uri)) {
+      if (_handleSpecialUrl(uri)) {
+        return;
+      }
+
+      if (!isVideo) {
+        final fileName = _getFileNameFromUri(uri, 'Audio Stream');
+        final mediaFile = MediaFile(
+          id: url,
+          name: fileName,
+          path: url,
+          displayPath: url,
+          type: MediaType.audio,
+          size: 0,
+          dateModified: DateTime.now(),
+          dateAdded: DateTime.now(),
+        );
+        AudioPlaybackHelper.playAudio(ref, mediaFile, [mediaFile]);
+        _showSnack('Playing $fileName in audio player');
+        return;
+      } else {
         await VideoPlayerLauncher.smart(source: url, context: context);
         return;
       }
@@ -1202,6 +1346,12 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
 
         _recordNavigation(urlStr);
       },
+      onDownloadStartRequest: (controller, downloadStartRequest) async {
+        final uri = downloadStartRequest.url.uriValue;
+        if (_handleSpecialUrl(uri)) {
+          return;
+        }
+      },
       shouldOverrideUrlLoading: (controller, navigationAction) async {
         final url = navigationAction.request.url;
         if (url == null) return NavigationActionPolicy.ALLOW;
@@ -1222,11 +1372,8 @@ class _PrivateBrowserScreenState extends State<PrivateBrowserScreen>
           return NavigationActionPolicy.CANCEL;
         }
 
-        // Direct media file → open in the app media player instead of the WebView.
-        if (isMainFrame && _isDirectMediaUrl(url)) {
-          if (mounted) {
-            _playScannedMedia(url.toString());
-          }
+        // Handle direct documents (PDF, EPUB, TXT), Audio, and Video files.
+        if (isMainFrame && _handleSpecialUrl(url.uriValue)) {
           return NavigationActionPolicy.CANCEL;
         }
 
