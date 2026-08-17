@@ -199,6 +199,8 @@ SlideUp requests only essential Android permissions:
 
 ---
 
-## 📄 License
+## 📄 License & Intellectual Property
 
-This project is licensed under the MIT License — see the [LICENSE](file:///D:/flutterapp/slideup/slideup/LICENSE) file for details.
+Copyright (c) 2026 SlideUp Project (hinditutorpoint). All rights reserved.
+
+This project is licensed under a **Restricted Source-Available License**. You may inspect and evaluate the source code for personal and educational purposes, but you may **NOT** clone, re-brand, distribute, or publish this software on any app store (Google Play, OPPO App Market, etc.) without express written permission. See the [LICENSE](file:///D:/flutterapp/slideup/slideup/LICENSE) file for complete terms.
