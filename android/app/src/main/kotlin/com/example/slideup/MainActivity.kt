@@ -1,14 +1,23 @@
 package com.slideup.mediaplayer
 
+import android.app.Activity
 import android.app.PictureInPictureParams
+import android.app.PendingIntent
+import android.app.RemoteAction
 import android.app.WallpaperManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.graphics.Rect
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Rational
@@ -29,12 +38,57 @@ class MainActivity : AudioServiceActivity() {
         private const val INTENT_METHOD_CHANNEL = "com.slideup.mediaplayer/intent"
         private const val INTENT_STREAM_CHANNEL = "com.slideup.mediaplayer/intent_stream"
         private const val BACKGROUND_VIDEO_CHANNEL = "com.slideup.mediaplayer/background_video"
+        private const val SAF_CHANNEL = "com.slideup.mediaplayer/saf"
+        private const val SAF_TREE_REQUEST = 4001
+
+        private const val PIP_ACTION_BROADCAST = "com.slideup.mediaplayer.PIP_ACTION"
+        private const val PIP_ACTION_PLAY_PAUSE = "play_pause"
+        private const val PIP_ACTION_PREVIOUS = "previous"
+        private const val PIP_ACTION_NEXT = "next"
     }
 
     private var intentSink: EventChannel.EventSink? = null
     private var initialIntentPath: String? = null
     private var pendingIntentPath: String? = null
     private var callbackHelper = PipCallbackHelper()
+
+    // Channel used to push native PiP action taps down to Flutter.
+    private var backgroundChannel: MethodChannel? = null
+
+    // SAF (Storage Access Framework): lets us delete files on removable
+    // volumes (USB OTG / SD card) that block raw file-path writes on old
+    // Android versions. Tree URIs are persisted per volume in SharedPreferences.
+    private var safPendingResult: MethodChannel.Result? = null
+    private val safPrefs: SharedPreferences by lazy {
+        getSharedPreferences("saf_trees", Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Receives PiP menu button taps (PendingIntent broadcasts registered in
+     * [buildPipActions]) and forwards them to Flutter so playback can be
+     * controlled from the OS PiP window while the app is backgrounded.
+     */
+    private val pipActionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.getStringExtra("action") ?: return
+            Log.d(TAG, "🖱️ PiP action received: $action")
+            backgroundChannel?.invokeMethod(
+                "pipAction", action,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {}
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?
+                    ) {
+                        Log.e(TAG, "pipAction channel error: $errorCode $errorMessage")
+                    }
+
+                    override fun notImplemented() {}
+                }
+            )
+        }
+    }
 
     // Whether PiP auto-enter is currently enabled (set by Flutter when a video is playing)
     private var pipAutoEnterEnabled = false
@@ -51,6 +105,7 @@ class MainActivity : AudioServiceActivity() {
         setupIntentMethodChannel(flutterEngine)
         setupIntentEventChannel(flutterEngine)
         setupWallpaperChannel(flutterEngine)
+        setupSafChannel(flutterEngine)
         callbackHelper.configureFlutterEngine(flutterEngine)
 
         // Process launch intent
@@ -70,10 +125,12 @@ class MainActivity : AudioServiceActivity() {
 
     /* ---------------- Background Video Channel ---------------- */
     private fun setupBackgroundVideoChannel(flutterEngine: FlutterEngine) {
-        MethodChannel(
+        val channel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             BACKGROUND_VIDEO_CHANNEL
-        ).setMethodCallHandler { call, result ->
+        )
+        backgroundChannel = channel
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "enableBackgroundPlayback" -> {
                     try {
@@ -223,11 +280,143 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    /* ---------------- SAF Channel ---------------- */
+
+    private fun setupSafChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SAF_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // Deletes a file on a removable volume via SAF.
+                // Returns "ok" | "error" | "needs_tree".
+                "deleteFile" -> {
+                    val filePath = call.argument<String>("path")
+                    if (filePath == null) {
+                        result.error("INVALID_PATH", "File path is null", null)
+                        return@setMethodCallHandler
+                    }
+                    val rootId = removableRootIdForPath(filePath)
+                    if (rootId == null) {
+                        result.error("NOT_REMOVABLE", "Not a removable volume path: $filePath", null)
+                        return@setMethodCallHandler
+                    }
+                    val treeUriStr = safPrefs.getString("tree_$rootId", null)
+                    if (treeUriStr == null) {
+                        result.success("needs_tree")
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val treeUri = Uri.parse(treeUriStr)
+                        val docUri = DocumentsContract.buildDocumentUri(
+                            treeUri.authority,
+                            documentIdForPath(filePath, rootId)
+                        )
+                        val deleted = DocumentsContract.deleteDocument(contentResolver, docUri)
+                        Log.d(TAG, "🗑️ SAF delete $filePath -> $deleted")
+                        result.success(if (deleted) "ok" else "error")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "SAF delete failed for $filePath", e)
+                        result.error("SAF_ERROR", e.message, null)
+                    }
+                }
+                // Launches the system folder picker so the user can grant
+                // access to a removable volume. Returns the persisted tree
+                // URI, or null if cancelled.
+                "pickTree" -> {
+                    if (safPendingResult != null) {
+                        result.error("PICK_IN_PROGRESS", "A picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    safPendingResult = result
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    intent.addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                    )
+                    try {
+                        startActivityForResult(intent, SAF_TREE_REQUEST)
+                    } catch (e: Exception) {
+                        safPendingResult = null
+                        Log.e(TAG, "Failed to open SAF tree picker", e)
+                        result.error("PICK_ERROR", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** Returns the volume id (e.g. "01A6-5A72") for a removable-storage path, or null. */
+    private fun removableRootIdForPath(filePath: String): String? {
+        if (!filePath.startsWith("/storage/")) return null
+        val rest = filePath.removePrefix("/storage/")
+        val slash = rest.indexOf('/')
+        val segment = if (slash == -1) rest else rest.substring(0, slash)
+        if (segment.isEmpty() || segment.equals("emulated", ignoreCase = true)) return null
+        return segment
+    }
+
+    /** Builds a SAF documentId ("ROOT:relative/path") for a file under a volume root. */
+    private fun documentIdForPath(filePath: String, rootId: String): String {
+        val prefix = "/storage/$rootId/"
+        val relative = if (filePath.startsWith(prefix)) {
+            filePath.removePrefix(prefix)
+        } else {
+            filePath.removePrefix("/storage/$rootId")
+        }
+        return "$rootId:$relative"
+    }
+
+    /** Extracts the volume id from a picked tree URI (…/tree/01A6-5A72%3A). */
+    private fun rootIdFromTreeUri(treeUri: Uri): String? {
+        val last = treeUri.lastPathSegment ?: return null
+        val decoded = Uri.decode(last)
+        return decoded.removeSuffix(":").takeIf { it.isNotEmpty() }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != SAF_TREE_REQUEST) return
+        val pending = safPendingResult
+        safPendingResult = null
+        if (resultCode == Activity.RESULT_OK && data?.data != null) {
+            val treeUri = data.data!!
+            try {
+                contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                val rootId = rootIdFromTreeUri(treeUri)
+                if (rootId != null) {
+                    safPrefs.edit().putString("tree_$rootId", treeUri.toString()).apply()
+                    Log.d(TAG, "🔑 SAF access granted for volume $rootId")
+                }
+                pending?.success(treeUri.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist SAF tree permission", e)
+                pending?.error("PERSIST_ERROR", e.message, null)
+            }
+        } else {
+            pending?.success(null)
+        }
+    }
+
     /* ---------------- Lifecycle Methods ---------------- */
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.d(TAG, "✅ Activity created")
+        val filter = IntentFilter(PIP_ACTION_BROADCAST)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(pipActionReceiver, filter)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -277,6 +466,11 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(pipActionReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "pipActionReceiver already unregistered")
+        }
         intentSink = null
         cleanupTempFiles()
         Log.d(TAG, "❌ Activity destroyed")
@@ -325,17 +519,59 @@ class MainActivity : AudioServiceActivity() {
     }
 
     /**
-     * Builds a [PictureInPictureParams] with a 16:9 aspect ratio.
+     * Builds a [PictureInPictureParams] with a 16:9 aspect ratio and the
+     * media-control actions (previous / play-pause / next).
      * On Android 12+ also sets [autoEnter] so the system can smoothly
      * transition without a separate [enterPictureInPictureMode] call.
      */
     private fun buildPipParams(autoEnter: Boolean = false): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            buildPipActions()?.let { builder.setActions(it) }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setAutoEnterEnabled(autoEnter)
         }
         return builder.build()
+    }
+
+    /**
+     * Registers play/pause + prev/next as PiP menu actions (Android O+).
+     * Tapping them broadcasts [PIP_ACTION_BROADCAST] which [pipActionReceiver]
+     * forwards to Flutter over the background-video channel.
+     */
+    private fun buildPipActions(): List<RemoteAction>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+
+        fun pipAction(
+            iconId: Int,
+            requestCode: Int,
+            title: String,
+            action: String
+        ): RemoteAction {
+            val intent = Intent(PIP_ACTION_BROADCAST)
+                .setPackage(packageName)
+                .putExtra("action", action)
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            return RemoteAction(
+                Icon.createWithResource(this, iconId),
+                title,
+                title,
+                pendingIntent
+            )
+        }
+
+        return listOf(
+            pipAction(android.R.drawable.ic_media_previous, 1001, "Previous", PIP_ACTION_PREVIOUS),
+            pipAction(android.R.drawable.ic_media_play, 1002, "Play / Pause", PIP_ACTION_PLAY_PAUSE),
+            pipAction(android.R.drawable.ic_media_next, 1003, "Next", PIP_ACTION_NEXT)
+        )
     }
 
     /**
@@ -366,10 +602,38 @@ class MainActivity : AudioServiceActivity() {
         if (pipAutoEnterEnabled && isPiPSupported()) {
             Log.d(TAG, "🏠 Home pressed — auto-entering PiP")
             try {
-                enterPictureInPictureMode(buildPipParams(autoEnter = false))
+                val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false))
+                if (!entered) {
+                    Log.w(TAG, "⚠️ enterPictureInPictureMode returned false")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Auto-PiP on home failed", e)
             }
+        }
+    }
+
+    /**
+     * Fallback for OEMs (e.g. Oppo/ColorOS) that never fire onUserLeaveHint.
+     * If playback auto-PiP is enabled and we genuinely left the foreground
+     * (window lost focus), enter PiP shortly after pausing.
+     */
+    override fun onPause() {
+        super.onPause()
+        if (pipAutoEnterEnabled && isPiPSupported() &&
+            !isInPictureInPictureMode() && !isFinishing && !isChangingConfigurations
+        ) {
+            window.decorView.postDelayed({
+                if (pipAutoEnterEnabled && !isInPictureInPictureMode() &&
+                    !isFinishing && !isChangingConfigurations && !window.decorView.hasFocus()
+                ) {
+                    Log.d(TAG, "📺 onPause fallback — entering PiP")
+                    try {
+                        enterPictureInPictureMode(buildPipParams(autoEnter = false))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Auto-PiP on pause failed", e)
+                    }
+                }
+            }, 200)
         }
     }
 

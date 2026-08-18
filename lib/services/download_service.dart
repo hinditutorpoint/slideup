@@ -7,7 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../core/constants/archive_constants.dart';
 import '../core/database/database_helper.dart';
 import '../core/utils/download_location_helper.dart';
-import '../../features/documents/models/download_task.dart';
+import '../features/documents/models/download_task.dart';
 import 'notification_service.dart';
 
 typedef DownloadProgressCallback = void Function(DownloadTask task);
@@ -621,6 +621,12 @@ class DownloadService {
     }
   }
 
+  Future<void> updateTask(DownloadTask task) async {
+    await _saveTask(task);
+    _notifyProgress(task);
+    _notifyAllDownloads();
+  }
+
   Future<void> _saveTask(DownloadTask task) async {
     await _dbHelper.insert(ArchiveConstants.downloadsTable, task.toMap());
   }
@@ -701,5 +707,6 @@ class DownloadService {
 
     _allDownloadsController.close();
     _dio.close();
+    _instance = null;
   }
 }

@@ -96,10 +96,7 @@ class _ImageFiltersPanelState extends State<ImageFiltersPanel> {
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-                child: Image.file(
-                  File(widget.image.path),
-                  fit: BoxFit.cover,
-                ),
+                child: _buildFilterPreview(filter),
               ),
             ),
             Container(
@@ -116,6 +113,16 @@ class _ImageFiltersPanelState extends State<ImageFiltersPanel> {
         ),
       ),
     );
+  }
+
+  Widget _buildFilterPreview(ImageFilter filter) {
+    final preview = Image.file(
+      File(widget.image.path),
+      fit: BoxFit.cover,
+    );
+    final colorFilter = ImageHelper.getFilterPreviewColorFilter(filter);
+    if (colorFilter == null) return preview;
+    return ColorFiltered(colorFilter: colorFilter, child: preview);
   }
 
   String _getFilterName(ImageFilter filter) {

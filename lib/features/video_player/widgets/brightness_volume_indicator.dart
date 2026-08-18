@@ -23,8 +23,8 @@ class BrightnessVolumeIndicator extends StatelessWidget {
     return Align(
       alignment: alignment,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 24),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(8),
@@ -36,29 +36,29 @@ class BrightnessVolumeIndicator extends StatelessWidget {
             Icon(
               _getIcon(safeValue),
               color: isBrightness ? Colors.yellow : Colors.blue,
-              size: 28,
+              size: 22,
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
 
             // Vertical progress bar
             SizedBox(
-              width: 36,
-              height: 120,
+              width: 14,
+              height: 100,
               child: _VerticalProgressBar(
                 value: safeValue,
                 color: isBrightness ? Colors.yellow : Colors.blue,
               ),
             ),
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
             // Percentage text
             Text(
               '${(safeValue * 100).toInt()}%',
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w500,
               ),
             ),

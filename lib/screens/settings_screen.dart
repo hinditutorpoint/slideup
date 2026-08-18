@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:slideup/screens/multi_backup_restore_screen.dart';
 import '../services/security_service.dart';
 import '../services/settings_service.dart';
+import '../services/permission_service.dart';
 import '../providers/settings_provider.dart';
 import '../helpers/image_helper.dart';
 import '../services/multi_database_backup_service.dart';
@@ -255,6 +256,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
 
           SwitchListTile(
+            title: const Text('Up Next Button'),
+            subtitle: const Text(
+              'Show upcoming video button in the last 10 seconds',
+            ),
+            value: settings.showUpNextButton,
+            onChanged: (value) {
+              ref.read(settingsProvider.notifier).setShowUpNextButton(value);
+            },
+          ),
+
+          ListTile(
+            title: const Text('Up Next Lead Time'),
+            subtitle: Text(
+              'Show the button ${settings.upNextLeadSeconds}s before the video ends',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _showUpNextLeadDialog,
+          ),
+
+          SwitchListTile(
+            title: const Text('Swipe to Switch Video'),
+            subtitle: const Text(
+              'Swipe up/down in the middle to switch videos',
+            ),
+            value: settings.swipeToSwitchEnabled,
+            onChanged: (value) {
+              ref.read(settingsProvider.notifier).setSwipeToSwitchEnabled(value);
+            },
+          ),
+
+          SwitchListTile(
             title: const Text('Error Debugging'),
             subtitle: const Text('Show detailed error information'),
             value: settings.errorDebuggingEnabled ?? false,
@@ -290,6 +322,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     .read(settingsProvider.notifier)
                     .setDownloadLocation(selected);
               }
+            },
+          ),
+
+          FutureBuilder<bool>(
+            future:
+                PermissionService.instance.hasManageExternalStoragePermission(),
+            builder: (context, snapshot) {
+              final granted = snapshot.data ?? false;
+              return ListTile(
+                title: const Text('Storage Write Permission'),
+                subtitle: Text(
+                  granted
+                      ? 'Write enabled - USB/SD storage grants access on first use'
+                      : 'Full file access needed to create, modify & delete files',
+                ),
+                trailing: Icon(
+                  granted ? Icons.check_circle : Icons.chevron_right,
+                  color: granted ? Colors.green : null,
+                ),
+                onTap: () => _handleStoragePermissionTap(granted),
+              );
             },
           ),
 
@@ -592,6 +645,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  void _showUpNextLeadDialog() {
+    final settings = ref.read(settingsProvider);
+    var seconds = settings.upNextLeadSeconds;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Up Next Lead Time'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Show the Up Next button this many seconds before the video ends:',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '$seconds seconds',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Slider(
+                value: seconds.toDouble().clamp(5.0, 30.0),
+                min: 5,
+                max: 30,
+                divisions: 5,
+                label: '$seconds s',
+                onChanged: (value) =>
+                    setDialogState(() => seconds = value.round()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await ref
+                    .read(settingsProvider.notifier)
+                    .setUpNextLeadSeconds(seconds);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showVideoQualityDialog() {
     showDialog(
       context: context,
@@ -774,6 +886,85 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               foregroundColor: Colors.white,
             ),
             child: const Text('Clear Now'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleStoragePermissionTap(bool currentlyGranted) async {
+    if (currentlyGranted) {
+      showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Storage Write Permission'),
+          content: const Text(
+            'Storage write access is already granted. You can manage or revoke '
+            '"All files access" from the Android system settings.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await openAppSettings();
+                if (mounted) setState(() {});
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final granted = await PermissionService.instance.requestPermissions();
+    if (!mounted) return;
+
+    if (granted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Storage write permission granted'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      setState(() {});
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.folder_off_outlined, color: Color(0xFF6C63FF)),
+            SizedBox(width: 10),
+            Text('Permission Required'),
+          ],
+        ),
+        content: Text(
+          PermissionService.instance.getWritePermissionDeniedMessage(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await openAppSettings();
+              if (mounted) setState(() {});
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6C63FF),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
           ),
         ],
       ),

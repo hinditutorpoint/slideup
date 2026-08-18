@@ -46,9 +46,7 @@ Future<void> main() async {
   // ------------------------------------------------------------
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
-    _logGlobalError(
-      'FlutterError: ${details.exception}\n${details.stack}',
-    );
+    _logGlobalError('FlutterError: ${details.exception}\n${details.stack}');
   };
 
   PlatformDispatcher.instance.onError = (error, stackTrace) {
@@ -56,12 +54,9 @@ Future<void> main() async {
     return true; // Swallow the error so the app keeps running.
   };
 
-  await runZonedGuarded(
-    () => _bootstrapApp(),
-    (error, stackTrace) {
-      _logGlobalError('Uncaught zone error: $error\n$stackTrace');
-    },
-  );
+  await runZonedGuarded(() => _bootstrapApp(), (error, stackTrace) {
+    _logGlobalError('Uncaught zone error: $error\n$stackTrace');
+  });
 }
 
 Future<void> _bootstrapApp() async {
@@ -195,9 +190,7 @@ void _logGlobalError(String message) {
     debugPrint('🛑 $message');
     getApplicationDocumentsDirectory().then((dir) {
       try {
-        final file = File(
-          '${dir.path}/error_log.txt',
-        );
+        final file = File('${dir.path}/error_log.txt');
         file.writeAsStringSync(
           '${DateTime.now().toIso8601String()}\n$message\n\n',
           mode: FileMode.append,
@@ -221,6 +214,7 @@ class SlideupMediaPlayerApp extends ConsumerStatefulWidget {
 
 class _SlideupMediaPlayerAppState extends ConsumerState<SlideupMediaPlayerApp> {
   bool _checkedIntent = false;
+  StreamSubscription<String?>? _intentSub;
 
   @override
   void initState() {
@@ -230,6 +224,7 @@ class _SlideupMediaPlayerAppState extends ConsumerState<SlideupMediaPlayerApp> {
 
   @override
   void dispose() {
+    _intentSub?.cancel();
     IntentHandlerService.dispose();
     super.dispose();
   }
@@ -269,7 +264,8 @@ class _SlideupMediaPlayerAppState extends ConsumerState<SlideupMediaPlayerApp> {
   }
 
   void _listenForIntents() {
-    IntentHandlerService.intentStream.listen(
+    _intentSub?.cancel();
+    _intentSub = IntentHandlerService.intentStream.listen(
       (filePath) {
         if (filePath != null && filePath.isNotEmpty && mounted) {
           debugPrint('📂 New file received while running: $filePath');

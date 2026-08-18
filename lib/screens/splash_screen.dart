@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import '../widgets/privacy_policy_dialog.dart';
@@ -61,7 +62,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       if (mounted) {
         final agreed = await PrivacyPolicyManager.ensurePrivacyAgreed(context);
         if (!agreed) {
-          // User declined consent
+          // User declined consent - leave the app gracefully instead of
+          // freezing on the splash screen.
+          if (mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              SystemNavigator.pop();
+            });
+          }
           return;
         }
       }
@@ -85,9 +92,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       }
 
       // Trigger media scan in background without blocking screen transition
-      unawaited(ref.read(mediaProvider.notifier).scanMedia().catchError((e) {
-        debugPrint('Media scan background error: $e');
-      }));
+      unawaited(
+        ref.read(mediaProvider.notifier).scanMedia().catchError((e) {
+          debugPrint('Media scan background error: $e');
+        }),
+      );
 
       // Ensure splash screen remains visible for a comfortable duration
       final elapsed = DateTime.now().difference(startTime);
@@ -144,68 +153,84 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 150,
-                      height: 150,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      child: const Icon(
-                        Icons.slideshow,
-                        size: 100,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    const Text(
-                      'Slideup Media Player',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Professional Media Experience',
-                      style: TextStyle(fontSize: 14, color: Colors.white70),
-                    ),
-                    const SizedBox(height: 64),
-                    SizedBox(
-                      width: 250,
-                      child: Column(
-                        children: [
-                          LinearProgressIndicator(
-                            value: _progress,
-                            backgroundColor: Colors.white24,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              Colors.white,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - 48,
+                  ),
+                  child: Center(
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: ScaleTransition(
+                        scale: _scaleAnimation,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 150,
+                              height: 150,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              child: const Icon(
+                                Icons.slideshow,
+                                size: 100,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _statusMessage,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.white,
+                            const SizedBox(height: 32),
+                            const Text(
+                              'Slideup Media Player',
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Professional Media Experience',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            const SizedBox(height: 64),
+                            SizedBox(
+                              width: 250,
+                              child: Column(
+                                children: [
+                                  LinearProgressIndicator(
+                                    value: _progress,
+                                    backgroundColor: Colors.white24,
+                                    valueColor:
+                                        const AlwaysStoppedAnimation<Color>(
+                                          Colors.white,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    _statusMessage,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),

@@ -244,30 +244,32 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
     }
 
     if (state.error != null || state.data == null || state.data!.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.music_off_outlined,
-                size: 48,
-                color: Colors.grey[600],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                state.error ?? 'No lyrics found for this track',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey[400], fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _showManualSearchDialog,
-                icon: const Icon(Icons.search, size: 18),
-                label: const Text('Search by Song Name'),
-              ),
-            ],
+      return SingleChildScrollView(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.music_off_outlined,
+                  size: 48,
+                  color: Colors.grey[600],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  state.error ?? 'No lyrics found for this track',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _showManualSearchDialog,
+                  icon: const Icon(Icons.search, size: 18),
+                  label: const Text('Search by Song Name'),
+                ),
+              ],
+            ),
           ),
         ),
       );

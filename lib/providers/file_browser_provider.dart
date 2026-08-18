@@ -8,6 +8,7 @@ import '../services/settings_service.dart';
 import '../services/search_service.dart';
 import '../services/supported_extensions_service.dart';
 import '../services/storage_service.dart';
+import '../services/permission_service.dart';
 
 class FileBrowserState {
   final Directory? currentDirectory;
@@ -120,6 +121,18 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
         throw Exception('Directory does not exist');
       }
 
+      // Android 11+ blocks direct access to other apps' Android/data & Android/obb
+      if (await PermissionService.instance.isProtectedPathUnderScopedStorage(
+        directory.path,
+      )) {
+        state = state.copyWith(
+          isLoading: false,
+          error:
+              'This folder is protected by Android and cannot be accessed on this device.',
+        );
+        return;
+      }
+
       final entities = <FileSystemEntity>[];
       try {
         await for (final entity in directory.list()) {
@@ -127,6 +140,13 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
         }
       } catch (listErr) {
         debugPrint('Partial/full error listing directory: $listErr');
+        state = state.copyWith(
+          isLoading: false,
+          error: _isPermissionError(listErr)
+              ? 'Permission denied. Please grant storage access to view this folder.'
+              : 'Failed to read this folder: $listErr',
+        );
+        return;
       }
 
       final filteredEntities = _filterAndSortEntities(entities);
@@ -185,14 +205,14 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
           break;
         case SortBy.size:
           if (a is File && b is File) {
-            final sizeA = a.lengthSync();
-            final sizeB = b.lengthSync();
+            final sizeA = _safeFileSize(a);
+            final sizeB = _safeFileSize(b);
             comparison = sizeA.compareTo(sizeB);
           }
           break;
         case SortBy.date:
-          final dateA = a.statSync().modified;
-          final dateB = b.statSync().modified;
+          final dateA = _safeModifiedDate(a);
+          final dateB = _safeModifiedDate(b);
           comparison = dateA.compareTo(dateB);
           break;
         case SortBy.type:
@@ -206,6 +226,30 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
     });
 
     return filtered;
+  }
+
+  bool _isPermissionError(Object error) {
+    if (error is PathAccessException) return true;
+    final message = error.toString().toLowerCase();
+    return message.contains('permission denied') ||
+        message.contains('errno = 13') ||
+        message.contains('errno: 13');
+  }
+
+  int _safeFileSize(File file) {
+    try {
+      return file.lengthSync();
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  DateTime _safeModifiedDate(FileSystemEntity entity) {
+    try {
+      return entity.statSync().modified;
+    } catch (_) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
   }
 
   void toggleSelection(FileSystemEntity entity) {
@@ -298,8 +342,10 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
     return success.success;
   }
 
-  Future<bool> deleteSelectedFiles() async {
-    if (state.selectedEntities.isEmpty) return false;
+  Future<FileOperationResult> deleteSelectedFiles() async {
+    if (state.selectedEntities.isEmpty) {
+      return const FileOperationResult(success: false, error: 'No files selected');
+    }
 
     final success = await FileOperationsService.instance
         .deleteFilesWithPermissionCheck(state.selectedEntities);
@@ -309,7 +355,7 @@ class FileBrowserNotifier extends Notifier<FileBrowserState> {
       clearSelection();
     }
 
-    return success.success;
+    return success;
   }
 
   Future<void> search(String query) async {

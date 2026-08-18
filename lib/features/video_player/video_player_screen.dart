@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,6 @@ import 'models/video_player_state.dart';
 import 'providers/video_player_provider.dart';
 import 'providers/pip_provider.dart';
 import 'widgets/video_player_widget.dart';
-import 'widgets/native_pip_widget.dart';
 
 class VideoPlayerScreen extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -30,11 +31,35 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   String? _initError;
   bool _isExiting = false;
   bool _hasNavigated = false;
+  StreamSubscription<String>? _pipActionSub;
 
   @override
   void initState() {
     super.initState();
+    _listenForPiPActions();
     _initialize();
+  }
+
+  /// Routes native PiP menu button taps (play/pause, prev, next) to the
+  /// video player notifier so playback can be controlled from the OS PiP
+  /// window even while the app is backgrounded.
+  void _listenForPiPActions() {
+    _pipActionSub?.cancel();
+    _pipActionSub = ref.read(pipServiceProvider).pipActionStream.listen(
+      (action) {
+        final notifier = ref.read(videoPlayerProvider.notifier);
+        if (notifier.isDisposed) return;
+        switch (action) {
+          case 'play_pause':
+            notifier.playOrPause();
+          case 'previous':
+            notifier.playPrevious();
+          case 'next':
+            notifier.playNext();
+        }
+      },
+      onError: (e) => debugPrint('⚠️ PiP action stream error: $e'),
+    );
   }
 
   // ═══════════════════════════════════════════════════════
@@ -57,9 +82,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
       if (widget.startFullscreen) {
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        // Force a single landscape orientation (see enterFullscreen note):
+        // sensor-landscape does not rotate when auto-rotate is disabled.
         await SystemChrome.setPreferredOrientations([
           DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
         ]);
       }
 
@@ -154,6 +180,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   @override
   void dispose() {
     debugPrint('🧹 Disposing VideoPlayerScreen...');
+    _pipActionSub?.cancel();
+    _pipActionSub = null;
     _stopPlayerSafely();
     super.dispose();
   }
@@ -194,8 +222,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       return _buildLoadingScreen();
     }
 
-    final pipState = ref.watch(pipProvider);
-
     // ✅ Sync Auto-PiP with player state
     // NOTE: We always call updateAutoPiP regardless of custom PiP mode
     // so the native system-level PiP (Home button) always works correctly.
@@ -217,12 +243,17 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       }
     });
 
-    // Native PiP (background)
+    // During native PiP the PiP overlay (PiPOverlay -> NativePiPWidget) renders
+    // the video itself on an opaque background. We hide the main player here so
+    // exactly ONE Video widget is attached to the shared media_kit controller —
+    // mounting two Video surfaces on the same player is what caused a black
+    // frame inside the PiP window on several devices.
+    final pipState = ref.watch(pipProvider);
     if (pipState.isNativeActive) {
-      return const NativePiPWidget();
+      return const Scaffold(backgroundColor: Colors.black);
     }
 
-    // Normal player
+    // Normal player.
     return _buildMainPlayer();
   }
 

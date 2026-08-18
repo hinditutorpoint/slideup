@@ -4,6 +4,7 @@ import '../models/media_file.dart';
 import '../widgets/image_adjustments_panel.dart';
 import '../widgets/image_filters_panel.dart';
 import '../helpers/image_helper.dart';
+import '../widgets/image_crop_tool.dart';
 
 class ImageEditorScreen extends StatefulWidget {
   final MediaFile image;
@@ -143,8 +144,15 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   }
 
   void _showCropTool() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Crop tool coming soon')),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ImageCropTool(
+          imagePath: _currentImagePath,
+          onCropped: (path) {
+            setState(() => _currentImagePath = path);
+          },
+        ),
+      ),
     );
   }
 

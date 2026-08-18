@@ -8,9 +8,11 @@ import '../models/player_media.dart';
 import '../models/video_player_state.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/pip_provider.dart';
+import '../../../providers/settings_provider.dart';
 import 'gesture_detector_widget.dart';
 import 'controls_overlay_widget.dart';
 import 'locked_overlay_widget.dart';
+import 'up_next_button_widget.dart';
 import 'brightness_volume_indicator.dart';
 import 'seek_indicator_widget.dart';
 import 'speed_indicator_widget.dart';
@@ -40,21 +42,41 @@ class VideoPlayerWidget extends ConsumerStatefulWidget {
 }
 
 class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
   bool _isDisposed = false;
   bool _isExiting = false;
 
-  // Pinch-to-zoom state
+  // Pinch-to-zoom state (YouTube-style: persists after release, pans when zoomed)
+  final GlobalKey _videoKey = GlobalKey();
   double _zoomScale = 1.0;
-  Offset _zoomFocalPoint = Offset.zero;
+  Offset _zoomOffset = Offset.zero;
+  double _pinchStartScale = 1.0;
+
+  // YouTube/X-style vertical swipe to switch playlist items
+  double _swipeDy = 0;
+  late final AnimationController _swipeReturnController;
+  late Animation<double> _swipeReturnAnim;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _swipeReturnController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+    _swipeReturnAnim = Tween<double>(begin: 0, end: 0).animate(
+      CurvedAnimation(
+        parent: _swipeReturnController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _swipeReturnAnim.addListener(() {
+      if (mounted) setState(() => _swipeDy = _swipeReturnAnim.value);
+    });
     _initializePlayer();
   }
 
@@ -75,10 +97,13 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
 
       if (_isDisposed || !mounted || _isExiting) return;
 
+      _resetZoom();
+
       setState(() {
         _isInitialized = true;
         _hasError = false;
         _errorMessage = null;
+        _swipeDy = 0;
       });
     } catch (e, stackTrace) {
       debugPrint('❌ VideoPlayerWidget initialization error: $e');
@@ -199,6 +224,7 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
   void dispose() {
     debugPrint('🧹 Disposing VideoPlayerWidget...');
     _isDisposed = true;
+    _swipeReturnController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -264,7 +290,7 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
               _buildBufferingIndicator(),
 
             // Layer 4: Gesture detector
-            if (isReady && widget.enableGestures)
+            if (isReady && widget.enableGestures && !pipState.isNativeActive)
               PlayerGestureDetector(
                 enabled: !playerState.isLocked,
                 onTap: _handleTap,
@@ -273,6 +299,8 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
                 onLongPressEnd: _handleLongPressEnd,
                 onVerticalDrag: _handleVerticalDrag,
                 onVerticalDragEnd: _handleVerticalDragEnd,
+                onVerticalSwipe: _handleVerticalSwipe,
+                onVerticalSwipeEnd: _handleVerticalSwipeEnd,
                 onHorizontalDragStart: _handleHorizontalDragStart,
                 onHorizontalDragUpdate: _handleHorizontalDragUpdate,
                 onHorizontalDragEnd: _handleHorizontalDragEnd,
@@ -292,11 +320,15 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
             // Layer 5: Network speed/data + clock (shown when controls hidden, only for URL sources)
             if (isReady &&
                 !playerState.isLocked &&
+                !pipState.isNativeActive &&
                 playerState.currentUrl.startsWith('http'))
               NetworkClockOverlayWidget(visible: !playerState.showControls),
 
             // Layer 6: Controls overlay
-            if (isReady && playerState.showControls && !playerState.isLocked)
+            if (isReady &&
+                playerState.showControls &&
+                !playerState.isLocked &&
+                !pipState.isNativeActive)
               ControlsOverlayWidget(
                 playlist: widget.playlist,
                 onBack: _handleBack,
@@ -305,6 +337,21 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
 
             // Layer 6: Locked overlay
             if (playerState.isLocked) const LockedOverlayWidget(),
+
+            // YouTube-style "Up Next" button: top-left, appears in the last
+            // 10 seconds when controls are hidden or locked and a next item
+            // exists. Placed above the locked overlay so it stays tappable.
+            if (isReady &&
+                !pipState.isNativeActive &&
+                _shouldShowUpNext(playerState) &&
+                ref.watch(settingsProvider).showUpNextButton)
+              UpNextButtonWidget(
+                nextMedia:
+                    widget.playlist.items[playerState.currentIndex + 1],
+                progress: _upNextProgress(playerState),
+                // Right side always; when locked, sit left of the lock button.
+                rightOffset: playerState.isLocked ? 76 : 16,
+              ),
 
             // Layer 7: Indicators
             if (playerState.showSeekIndicator)
@@ -327,6 +374,9 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
 
             if (playerState.showSpeedIndicator || playerState.is2xSpeed)
               const SpeedIndicatorWidget(),
+
+            // YouTube/X-style swipe preview indicator (middle-zone switching)
+            if (_swipeDy.abs() > 20) _buildSwipeIndicator(),
 
             // Layer 8: Error overlay (TOP)
             if (hasAnyError) _buildErrorOverlay(playerState),
@@ -381,23 +431,48 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
         );
       }
 
-      // Apply pinch-to-zoom transform around the focal point
+      // Apply pinch-to-zoom transform (YouTube style): scale around center,
+      // pan offset keeps the pinch focal point under the fingers.
       if (_zoomScale > 1.0001) {
         videoWidget = Transform(
           alignment: Alignment.center,
           transform: Matrix4.identity()
-            ..translate(_zoomFocalPoint.dx, _zoomFocalPoint.dy)
-            ..scale(_zoomScale)
-            ..translate(-_zoomFocalPoint.dx, -_zoomFocalPoint.dy),
+            ..translate(_zoomOffset.dx, _zoomOffset.dy)
+            ..scale(_zoomScale),
           child: videoWidget,
         );
       }
 
-      return Center(
-        child: ClipRect(
-          child: AspectRatio(aspectRatio: 16 / 9, child: videoWidget),
+      // Frame matches the video's real aspect ratio (like MX Player/YouTube),
+      // so zoom magnifies actual pixels instead of letterbox bars. The outer
+      // ClipRect clips at the SCREEN edges, letting zoomed content overflow the
+      // frame like MX/YouTube instead of being cut off at the frame bounds.
+      double aspectRatio = 16 / 9;
+      try {
+        final vt = playerState.currentVideoTrack;
+        if (vt != null && vt.w != null && vt.h != null && vt.w! > 0 && vt.h! > 0) {
+          aspectRatio = vt.w! / vt.h!;
+        }
+      } catch (_) {}
+
+      final frame = ClipRect(
+        child: Center(
+          child: AspectRatio(
+            key: _videoKey,
+            aspectRatio: aspectRatio,
+            child: videoWidget,
+          ),
         ),
       );
+
+      // YouTube/X-style vertical swipe preview: the frame follows the finger.
+      if (_swipeDy != 0) {
+        return Transform.translate(
+          offset: Offset(0, _swipeDy),
+          child: frame,
+        );
+      }
+      return frame;
     } catch (e) {
       debugPrint('❌ Build video player error: $e');
       return Container(color: Colors.black);
@@ -548,6 +623,39 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     );
   }
 
+  Widget _buildSwipeIndicator() {
+    final isNext = _swipeDy < 0;
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isNext
+                    ? Icons.keyboard_double_arrow_up_rounded
+                    : Icons.keyboard_double_arrow_down_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                isNext ? 'Next video' : 'Previous video',
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════
   // ✅ GESTURE HANDLERS (with safety checks)
   // ═══════════════════════════════════════════════════════
@@ -636,6 +744,8 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
   void _handleHorizontalDragStart() {
     if (_isDisposed || _isExiting) return;
     try {
+      // When zoomed, drags pan instead of seeking.
+      if (_zoomScale > 1.0001) return;
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
 
@@ -649,6 +759,10 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
   void _handleHorizontalDragUpdate(double delta) {
     if (_isDisposed || _isExiting) return;
     try {
+      if (_zoomScale > 1.0001) {
+        _panVideo(Offset(delta, 0));
+        return;
+      }
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
 
@@ -661,6 +775,7 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
   void _handleHorizontalDragEnd() {
     if (_isDisposed || _isExiting) return;
     try {
+      if (_zoomScale > 1.0001) return;
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
 
@@ -671,15 +786,18 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     }
   }
 
+  /// Slim edge strips only: left = brightness, right = volume. Middle-zone
+  /// swipes are handled by _handleVerticalSwipe/_handleVerticalSwipeEnd.
   void _handleVerticalDrag(double delta, bool isLeftSide, Velocity velocity) {
     if (_isDisposed || _isExiting) return;
     try {
+      // When zoomed, vertical drags pan instead of adjusting brightness/volume.
+      if (_zoomScale > 1.0001) {
+        _panVideo(Offset(0, delta));
+        return;
+      }
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
-
-      // Skip brightness/volume adjustment while the gesture is a fast flick;
-      // those are handled as next/previous swipes in _handleVerticalDragEnd.
-      if (velocity.pixelsPerSecond.dy.abs() >= 600) return;
 
       final adjustedDelta = -delta / 200;
 
@@ -693,46 +811,131 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     }
   }
 
-  /// YouTube-Shorts style vertical swipe: a fast upward flick plays the next
-  /// item, a fast downward flick plays the previous one. Slow drags keep their
-  /// brightness/volume behavior.
   void _handleVerticalDragEnd(double totalDelta, Velocity velocity) {
+    // Edge strips only adjust brightness/volume continuously; nothing to do
+    // on release. Item switching lives in _handleVerticalSwipeEnd.
+  }
+
+  /// YouTube/X-style drag preview: the video follows the finger while swiping
+  /// in the middle zone.
+  void _handleVerticalSwipe(double delta) {
     if (_isDisposed || _isExiting) return;
+    if (!_swipeSwitchEnabled()) return;
+    try {
+      if (_zoomScale > 1.0001) {
+        _panVideo(Offset(0, delta));
+        return;
+      }
+      if (!mounted) return;
+      final maxSwipe = MediaQuery.sizeOf(context).height * 0.3;
+      final newDy = (_swipeDy + delta).clamp(-maxSwipe, maxSwipe);
+      if (newDy != _swipeDy) {
+        setState(() => _swipeDy = newDy);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Handle vertical swipe error: $e');
+    }
+  }
+
+  /// YouTube/X-style snap: past the threshold the item switches, otherwise the
+  /// video springs back to center.
+  void _handleVerticalSwipeEnd(double totalDelta) {
+    if (_isDisposed || _isExiting) return;
+    if (!_swipeSwitchEnabled()) return;
     try {
       final notifier = ref.read(videoPlayerProvider.notifier);
       if (notifier.isDisposed) return;
 
-      final distance = totalDelta.abs();
-      final speed = velocity.pixelsPerSecond.dy.abs();
+      if (_zoomScale > 1.0001) return;
 
-      // Only treat as a swipe on a quick, deliberate flick. Below this the
-      // gesture was a brightness/volume adjustment.
-      const minDistance = 80.0;
-      const minSpeed = 600.0;
-      if (distance < minDistance || speed < minSpeed) return;
+      final threshold = MediaQuery.sizeOf(context).height * 0.22;
 
-      if (totalDelta < 0) {
+      if (totalDelta <= -threshold) {
         notifier.playNext();
-      } else {
+        HapticFeedback.mediumImpact();
+        _resetSwipe();
+      } else if (totalDelta >= threshold) {
         notifier.playPrevious();
+        HapticFeedback.mediumImpact();
+        _resetSwipe();
+      } else {
+        _springBackSwipe();
       }
-      HapticFeedback.mediumImpact();
     } catch (e) {
-      debugPrint('⚠️ Handle vertical drag end error: $e');
+      debugPrint('⚠️ Handle vertical swipe end error: $e');
     }
+  }
+
+  bool _swipeSwitchEnabled() => ref.read(settingsProvider).swipeToSwitchEnabled;
+
+  void _springBackSwipe() {
+    if (!mounted) return;
+    _swipeReturnAnim = Tween<double>(begin: _swipeDy, end: 0).animate(
+      CurvedAnimation(
+        parent: _swipeReturnController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _swipeReturnController.forward(from: 0);
+  }
+
+  void _resetSwipe() {
+    if (!mounted) return;
+    _swipeReturnController.stop();
+    setState(() => _swipeDy = 0);
+  }
+
+  /// "Up Next" shows only when a next item exists AND controls are hidden or
+  /// locked AND the current video is within the configured lead time before the
+  /// end (default 10s).
+  bool _shouldShowUpNext(VideoPlayerState playerState) {
+    if (!playerState.canPlayNext) return false;
+    if (playerState.showControls && !playerState.isLocked) return false;
+    final nextIndex = playerState.currentIndex + 1;
+    if (nextIndex >= widget.playlist.items.length) return false;
+    if (playerState.duration <= Duration.zero) return false;
+    final remaining = playerState.duration - playerState.position;
+    final lead = Duration(
+      seconds: ref.read(settingsProvider).upNextLeadSeconds,
+    );
+    if (remaining > lead || remaining <= Duration.zero) {
+      return false;
+    }
+    return true;
+  }
+
+  double _upNextProgress(VideoPlayerState playerState) {
+    final remaining = playerState.duration - playerState.position;
+    final leadMs =
+        (ref.read(settingsProvider).upNextLeadSeconds * 1000).toDouble();
+    if (leadMs <= 0) return 0.0;
+    return (remaining.inMilliseconds / leadMs).clamp(0.0, 1.0);
   }
 
   void _handleScaleStart() {
     if (_isDisposed || _isExiting) return;
+    // Remember the scale when this pinch began so repeated pinches compound.
+    _pinchStartScale = _zoomScale;
   }
 
   void _handleScaleUpdate(double scale, Offset focalPoint) {
     if (_isDisposed || _isExiting) return;
     try {
       if (!mounted) return;
+      final oldScale = _zoomScale;
+      final newScale = (_pinchStartScale * scale).clamp(1.0, 4.0);
+      final screenSize = MediaQuery.sizeOf(context);
+      final screenCenter =
+          Offset(screenSize.width / 2, screenSize.height / 2);
       setState(() {
-        _zoomScale = scale.clamp(1.0, 4.0);
-        _zoomFocalPoint = focalPoint;
+        _zoomScale = newScale;
+        // Keep the point under the pinch anchored as the scale changes.
+        _zoomOffset = _zoomOffset +
+            Offset(
+              (oldScale - newScale) * (focalPoint.dx - screenCenter.dx),
+              (oldScale - newScale) * (focalPoint.dy - screenCenter.dy),
+            );
+        _clampZoomOffset();
       });
     } catch (e) {
       debugPrint('⚠️ Handle scale update error: $e');
@@ -744,12 +947,50 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     try {
       if (!mounted) return;
       setState(() {
-        _zoomScale = 1.0;
-        _zoomFocalPoint = Offset.zero;
+        _clampZoomOffset();
       });
     } catch (e) {
       debugPrint('⚠️ Handle scale end error: $e');
     }
+  }
+
+  void _resetZoom() {
+    _zoomScale = 1.0;
+    _zoomOffset = Offset.zero;
+    _pinchStartScale = 1.0;
+  }
+
+  Size _videoSize() {
+    try {
+      final ctx = _videoKey.currentContext;
+      if (ctx == null) return Size.zero;
+      final box = ctx.findRenderObject();
+      if (box is RenderBox) return box.size;
+    } catch (_) {}
+    return Size.zero;
+  }
+
+  void _clampZoomOffset() {
+    final size = _videoSize();
+    if (size == Size.zero) return;
+    final maxX = (_zoomScale - 1.0) * size.width / 2;
+    final maxY = (_zoomScale - 1.0) * size.height / 2;
+    var x = _zoomOffset.dx;
+    var y = _zoomOffset.dy;
+    if (x < -maxX) x = -maxX;
+    if (x > maxX) x = maxX;
+    if (y < -maxY) y = -maxY;
+    if (y > maxY) y = maxY;
+    _zoomOffset = Offset(x, y);
+  }
+
+  void _panVideo(Offset delta) {
+    if (!mounted) return;
+    setState(() {
+      _zoomOffset =
+          Offset(_zoomOffset.dx + delta.dx, _zoomOffset.dy + delta.dy);
+      _clampZoomOffset();
+    });
   }
 
   /* void _handleHorizontalDrag(double delta) {

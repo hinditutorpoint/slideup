@@ -12,6 +12,10 @@ class PlayerGestureDetector extends StatefulWidget {
   onVerticalDrag;
   final Function(double totalDelta, Velocity velocity)? onVerticalDragEnd;
 
+  // ✅ Middle-zone vertical swipe (YouTube/X style item switching)
+  final Function(double delta)? onVerticalSwipe;
+  final Function(double totalDelta)? onVerticalSwipeEnd;
+
   // ✅ Changed callbacks for horizontal seek
   final VoidCallback? onHorizontalDragStart;
   final Function(double delta)? onHorizontalDragUpdate;
@@ -32,6 +36,8 @@ class PlayerGestureDetector extends StatefulWidget {
     this.onLongPressEnd,
     this.onVerticalDrag,
     this.onVerticalDragEnd,
+    this.onVerticalSwipe,
+    this.onVerticalSwipeEnd,
     this.onHorizontalDragStart,
     this.onHorizontalDragUpdate,
     this.onHorizontalDragEnd,
@@ -61,6 +67,9 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   // Long press
   bool _isLongPressing = false;
   GestureZone? _longPressZone;
+
+  // Drag zone (slim edge strips = brightness/volume, middle = item switching)
+  String? _dragZone;
 
   // Pinch-to-zoom tracking
   final Map<int, Offset> _activePointers = {};
@@ -255,6 +264,21 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
     _isVerticalDrag = false;
     _totalVerticalDelta = 0;
     _lastPanUpdateTime = null;
+    _dragZone = _getDragZone(details.globalPosition.dx);
+  }
+
+  /// Slim 10% edge strips for brightness/volume; everything else is the
+  /// YouTube/X-style item-switch zone.
+  String _getDragZone(double dx) {
+    try {
+      final screenWidth = MediaQuery.of(context).size.width;
+      const edgeRatio = 0.35;
+      if (dx <= screenWidth * edgeRatio) return 'left';
+      if (dx >= screenWidth * (1 - edgeRatio)) return 'right';
+      return 'middle';
+    } catch (_) {
+      return 'middle';
+    }
   }
 
   void _handlePanUpdate(DragUpdateDetails details) {
@@ -294,13 +318,15 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
         }
         _lastPanUpdateTime = now;
 
-        final screenWidth = MediaQuery.of(context).size.width;
-        final isLeftSide = _dragStartPosition!.dx < screenWidth / 2;
-        widget.onVerticalDrag?.call(
-          details.delta.dy,
-          isLeftSide,
-          Velocity(pixelsPerSecond: Offset(0, velocityDy)),
-        );
+        if (_dragZone == 'middle') {
+          widget.onVerticalSwipe?.call(details.delta.dy);
+        } else {
+          widget.onVerticalDrag?.call(
+            details.delta.dy,
+            _dragZone == 'left',
+            Velocity(pixelsPerSecond: Offset(0, velocityDy)),
+          );
+        }
       } else {
         // ✅ Horizontal drag - pass raw delta
         widget.onHorizontalDragUpdate?.call(details.delta.dx);
@@ -313,7 +339,11 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   void _handlePanEnd(DragEndDetails details) {
     try {
       if (_isDragging && _isVerticalDrag) {
-        widget.onVerticalDragEnd?.call(_totalVerticalDelta, details.velocity);
+        if (_dragZone == 'middle') {
+          widget.onVerticalSwipeEnd?.call(_totalVerticalDelta);
+        } else {
+          widget.onVerticalDragEnd?.call(_totalVerticalDelta, details.velocity);
+        }
       } else if (_isDragging && !_isVerticalDrag) {
         widget.onHorizontalDragEnd?.call();
       }
@@ -325,11 +355,18 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       _isVerticalDrag = false;
       _totalVerticalDelta = 0;
       _lastPanUpdateTime = null;
+      _dragZone = null;
     }
   }
 
   void _handlePanCancel() {
-    if (_isDragging && !_isVerticalDrag) {
+    if (_isDragging && _isVerticalDrag) {
+      if (_dragZone == 'middle') {
+        widget.onVerticalSwipeEnd?.call(_totalVerticalDelta);
+      } else {
+        widget.onVerticalDragEnd?.call(_totalVerticalDelta, Velocity.zero);
+      }
+    } else if (_isDragging && !_isVerticalDrag) {
       widget.onHorizontalDragEnd?.call();
     }
 
@@ -338,6 +375,7 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
     _isVerticalDrag = false;
     _totalVerticalDelta = 0;
     _lastPanUpdateTime = null;
+    _dragZone = null;
   }
 
   // ═══════════════════════════════════════════════════════

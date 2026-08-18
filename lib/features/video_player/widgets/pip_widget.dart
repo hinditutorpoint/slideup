@@ -161,19 +161,29 @@ class _PiPWidgetState extends ConsumerState<PiPWidget>
     VideoPlayerState playerState,
     bool isCompact,
   ) {
+    final width = pipState.size.width;
     final height = pipState.size.height;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        _buildTopBar(),
-        const Spacer(),
-        _buildCenterControls(playerState, isCompact),
-        const Spacer(),
-        if (height > 100)
-          _buildProgressBar(playerState)
-        else
-          SizedBox(height: pipState.size.width < 180 ? 4 : 8),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: _buildTopBar(),
+        ),
+        Center(
+          child: _buildCenterControls(playerState, isCompact),
+        ),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: height > 100
+              ? _buildProgressBar(playerState)
+              : SizedBox(height: width < 180 ? 4 : 8),
+        ),
       ],
     );
   }
@@ -324,13 +334,26 @@ class _PiPWidgetState extends ConsumerState<PiPWidget>
           if (width > 160) const SizedBox(height: 3),
           ClipRRect(
             borderRadius: BorderRadius.circular(1.5),
-            child: SizedBox(
-              height: isVerySmall ? 2 : 3,
-              child: LinearProgressIndicator(
-                value: playerState.progress.clamp(0.0, 1.0),
-                backgroundColor: Colors.white.withValues(alpha: 0.2),
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
-              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final trackWidth = constraints.maxWidth;
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) =>
+                      _handleSeekAt(d.localPosition.dx, trackWidth),
+                  onHorizontalDragUpdate: (d) =>
+                      _handleSeekAt(d.localPosition.dx, trackWidth),
+                  child: SizedBox(
+                    height: isVerySmall ? 2 : 3,
+                    child: LinearProgressIndicator(
+                      value: playerState.progress.clamp(0.0, 1.0),
+                      backgroundColor: Colors.white.withValues(alpha: 0.2),
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Colors.red),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -482,6 +505,18 @@ class _PiPWidgetState extends ConsumerState<PiPWidget>
   void _handlePlayPause() {
     HapticFeedback.selectionClick();
     ref.read(videoPlayerProvider.notifier).playOrPause();
+  }
+
+  void _handleSeekAt(double dx, double trackWidth) {
+    if (trackWidth <= 0) return;
+    final playerState = ref.read(videoPlayerProvider);
+    final duration = playerState.duration;
+    if (duration <= Duration.zero) return;
+    final fraction = (dx / trackWidth).clamp(0.0, 1.0);
+    HapticFeedback.selectionClick();
+    ref
+        .read(videoPlayerProvider.notifier)
+        .seek(Duration(milliseconds: (duration.inMilliseconds * fraction).round()));
   }
 
   void _handlePrevious() {

@@ -3,6 +3,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_file.dart';
+import '../models/audio_data.dart';
 import '../navigation_service.dart';
 
 class AudioPlayerHandler extends BaseAudioHandler
@@ -10,6 +11,7 @@ class AudioPlayerHandler extends BaseAudioHandler
   final AudioPlayer _player = AudioPlayer();
 
   bool _initialized = false;
+  final Set<String> _enrichedIds = {};
 
   AudioPlayerHandler() {
     _init();
@@ -19,7 +21,9 @@ class AudioPlayerHandler extends BaseAudioHandler
     if (_initialized) return;
     _initialized = true;
 
-    _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+    _player.playbackEventStream.listen((event) {
+      playbackState.add(_transformEvent(event));
+    });
 
     _player.loopModeStream.listen((_) {
       playbackState.add(_transformEvent(_player.playbackEvent));
@@ -35,6 +39,7 @@ class AudioPlayerHandler extends BaseAudioHandler
       final currentItem = sequenceState.currentSource?.tag as MediaItem?;
       if (currentItem != null) {
         mediaItem.add(currentItem);
+        _enrichMediaItemIfNeeded(currentItem);
       }
 
       final queueItems = sequenceState.effectiveSequence
@@ -92,7 +97,7 @@ class AudioPlayerHandler extends BaseAudioHandler
         ProcessingState.buffering: AudioProcessingState.buffering,
         ProcessingState.ready: AudioProcessingState.ready,
         ProcessingState.completed: AudioProcessingState.completed,
-      }[_player.processingState]!,
+      }[_player.processingState] ?? AudioProcessingState.idle,
       playing: _player.playing,
       updatePosition: _player.position,
       bufferedPosition: _player.bufferedPosition,
@@ -157,6 +162,36 @@ class AudioPlayerHandler extends BaseAudioHandler
         : Uri.file(file.path);
 
     return AudioSource.uri(uri, tag: _createMediaItem(file));
+  }
+
+  Future<void> _enrichMediaItemIfNeeded(MediaItem item) async {
+    if (item.artist != 'Unknown Artist' && item.album != 'Unknown Album') {
+      return;
+    }
+    if (_enrichedIds.contains(item.id)) return;
+
+    final path = item.extras?['path'] as String?;
+    if (path == null || path.isEmpty) return;
+    _enrichedIds.add(item.id);
+
+    final data = await AudioData.load(path);
+    if (data == null) return;
+
+    final updated = item.copyWith(
+      title: data.title ?? item.title,
+      artist: data.artist ?? item.artist,
+      album: data.album ?? item.album,
+      genre: data.genre ?? item.genre,
+    );
+
+    if (updated.artist == item.artist && updated.album == item.album) return;
+
+    final index = queue.value.indexWhere((m) => m.id == item.id);
+    if (index >= 0) {
+      queue.value[index] = updated;
+      queue.add(List<MediaItem>.from(queue.value));
+    }
+    mediaItem.add(updated);
   }
 
   Future<void> addNext(MediaFile file) async {

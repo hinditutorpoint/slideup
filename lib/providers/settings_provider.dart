@@ -8,6 +8,9 @@ class AppSettings {
   final bool autoPlayNext;
   final bool askResumeLastPosition;
   final bool recentHistoryEnabled;
+  final bool showUpNextButton;
+  final int upNextLeadSeconds;
+  final bool swipeToSwitchEnabled;
   final String defaultVideoQuality;
   final String downloadLocation;
   final String? speechService;
@@ -20,6 +23,9 @@ class AppSettings {
     this.autoPlayNext = true,
     this.askResumeLastPosition = false,
     this.recentHistoryEnabled = true,
+    this.showUpNextButton = true,
+    this.upNextLeadSeconds = 15,
+    this.swipeToSwitchEnabled = true,
     this.defaultVideoQuality = 'Auto',
     this.downloadLocation = '/storage/emulated/0/Download',
     this.speechService,
@@ -33,6 +39,9 @@ class AppSettings {
     bool? autoPlayNext,
     bool? askResumeLastPosition,
     bool? recentHistoryEnabled,
+    bool? showUpNextButton,
+    int? upNextLeadSeconds,
+    bool? swipeToSwitchEnabled,
     String? defaultVideoQuality,
     String? downloadLocation,
     String? speechService,
@@ -47,6 +56,10 @@ class AppSettings {
       askResumeLastPosition:
           askResumeLastPosition ?? this.askResumeLastPosition,
       recentHistoryEnabled: recentHistoryEnabled ?? this.recentHistoryEnabled,
+      showUpNextButton: showUpNextButton ?? this.showUpNextButton,
+      upNextLeadSeconds: upNextLeadSeconds ?? this.upNextLeadSeconds,
+      swipeToSwitchEnabled:
+          swipeToSwitchEnabled ?? this.swipeToSwitchEnabled,
       defaultVideoQuality: defaultVideoQuality ?? this.defaultVideoQuality,
       downloadLocation: downloadLocation ?? this.downloadLocation,
       speechService: speechService ?? this.speechService,
@@ -89,6 +102,18 @@ class SettingsNotifier extends Notifier<AppSettings> {
         ),
         recentHistoryEnabled: _settingsBox.get(
           'recentHistoryEnabled',
+          defaultValue: true,
+        ),
+        showUpNextButton: _settingsBox.get(
+          'showUpNextButton',
+          defaultValue: true,
+        ),
+        upNextLeadSeconds: _settingsBox.get(
+          'upNextLeadSeconds',
+          defaultValue: 15,
+        ),
+        swipeToSwitchEnabled: _settingsBox.get(
+          'swipeToSwitchEnabled',
           defaultValue: true,
         ),
         errorDebuggingEnabled: _settingsBox.get(
@@ -150,6 +175,24 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await _ensureInitialized();
     await _settingsBox.put('recentHistoryEnabled', enabled);
     state = state.copyWith(recentHistoryEnabled: enabled);
+  }
+
+  Future<void> setShowUpNextButton(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('showUpNextButton', enabled);
+    state = state.copyWith(showUpNextButton: enabled);
+  }
+
+  Future<void> setUpNextLeadSeconds(int seconds) async {
+    await _ensureInitialized();
+    await _settingsBox.put('upNextLeadSeconds', seconds);
+    state = state.copyWith(upNextLeadSeconds: seconds);
+  }
+
+  Future<void> setSwipeToSwitchEnabled(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('swipeToSwitchEnabled', enabled);
+    state = state.copyWith(swipeToSwitchEnabled: enabled);
   }
 
   Future<void> setErrorDebuggingEnabled(bool enabled) async {

@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
 
+import '../features/private_browser/private_browser_screen.dart';
+
 class TextViewerWidget extends StatefulWidget {
   final String filePath;
   final String? content;
@@ -146,9 +148,15 @@ class _TextViewerWidgetState extends State<TextViewerWidget> {
   }
 
   Future<void> _launchUrl(String url) async {
-    /* final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } */
+    try {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PrivateBrowserScreen(initialUrl: url),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error launching URL: $e');
+    }
   }
 }

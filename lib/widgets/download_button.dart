@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:percent_indicator/circular_percent_indicator.dart';
-import '../../features/documents/models/download_task.dart';
+import '../features/documents/models/download_task.dart';
 import '../providers/download_providers.dart';
 
 class DownloadButton extends ConsumerWidget {

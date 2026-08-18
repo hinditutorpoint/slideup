@@ -6,7 +6,14 @@ import '../models/video_player_state.dart';
 import '../providers/video_player_provider.dart';
 
 /// Native Android PiP Widget
-/// This widget is shown when the app enters native PiP mode
+/// This widget is shown when the app enters native PiP mode.
+///
+/// It renders the video itself on an opaque black background so the system PiP
+/// window shows ONLY the video (plus compact controls) — no matter which app
+/// screen was visible when the user pressed Home. The video player screen stops
+/// rendering its own surface while native PiP is active (see
+/// [VideoPlayerScreen]), so there is exactly ONE [Video] widget attached to the
+/// shared media_kit controller at any time.
 class NativePiPWidget extends ConsumerWidget {
   const NativePiPWidget({super.key});
 
@@ -36,6 +43,11 @@ class NativePiPWidget extends ConsumerWidget {
         controller: notifier.videoController,
         controls: NoVideoControls,
         fit: BoxFit.contain,
+        // Keep playing through the Home -> PiP transition. The default (true)
+        // pauses the player as soon as the app enters the background lifecycle,
+        // which freezes the PiP frame; a later play() often appears to "not
+        // work" on older devices while the app is backgrounded.
+        pauseUponEnteringBackgroundMode: false,
       );
     } catch (e) {
       debugPrint('⚠️ Native PiP video build error: $e');
@@ -58,21 +70,46 @@ class NativePiPWidget extends ConsumerWidget {
     final isCompact = size.width < 300; // Compact mode for small PiP
 
     return SafeArea(
-      child: Column(
-        children: [
-          // Top bar with expand button
-          _buildTopBar(context, ref),
+      // Adapt to the actual PiP window height so tiny/mini windows never
+      // overflow: hide bars and shrink buttons when height is limited.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final h = constraints.maxHeight;
+          final showTopBar = h >= 150;
+          final showSkips = !isCompact && h >= 160;
+          final showProgress = h >= 120;
+          final buttonSize =
+              h >= 220 ? 48.0 : (h >= 160 ? 40.0 : 32.0);
 
-          const Spacer(),
+          // Stack-based layout: the center controls are ALWAYS vertically and
+          // horizontally centered, and nothing can overflow a small PiP window.
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              if (showTopBar)
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: _buildTopBar(context, ref),
+                ),
 
-          // Center controls (play/pause + navigation)
-          _buildCenterControls(ref, playerState, isCompact),
+              Align(
+                alignment: Alignment.center,
+                child: _buildCenterControls(
+                  ref,
+                  playerState,
+                  showSkips: showSkips,
+                  buttonSize: buttonSize,
+                ),
+              ),
 
-          const SizedBox(height: 12),
-
-          // Progress bar at bottom
-          _buildProgressBar(playerState),
-        ],
+              if (showProgress)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: _buildProgressBar(playerState),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -110,19 +147,22 @@ class NativePiPWidget extends ConsumerWidget {
 
   Widget _buildCenterControls(
     WidgetRef ref,
-    VideoPlayerState playerState,
-    bool isCompact,
-  ) {
+    VideoPlayerState playerState, {
+    required bool showSkips,
+    required double buttonSize,
+  }) {
+    final skipSize = 32.0;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           // Previous button (if available and not compact)
-          if (playerState.canPlayPrevious && !isCompact) ...[
+          if (playerState.canPlayPrevious && showSkips) ...[
             _PiPButton(
               icon: Icons.skip_previous_rounded,
-              size: 32,
+              size: skipSize,
               onTap: () => _handlePrevious(ref),
             ),
             const SizedBox(width: 24),
@@ -133,16 +173,16 @@ class NativePiPWidget extends ConsumerWidget {
             icon: playerState.isPlaying
                 ? Icons.pause_rounded
                 : Icons.play_arrow_rounded,
-            size: 48,
+            size: buttonSize,
             onTap: () => _handlePlayPause(ref),
           ),
 
           // Next button (if available and not compact)
-          if (playerState.canPlayNext && !isCompact) ...[
+          if (playerState.canPlayNext && showSkips) ...[
             const SizedBox(width: 24),
             _PiPButton(
               icon: Icons.skip_next_rounded,
-              size: 32,
+              size: skipSize,
               onTap: () => _handleNext(ref),
             ),
           ],
@@ -174,7 +214,13 @@ class NativePiPWidget extends ConsumerWidget {
 
   void _handlePlayPause(WidgetRef ref) {
     try {
-      ref.read(videoPlayerProvider.notifier).playOrPause();
+      final playerState = ref.read(videoPlayerProvider);
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      debugPrint(
+        '🎮 Native PiP play/pause tapped (isPlaying: ${playerState.isPlaying}, '
+        'disposed: ${notifier.isDisposed})',
+      );
+      notifier.playOrPause();
     } catch (e) {
       debugPrint('⚠️ PiP play/pause error: $e');
     }
@@ -182,6 +228,7 @@ class NativePiPWidget extends ConsumerWidget {
 
   void _handlePrevious(WidgetRef ref) {
     try {
+      debugPrint('🎮 Native PiP previous tapped');
       ref.read(videoPlayerProvider.notifier).playPrevious();
     } catch (e) {
       debugPrint('⚠️ PiP previous error: $e');
@@ -190,6 +237,7 @@ class NativePiPWidget extends ConsumerWidget {
 
   void _handleNext(WidgetRef ref) {
     try {
+      debugPrint('🎮 Native PiP next tapped');
       ref.read(videoPlayerProvider.notifier).playNext();
     } catch (e) {
       debugPrint('⚠️ PiP next error: $e');
@@ -198,6 +246,7 @@ class NativePiPWidget extends ConsumerWidget {
 
   void _handleExpand(BuildContext context, WidgetRef ref) {
     try {
+      debugPrint('🎮 Native PiP expand tapped');
       // Exit PiP mode - will restore to full app
       ref.read(videoPlayerProvider.notifier).exitPiPMode();
       // The floating package will handle bringing back the full UI

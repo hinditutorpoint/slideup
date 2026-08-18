@@ -182,6 +182,7 @@ class StorageService {
       await directory.list().take(1).drain();
     } catch (e) {
       debugPrint('Directory $dirPath may have limited access: $e');
+      isAccessible = false;
     }
 
     locations.add(

@@ -6,6 +6,7 @@ import '../providers/file_browser_provider.dart';
 import '../services/file_operations_service.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
+import '../services/saf_service.dart';
 import '../services/settings_service.dart';
 import '../services/database_service.dart';
 import '../services/thumbnail_service.dart';
@@ -2673,9 +2674,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   ) {
     if (state.isSelectionMode || state.isSearching) return null;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
+    // Scrollable bottom-anchored stack so 3 FABs (play, paste, add) never
+    // overflow on short screens (e.g. landscape / keyboard open).
+    return SingleChildScrollView(
+      reverse: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
         // Quick Play FAB (only show if media exists)
         FutureBuilder<Map<String, List<MediaFile>>>(
           future: _scanCurrentFolderForMedia(),
@@ -2748,6 +2753,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
           child: const Icon(Icons.add_rounded, size: 20),
         ),
       ],
+      ),
     );
   }
 
@@ -2899,10 +2905,12 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
     if (confirmed == true) {
       final result = await notifier.deleteSelectedFiles();
-      if (result) {
+      if (result.needsStorageAccess) {
+        _showStorageAccessDialog(notifier);
+      } else if (result.success) {
         _showSnackBar('Files deleted successfully');
       } else {
-        _showSnackBar('Failed to delete some files');
+        _showSnackBar('Failed to delete some files: ${result.error}');
       }
     }
   }
@@ -2932,7 +2940,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     );
 
     if (confirmed == true) {
-      final result = await FileOperationsService.instance.deleteFiles([entity]);
+      final result =
+          await FileOperationsService.instance.deleteFilesWithPermissionCheck(
+        [entity],
+      );
+      if (result.needsStorageAccess) {
+        _showStorageAccessDialog(notifier, [entity]);
+        return;
+      }
       if (result.success) {
         _showSnackBar('File deleted successfully');
         final state = ref.read(fileBrowserProvider);
@@ -2942,6 +2957,60 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       } else {
         _showSnackBar('Failed to delete file: ${result.error}');
       }
+    }
+  }
+
+  /// Removable volumes (USB OTG / SD) block raw-path deletes on old Android.
+  /// Prompt the user to grant SAF access once, then retry the delete.
+  Future<void> _showStorageAccessDialog(
+    FileBrowserNotifier notifier, [
+    List<FileSystemEntity>? single,
+  ]) async {
+    final granted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Storage Access Needed'),
+        content: const Text(
+          'This USB/SD storage blocks normal file access. To delete files '
+          'here, grant access to this storage once.\n\nYour files are safe — '
+          'this is Android\'s built-in permission dialog.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Grant Access'),
+          ),
+        ],
+      ),
+    );
+
+    if (granted != true || !mounted) return;
+
+    final treeUri = await SafService.instance.pickTree();
+    if (treeUri == null || !mounted) {
+      _showSnackBar('Storage access not granted');
+      return;
+    }
+
+    _showSnackBar('Storage access granted, retrying delete…');
+    final files = single ?? ref.read(fileBrowserProvider).selectedEntities;
+    final result = await FileOperationsService.instance
+        .deleteFilesWithPermissionCheck(files);
+
+    if (!mounted) return;
+    if (result.success) {
+      _showSnackBar('Files deleted successfully');
+      final state = ref.read(fileBrowserProvider);
+      if (state.currentDirectory != null) {
+        notifier.navigateToDirectory(state.currentDirectory!);
+      }
+      if (single == null) notifier.clearSelection();
+    } else {
+      _showSnackBar('Failed to delete files: ${result.error}');
     }
   }
 

@@ -374,6 +374,63 @@ class ImageHelper {
     ]);
   }
 
+  // ✅ ColorFilter matrix for a preset filter preview (doesn't modify file)
+  static ColorFilter? getFilterPreviewColorFilter(ImageFilter filter) {
+    switch (filter) {
+      case ImageFilter.none:
+        return null;
+      case ImageFilter.grayscale:
+        return const ColorFilter.matrix([
+          0.299, 0.587, 0.114, 0, 0,
+          0.299, 0.587, 0.114, 0, 0,
+          0.299, 0.587, 0.114, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.sepia:
+        return const ColorFilter.matrix([
+          0.393, 0.769, 0.189, 0, 0,
+          0.349, 0.686, 0.168, 0, 0,
+          0.272, 0.534, 0.131, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.invert:
+        return const ColorFilter.matrix([
+          -1, 0, 0, 0, 255,
+          0, -1, 0, 0, 255,
+          0, 0, -1, 0, 255,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.vintage:
+        return const ColorFilter.matrix([
+          0.9, 0.5, 0.1, 0, 0,
+          0.3, 0.8, 0.1, 0, 0,
+          0.2, 0.3, 0.5, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.cool:
+        return const ColorFilter.matrix([
+          1.20, -0.20, -0.02, 0, -5,
+          -0.06, 1.08, -0.02, 0, 0,
+          -0.06, -0.20, 1.28, 0, 8,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.warm:
+        return const ColorFilter.matrix([
+          1.20, -0.20, -0.02, 0, 8,
+          -0.06, 1.05, -0.02, 0, 0,
+          -0.06, -0.20, 1.20, 0, -8,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.noir:
+        return const ColorFilter.matrix([
+          0.4485, 0.8805, 0.171, 0, -64,
+          0.4485, 0.8805, 0.171, 0, -64,
+          0.4485, 0.8805, 0.171, 0, -64,
+          0, 0, 0, 1, 0,
+        ]);
+    }
+  }
+
   // ✅ Resize image
   static Future<String?> resizeImage({
     required String imagePath,

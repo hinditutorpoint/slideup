@@ -214,9 +214,19 @@ class VideoPlayerService {
       _subscriptions.add(
         _player!.stream.tracks.listen((tracks) {
           if (!_isDisposed) {
+            final realAudio = tracks.audio
+                .where((t) => t.id != 'auto' && t.id != 'no')
+                .length;
+            final realVideo = tracks.video
+                .where((t) => t.id != 'auto' && t.id != 'no')
+                .length;
+            final realSubtitle = tracks.subtitle
+                .where((t) => t.id != 'auto' && t.id != 'no')
+                .length;
             debugPrint(
-              '📊 Tracks updated - Audio: ${tracks.audio.length}, '
-              'Video: ${tracks.video.length}, Subtitle: ${tracks.subtitle.length}',
+              '📊 Tracks updated - Audio: ${tracks.audio.length} (real: $realAudio), '
+              'Video: ${tracks.video.length} (real: $realVideo), '
+              'Subtitle: ${tracks.subtitle.length} (real: $realSubtitle)',
             );
             _updateState(
               _state.copyWith(
@@ -1331,9 +1341,12 @@ class VideoPlayerService {
     try {
       _updateState(_state.copyWith(mode: PlayerMode.fullscreen));
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      // Force a SINGLE landscape orientation. Requesting both landscape
+      // orientations maps to Android's sensor-landscape mode, which does not
+      // rotate on devices with auto-rotate disabled (common on OEM skins like
+      // ColorOS). A single orientation forces SCREEN_ORIENTATION_LANDSCAPE.
       await SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
       ]);
     } catch (e) {
       debugPrint('❌ enterFullscreen error: $e');

@@ -1,58 +1,80 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-/// Compact inline media player used by the converter Preview tab.
-///
-/// Plays a single local file (audio or video) through `media_kit`. The widget
-/// is re-created whenever the file path changes via [ValueKey] so player state
-/// never leaks across files.
+/// Shared playback state so controls can live outside the player surface.
+class PreviewPlayerController {
+  final ValueNotifier<Duration> position = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> duration = ValueNotifier(Duration.zero);
+  final ValueNotifier<bool> playing = ValueNotifier(false);
+
+  /// Bound by [ConverterPreviewPlayer] once its internal player is ready.
+  void Function()? onTogglePlay;
+  void Function(Duration position)? onSeek;
+  void Function()? onPause;
+
+  void reset() {
+    position.value = Duration.zero;
+    duration.value = Duration.zero;
+    playing.value = false;
+  }
+
+  void dispose() {
+    position.dispose();
+    duration.dispose();
+    playing.dispose();
+  }
+}
+
+/// Premium media player with glassmorphic design and enhanced UX.
 class ConverterPreviewPlayer extends StatefulWidget {
   const ConverterPreviewPlayer({
     super.key,
     required this.path,
-    required this.title,
     required this.hasVideo,
-    this.trimStart = Duration.zero,
-    this.trimEnd = Duration.zero,
-    this.onTrimChanged,
+    this.controller,
   });
 
   final String path;
-  final String title;
   final bool hasVideo;
-
-  /// Trim range to display/preview on the timeline.
-  final Duration trimStart;
-  final Duration trimEnd;
-
-  /// Called when the user sets start/end points from the player.
-  final void Function(Duration start, Duration end)? onTrimChanged;
+  final PreviewPlayerController? controller;
 
   @override
   State<ConverterPreviewPlayer> createState() => _ConverterPreviewPlayerState();
 }
 
 class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   Player? _player;
   VideoController? _controller;
-
   final List<StreamSubscription<dynamic>> _subs = [];
 
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
   bool _playing = false;
   bool _buffering = false;
   bool _error = false;
   String _errorMessage = '';
 
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeInOut,
+    );
+    _fadeController.forward();
+
     _initPlayer();
   }
 
@@ -61,6 +83,7 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
       final player = Player(
         configuration: const PlayerConfiguration(title: 'Converter Preview'),
       );
+
       VideoController? controller;
       if (widget.hasVideo) {
         controller = VideoController(
@@ -70,28 +93,44 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
           ),
         );
       }
+
+      if (!mounted) {
+        await player.dispose();
+        return;
+      }
+
       _player = player;
       _controller = controller;
 
+      final c = widget.controller;
+      if (c != null) {
+        c.onTogglePlay = _togglePlay;
+        c.onSeek = (d) => _seekTo(d.inMilliseconds.toDouble());
+        c.onPause = () => player.pause();
+      }
+
       _subs.add(
-        player.stream.playing.listen(
-          (v) => mounted ? setState(() => _playing = v) : null,
-        ),
+        player.stream.playing.listen((v) {
+          widget.controller?.playing.value = v;
+          if (mounted) {
+            setState(() => _playing = v);
+          }
+        }),
       );
       _subs.add(
-        player.stream.position.listen(
-          (v) => mounted ? setState(() => _position = v) : null,
-        ),
+        player.stream.position.listen((v) {
+          widget.controller?.position.value = v;
+        }),
       );
       _subs.add(
-        player.stream.duration.listen(
-          (v) => mounted ? setState(() => _duration = v) : null,
-        ),
+        player.stream.duration.listen((v) {
+          widget.controller?.duration.value = v;
+        }),
       );
       _subs.add(
-        player.stream.buffering.listen(
-          (v) => mounted ? setState(() => _buffering = v) : null,
-        ),
+        player.stream.buffering.listen((v) {
+          if (mounted) setState(() => _buffering = v);
+        }),
       );
       _subs.add(
         player.stream.error.listen((e) {
@@ -104,7 +143,11 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
         }),
       );
 
-      await player.open(Media(widget.path), play: true);
+      await player.open(Media(widget.path), play: false);
+
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -136,289 +179,620 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
     _player?.seek(Duration(milliseconds: ms.round()));
   }
 
-  String _fmt(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes % 60;
-    final s = d.inSeconds % 60;
-    return h > 0
-        ? '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
-        : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
-
   @override
   void dispose() {
+    _fadeController.dispose();
     WidgetsBinding.instance.removeObserver(this);
+
     for (final s in _subs) {
       s.cancel();
     }
+    _subs.clear();
+
+    _controller = null;
     _player?.dispose();
+    _player = null;
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final player = _player;
-    final controller = _controller;
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outlineVariant),
-        color: Colors.black,
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        padding: const EdgeInsets.all(1.5),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colorScheme.primary.withValues(alpha: 0.55),
+              colorScheme.secondary.withValues(alpha: 0.35),
+            ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.12),
+              blurRadius: 30,
+              offset: Offset.zero,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            color: Colors.black,
+            child: _buildSurface(context),
+          ),
+        ),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: _buildSurface(context, player, controller),
     );
   }
 
-  Widget _buildSurface(
-    BuildContext context,
-    Player? player,
-    VideoController? controller,
-  ) {
+  Widget _buildSurface(BuildContext context) {
     if (_error) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 40,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _errorMessage,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _buildErrorState(context);
     }
 
-    if (player == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white),
-      );
+    if (_player == null) {
+      return _buildLoadingState();
     }
 
-    // Video (or audio visual) fills the whole 16:9 surface.
-    final surface = controller != null
-        ? Video(controller: controller, controls: NoVideoControls)
-        : Center(
-            child: Icon(
-              _playing ? Icons.graphic_eq : Icons.music_note,
-              size: 56,
-              color: Colors.white,
-            ),
-          );
+    final surface = _controller != null
+        ? Video(controller: _controller!, controls: NoVideoControls)
+        : _buildAudioVisualizer();
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _togglePlay,
-          child: surface,
-        ),
-        // Title, progress and timecode overlaid on the top of the player.
-        Positioned(top: 0, left: 0, right: 0, child: _buildTopOverlay(context)),
-        // Play / pause button centered on the player.
-        Center(child: _buildCenterPlayButton()),
-      ],
-    );
-  }
-
-  void _setTrimStart() {
-    if (_duration == Duration.zero) return;
-    var start = _position;
-    var end = widget.trimEnd;
-    // A start at/after the current end invalidates the end point.
-    if (end > Duration.zero && start >= end) end = Duration.zero;
-    widget.onTrimChanged?.call(start, end);
-  }
-
-  void _setTrimEnd() {
-    if (_duration == Duration.zero) return;
-    var end = _position;
-    var start = widget.trimStart;
-    // An end at/before the current start invalidates the start point.
-    if (start > Duration.zero && end <= start) start = Duration.zero;
-    widget.onTrimChanged?.call(start, end);
-  }
-
-  void _clearTrim() {
-    widget.onTrimChanged?.call(Duration.zero, Duration.zero);
-  }
-
-  bool get _hasTrim =>
-      widget.trimStart > Duration.zero || widget.trimEnd > Duration.zero;
-
-  String get _trimLabel {
-    if (!_hasTrim) return 'No trim';
-    return 'Trim ${_fmt(widget.trimStart)}'
-        '${widget.trimEnd > Duration.zero ? ' → ${_fmt(widget.trimEnd)}' : ' → end'}';
-  }
-
-  /// Thin timeline strip highlighting the trimmed segment.
-  Widget _buildTrimStrip() {
-    final totalMs = _duration.inMilliseconds;
-    if (totalMs <= 0) return const SizedBox.shrink();
-
-    final startMs = widget.trimStart.inMilliseconds.clamp(0, totalMs);
-    final endMs = widget.trimEnd.inMilliseconds > 0
-        ? widget.trimEnd.inMilliseconds.clamp(0, totalMs)
-        : totalMs;
-    final startFlex = ((startMs / totalMs) * 1000).round();
-    final midFlex = (((endMs - startMs) / totalMs) * 1000).round();
-    final endFlex = (((totalMs - endMs) / totalMs) * 1000).round();
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(2),
-      child: SizedBox(
-        height: 4,
-        child: Row(
-          children: [
-            Expanded(
-              flex: startFlex.clamp(0, 1) > 0 ? startFlex : 1,
-              child: Container(color: Colors.white24),
-            ),
-            Expanded(
-              flex: midFlex.clamp(0, 1) > 0 ? midFlex : 1,
-              child: Container(color: Colors.amber),
-            ),
-            Expanded(
-              flex: endFlex.clamp(0, 1) > 0 ? endFlex : 1,
-              child: Container(color: Colors.white24),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTrimControls() {
-    final style = TextButton.styleFrom(
-      visualDensity: VisualDensity.compact,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      minimumSize: const Size(0, 30),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      textStyle: const TextStyle(fontSize: 11),
-      foregroundColor: Colors.white70,
-    );
-    return Row(
-      children: [
-        const Icon(Icons.content_cut, size: 13, color: Colors.white70),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            _trimLabel,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
-        ),
-        TextButton(
-          style: style,
-          onPressed: _duration > Duration.zero ? _setTrimStart : null,
-          child: const Text('Start'),
-        ),
-        TextButton(
-          style: style,
-          onPressed: _duration > Duration.zero ? _setTrimEnd : null,
-          child: const Text('End'),
-        ),
-        if (_hasTrim)
-          TextButton(
-            style: style,
-            onPressed: _clearTrim,
-            child: const Text('✕'),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildTopOverlay(BuildContext context) {
-    final durationMs = _duration.inMilliseconds.toDouble();
-    final positionMs = _position.inMilliseconds
-        .clamp(0, _duration.inMilliseconds)
-        .toDouble();
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.7),
-            Colors.transparent,
-          ],
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _togglePlay,
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.title,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              if (_buffering)
-                const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              Text(
-                '${_fmt(_position)} / ${_fmt(_duration)}',
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          ),
-          Slider(
-            value: durationMs > 0 ? positionMs.clamp(0, durationMs) : 0,
-            max: durationMs > 0 ? durationMs : 1,
-            activeColor: Theme.of(context).colorScheme.primary,
-            inactiveColor: Colors.white24,
-            onChanged: _seekTo,
-          ),
-          _buildTrimControls(),
-          const SizedBox(height: 4),
-          _buildTrimStrip(),
+          surface,
+          // Buffering indicator
+          if (_buffering) _buildBufferingIndicator(),
         ],
       ),
     );
   }
 
-  Widget _buildCenterPlayButton() {
-    return IconButton(
-      tooltip: _playing ? 'Pause' : 'Play',
-      iconSize: 64,
-      icon: Icon(
-        _playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
-        color: Colors.white.withValues(alpha: 0.9),
-        shadows: const [Shadow(blurRadius: 8, color: Colors.black54)],
+  Widget _buildErrorState(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.errorContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 48,
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Playback Error',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: Text(
+              _errorMessage,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+        ],
       ),
-      onPressed: _togglePlay,
     );
   }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Loading media...',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAudioVisualizer() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+            Theme.of(context).colorScheme.secondary.withValues(alpha: 0.1),
+          ],
+        ),
+      ),
+      child: Center(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.8, end: _playing ? 1.2 : 0.8),
+          duration: const Duration(milliseconds: 800),
+          curve: Curves.easeInOut,
+          builder: (context, scale, child) {
+            return Transform.scale(
+              scale: scale,
+              child: Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _playing
+                      ? Icons.graphic_eq_rounded
+                      : Icons.music_note_rounded,
+                  size: 64,
+                  color: Colors.white,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBufferingIndicator() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.6),
+          shape: BoxShape.circle,
+        ),
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _formatDuration(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes % 60;
+  final s = d.inSeconds % 60;
+  return h > 0
+      ? '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
+      : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
+/// Playback controls (play/pause, seek bar, time) rendered BELOW the video,
+/// detached from the player surface so nothing overlays the preview.
+class PreviewPlayerControls extends StatelessWidget {
+  const PreviewPlayerControls({super.key, required this.controller});
+
+  final PreviewPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        controller.playing,
+        controller.position,
+        controller.duration,
+      ]),
+      builder: (context, _) {
+        final durationMs = controller.duration.value.inMilliseconds.toDouble();
+        final positionMs = controller.position.value.inMilliseconds
+            .clamp(0, controller.duration.value.inMilliseconds)
+            .toDouble();
+        return Row(
+          children: [
+            IconButton(
+              onPressed: controller.onTogglePlay,
+              tooltip: controller.playing.value ? 'Pause' : 'Play',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+              icon: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, anim) => FadeTransition(
+                  opacity: anim,
+                  child: ScaleTransition(scale: anim, child: child),
+                ),
+                child: Icon(
+                  controller.playing.value
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  key: ValueKey(controller.playing.value),
+                  color: colorScheme.onSurface,
+                  size: 26,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _formatDuration(controller.position.value),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            Expanded(
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 3,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                    elevation: 2,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 14,
+                  ),
+                  activeTrackColor: colorScheme.primary,
+                  inactiveTrackColor: colorScheme.surfaceContainerHighest,
+                  thumbColor: colorScheme.primary,
+                  overlayColor: colorScheme.primary.withValues(alpha: 0.25),
+                ),
+                child: SizedBox(
+                  height: 30,
+                  child: Slider(
+                    value: durationMs > 0 ? positionMs.clamp(0, durationMs) : 0,
+                    max: durationMs > 0 ? durationMs : 1,
+                    onChanged: (ms) => controller.onSeek?.call(
+                      Duration(milliseconds: ms.round()),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Text(
+              _formatDuration(controller.duration.value),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Compact trim range editor. Shows a track with two draggable flag markers
+/// (start/end) directly on it; no time code or progress bar.
+class ConverterTrimPanel extends StatefulWidget {
+  const ConverterTrimPanel({
+    super.key,
+    required this.controller,
+    required this.trimStart,
+    required this.trimEnd,
+    required this.onTrimChanged,
+  });
+
+  final PreviewPlayerController controller;
+  final Duration trimStart;
+  final Duration trimEnd;
+  final void Function(Duration start, Duration end) onTrimChanged;
+
+  @override
+  State<ConverterTrimPanel> createState() => _ConverterTrimPanelState();
+}
+
+class _ConverterTrimPanelState extends State<ConverterTrimPanel> {
+  static const double _markerSize = 24;
+  static const double _trackHeight = 8;
+  static const double _stackHeight = 36;
+  static const double _minGapMs = 100;
+
+  int? _dragTarget;
+
+  bool get _hasTrim =>
+      widget.trimStart > Duration.zero || widget.trimEnd > Duration.zero;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasTrim = _hasTrim;
+
+    return ValueListenableBuilder<Duration>(
+      valueListenable: widget.controller.duration,
+      builder: (context, duration, _) {
+        final enabled = duration > Duration.zero;
+        return Row(
+          children: [
+            Expanded(
+              child: enabled
+                  ? LayoutBuilder(
+                      builder: (context, constraints) => _buildTrimSlider(
+                        context,
+                        constraints.maxWidth,
+                        duration,
+                        colorScheme,
+                      ),
+                    )
+                  : _buildDisabledStrip(colorScheme),
+            ),
+            if (hasTrim) ...[
+              const SizedBox(width: 6),
+              _buildClearButton(context),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDisabledStrip(ColorScheme colorScheme) {
+    return Container(
+      height: _stackHeight,
+      alignment: Alignment.center,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          height: _trackHeight - 2,
+          color: colorScheme.surfaceContainerHighest,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrimSlider(
+    BuildContext context,
+    double width,
+    Duration duration,
+    ColorScheme colorScheme,
+  ) {
+    final durationMs = duration.inMilliseconds.toDouble();
+    final startMs = widget.trimStart.inMilliseconds
+        .clamp(0, duration.inMilliseconds)
+        .toDouble();
+    final endMs = widget.trimEnd.inMilliseconds > 0
+        ? widget.trimEnd.inMilliseconds
+              .clamp(0, duration.inMilliseconds)
+              .toDouble()
+        : durationMs;
+
+    final usable = (width - _markerSize).clamp(0.0, double.infinity);
+    if (usable <= 0) return const SizedBox(height: _stackHeight);
+
+    final startX = _markerSize / 2 + (startMs / durationMs) * usable;
+    final endX = _markerSize / 2 + (endMs / durationMs) * usable;
+    final trackTop = _stackHeight / 2 - _trackHeight / 2;
+    final maxLeft = (width - _markerSize).clamp(0.0, double.infinity);
+
+    double msFromX(double dx) {
+      return ((dx - _markerSize / 2) / usable * durationMs)
+          .clamp(0.0, durationMs);
+    }
+
+    void setMarker(double dx, int target) {
+      final ms = msFromX(dx);
+      if (target == 0) {
+        final maxEnd = endMs - _minGapMs;
+        final clamped = ms.clamp(0.0, maxEnd);
+        widget.onTrimChanged(
+          Duration(milliseconds: clamped.round()),
+          widget.trimEnd,
+        );
+      } else {
+        final minStart = startMs + _minGapMs;
+        final clamped = ms.clamp(minStart, durationMs);
+        widget.onTrimChanged(
+          widget.trimStart,
+          Duration(milliseconds: clamped.round()),
+        );
+      }
+    }
+
+    int nearestMarker(double dx) {
+      return (dx - startX).abs() <= (dx - endX).abs() ? 0 : 1;
+    }
+
+    return SizedBox(
+      height: _stackHeight,
+      width: width,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapDown: (d) {
+          setMarker(d.localPosition.dx, nearestMarker(d.localPosition.dx));
+          HapticFeedback.selectionClick();
+        },
+        onHorizontalDragStart: (d) {
+          _dragTarget = nearestMarker(d.localPosition.dx);
+          HapticFeedback.selectionClick();
+        },
+        onHorizontalDragUpdate: (d) {
+          final target = _dragTarget;
+          if (target == null) return;
+          setMarker(d.localPosition.dx, target);
+        },
+        onHorizontalDragEnd: (_) => _dragTarget = null,
+        onHorizontalDragCancel: () => _dragTarget = null,
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              right: 0,
+              top: trackTop,
+              height: _trackHeight,
+              child: _buildTrack(
+                context,
+                width,
+                startX,
+                endX,
+                colorScheme,
+              ),
+            ),
+            Positioned(
+              left: (startX - _markerSize / 2).clamp(0.0, maxLeft),
+              top: 0,
+              child: _buildMarker(context, colorScheme.primary),
+            ),
+            Positioned(
+              left: (endX - _markerSize / 2).clamp(0.0, maxLeft),
+              top: 0,
+              child: _buildMarker(context, colorScheme.secondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrack(
+    BuildContext context,
+    double width,
+    double startX,
+    double endX,
+    ColorScheme colorScheme,
+  ) {
+    return Stack(
+      children: [
+        Container(
+          width: width,
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        Positioned(
+          left: startX,
+          width: (endX - startX).clamp(0.0, width),
+          top: 0,
+          bottom: 0,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [colorScheme.primary, colorScheme.secondary],
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMarker(BuildContext context, Color color) {
+    return SizedBox(
+      width: _markerSize,
+      height: _stackHeight,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: _markerSize,
+            height: 18,
+            child: CustomPaint(
+              painter: _PentagonPainter(color: color),
+            ),
+          ),
+          Container(
+            width: 3,
+            height: 8,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClearButton(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: 'Clear trim',
+      onPressed: () {
+        HapticFeedback.selectionClick();
+        widget.onTrimChanged(Duration.zero, Duration.zero);
+      },
+      icon: Icon(Icons.close_rounded, size: 18, color: colorScheme.error),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+/// Upward-pointing pentagon (house shape) trim marker.
+class _PentagonPainter extends CustomPainter {
+  const _PentagonPainter({required this.color});
+
+  final Color color;
+
+  static const List<Offset> _pts = [
+    Offset(0.50, 0.06),
+    Offset(0.94, 0.40),
+    Offset(0.78, 0.94),
+    Offset(0.22, 0.94),
+    Offset(0.06, 0.40),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path();
+    for (var i = 0; i < _pts.length; i++) {
+      final p = Offset(_pts[i].dx * size.width, _pts[i].dy * size.height);
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    path.close();
+    canvas.drawShadow(
+      path,
+      Colors.black54,
+      3,
+      false,
+    );
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PentagonPainter old) => old.color != color;
 }

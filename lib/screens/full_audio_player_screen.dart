@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:share_plus/share_plus.dart';
 import '../models/media_file.dart';
+import '../models/audio_data.dart';
 import '../providers/audio_handler_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../helpers/format_helper.dart';
@@ -36,6 +37,8 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   bool _isFavorite = false;
   String? _currentMediaId;
   bool _showLyrics = false;
+  String? _trackInfoPath;
+  Future<AudioData?>? _trackInfoFuture;
 
   @override
   void initState() {
@@ -322,32 +325,62 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   }
 
   Widget _buildTrackInfo(MediaItem? mediaItem) {
+    final path = mediaItem?.extras?['path'] as String?;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32.0),
-      child: Column(
-        children: [
-          Text(
-            mediaItem?.title ?? 'Unknown',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            mediaItem?.artist ?? 'Unknown Artist',
-            style: TextStyle(fontSize: 18, color: Colors.grey[400]),
-          ),
-          if (mediaItem?.album != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              mediaItem!.album!,
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-            ),
-          ],
-        ],
+      child: FutureBuilder<AudioData?>(
+        future: _audioDataForPath(path),
+        builder: (context, snapshot) {
+          final data = snapshot.data;
+          final title = data?.title ?? mediaItem?.title ?? 'Unknown';
+          final artist =
+              data?.artist ?? mediaItem?.artist ?? 'Unknown Artist';
+          final album = data?.album ?? mediaItem?.album;
+
+          return Column(
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                artist,
+                style: TextStyle(fontSize: 18, color: Colors.grey[400]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (album != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  album,
+                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
+  }
+
+  Future<AudioData?> _audioDataForPath(String? path) {
+    if (path == null || path.isEmpty) {
+      return Future<AudioData?>.value(null);
+    }
+    if (_trackInfoPath != path || _trackInfoFuture == null) {
+      _trackInfoPath = path;
+      _trackInfoFuture = AudioData.load(path);
+    }
+    return _trackInfoFuture!;
   }
 
   Widget _buildProgressBar(dynamic audioHandler) {
@@ -869,41 +902,117 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
 
     if (mediaItem == null) return;
 
-    showDialog(
+    final path = mediaItem.extras?['path'] as String?;
+    final future = path == null || path.isEmpty
+        ? Future<AudioData?>.value(null)
+        : AudioData.load(path);
+
+    showModalBottomSheet<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Song Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildDetailRow('Title', mediaItem.title),
-              _buildDetailRow('Artist', mediaItem.artist ?? 'Unknown'),
-              if (mediaItem.album != null)
-                _buildDetailRow('Album', mediaItem.album!),
-              if (mediaItem.genre != null)
-                _buildDetailRow('Genre', mediaItem.genre!),
-              if (mediaItem.extras != null) ...[
-                if (mediaItem.extras!['size'] != null)
-                  _buildDetailRow(
-                    'Size',
-                    FormatHelper.formatBytes(mediaItem.extras!['size']),
-                  ),
-                if (mediaItem.extras!['path'] != null)
-                  _buildDetailRow('Path', mediaItem.extras!['path']),
-              ],
-            ],
-          ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.75,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20.0),
+              child: Text(
+                'Song Details',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            Expanded(
+              child: FutureBuilder<AudioData?>(
+                future: future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    children: _buildAudioDetailRows(
+                      snapshot.data,
+                      mediaItem,
+                      path,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  List<Widget> _buildAudioDetailRows(
+    AudioData? data,
+    MediaItem item,
+    String? path,
+  ) {
+    final rows = <Widget>[];
+
+    void add(String label, String? value) {
+      if (value != null && value.isNotEmpty) {
+        rows.add(_buildDetailRow(label, value));
+      }
+    }
+
+    add('Title', data?.title ?? item.title);
+    add('Album', data?.album ?? item.album);
+    add('Artist', data?.artist ?? item.artist);
+    add('Album Artist', data?.albumArtist);
+    add('Author', data?.author);
+    add('Writer', data?.writer);
+    add('Composer', data?.composer);
+    add('Genre', data?.genre ?? item.genre);
+    add('Year', data?.year?.toString());
+    add('Date', data?.date);
+    add('Track Number', data?.trackNumber?.toString());
+    add('Disc Number', data?.discNumber?.toString());
+    if (data?.compilation == true) {
+      add('Compilation', 'Yes');
+    }
+    add('Duration', data?.durationFormatted);
+    add('Bitrate', data?.bitrateKbps);
+    add('Quality', data?.quality);
+    add('MIME Type', data?.mimeType);
+    final rawSize = item.extras?['size'];
+    add(
+      'Size',
+      data?.fileSizeMB ??
+          (rawSize is num ? FormatHelper.formatBytes(rawSize.toInt()) : null),
+    );
+    add('Bytes', data?.fileSizeBytes?.toString());
+    if (data?.hasArtwork == true) {
+      add('Artwork', 'Embedded');
+    }
+    add('Path', path);
+
+    return rows;
   }
 
   Widget _buildDetailRow(String label, String value) {

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/database/database_helper.dart';
+import '../core/database/database_helper.dart';
 import '../services/download_service.dart';
 import '../services/notification_service.dart';
 import '../services/permission_service.dart';
-import '../../features/documents/models/download_task.dart';
+import '../features/documents/models/download_task.dart';
 
 // Service providers
 final notificationServiceProvider = Provider<NotificationService>((ref) {
@@ -95,6 +95,7 @@ class DownloadsNotifier extends Notifier<DownloadsState> {
     await _notificationService.initialize();
     await loadDownloads();
 
+    _subscription?.cancel();
     _subscription = _downloadService.allDownloadsStream.listen((downloads) {
       state = state.copyWith(downloads: downloads);
     });
@@ -184,6 +185,14 @@ class DownloadsNotifier extends Notifier<DownloadsState> {
       'Failed to delete download',
     );
 
+    await loadDownloads();
+  }
+
+  Future<void> updateTask(DownloadTask task) async {
+    await _safeCall(
+      () => _downloadService.updateTask(task),
+      'Failed to update download task',
+    );
     await loadDownloads();
   }
 

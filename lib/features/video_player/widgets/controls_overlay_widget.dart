@@ -1482,20 +1482,32 @@ class _FitDialog extends StatelessWidget {
       backgroundColor: const Color(0xE6212121),
       insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 80),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _DialogHeader(title: 'Video Fit'),
-          ...VideoFit.values.map((fit) {
-            final isSelected = currentFit == fit;
-            return _DialogOption(
-              title: _getFitName(fit),
-              selected: isSelected,
-              onTap: () => onFitSelected(fit),
-            );
-          }),
-          const SizedBox(height: 8),
-        ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320, maxHeight: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DialogHeader(title: 'Video Fit'),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ...VideoFit.values.map((fit) {
+                      final isSelected = currentFit == fit;
+                      return _DialogOption(
+                        title: _getFitName(fit),
+                        selected: isSelected,
+                        onTap: () => onFitSelected(fit),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
@@ -1537,34 +1549,46 @@ class _FlipDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: const Color(0xE6212121),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 100),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 80),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _DialogHeader(title: 'Flip Video'),
-          _DialogOption(
-            title: 'Flip Horizontal',
-            selected: isFlippedH,
-            icon: Icons.flip,
-            onTap: onFlipHorizontal,
-          ),
-          _DialogOption(
-            title: 'Flip Vertical',
-            selected: isFlippedV,
-            icon: Icons.flip,
-            iconRotation: 1.5708,
-            onTap: onFlipVertical,
-          ),
-          if (hasFlip)
-            _DialogOption(
-              title: 'Reset',
-              selected: false,
-              icon: Icons.refresh,
-              onTap: onReset,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320, maxHeight: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DialogHeader(title: 'Flip Video'),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _DialogOption(
+                      title: 'Flip Horizontal',
+                      selected: isFlippedH,
+                      icon: Icons.flip,
+                      onTap: onFlipHorizontal,
+                    ),
+                    _DialogOption(
+                      title: 'Flip Vertical',
+                      selected: isFlippedV,
+                      icon: Icons.flip,
+                      iconRotation: 1.5708,
+                      onTap: onFlipVertical,
+                    ),
+                    if (hasFlip)
+                      _DialogOption(
+                        title: 'Reset',
+                        selected: false,
+                        icon: Icons.refresh,
+                        onTap: onReset,
+                      ),
+                  ],
+                ),
+              ),
             ),
-          const SizedBox(height: 8),
-        ],
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }

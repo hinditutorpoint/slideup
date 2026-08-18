@@ -363,8 +363,10 @@ class FullPrivacyPolicyScreen extends StatelessWidget {
                 'You can clear your local cache, playback history, and saved playlists at any time in the app settings. Uninstalling the application completely removes all locally stored app configuration.',
               ),
               _buildSection(
-                '6. Contact Us',
-                'If you have any questions or feedback regarding our privacy practices, please contact us through our official developer portal or repository.',
+                '6. Contact Us & Grievance Officer',
+                'If you have any questions, concerns, or grievances regarding our privacy practices or your personal data, please contact our Grievance Officer at:\n\n'
+                'Grievance Officer Email: hinditutorpoint@gmail.com\n\n'
+                'We will review and respond to your grievance as soon as possible.',
               ),
               const SizedBox(height: 24),
             ],

@@ -5,7 +5,7 @@ import 'package:percent_indicator/circular_percent_indicator.dart';
 import 'package:share_plus/share_plus.dart';
 import '../shared/widgets/empty_state_widget.dart';
 import '../shared/widgets/loading_widget.dart';
-import '../../features/documents/models/download_task.dart';
+import '../features/documents/models/download_task.dart';
 import '../providers/download_providers.dart';
 import 'package:slideup/features/documents/screens/unified_reader_screen.dart';
 import '../models/media_file.dart';

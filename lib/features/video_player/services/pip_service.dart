@@ -45,6 +45,11 @@ class PiPService {
   final _stateController = StreamController<PiPState>.broadcast();
   Stream<PiPState> get stateStream => _stateController.stream;
 
+  /// Emits PiP action names ("play_pause" | "previous" | "next") tapped on
+  /// the native Android PiP menu (registered as RemoteActions in Kotlin).
+  final _pipActionController = StreamController<String>.broadcast();
+  Stream<String> get pipActionStream => _pipActionController.stream;
+
   // Custom PiP State
   PiPState _state = PiPState.inactive;
   bool _wasCustomActive = false;
@@ -52,6 +57,18 @@ class PiPService {
   PiPSize _size = PiPSize.small;
 
   PiPService._internal() {
+    // Forward native PiP menu actions (tapped in the OS PiP window) to Dart.
+    const MethodChannel('com.slideup.mediaplayer/background_video')
+        .setMethodCallHandler((call) async {
+      if (call.method == 'pipAction') {
+        final action = call.arguments as String?;
+        if (action != null && !_pipActionController.isClosed) {
+          _pipActionController.add(action);
+        }
+      }
+      return null;
+    });
+
     // ✅ Initialize SimplePip with Callbacks
     _simplePip = SimplePip(
       onPipEntered: () {
@@ -95,9 +112,13 @@ class PiPService {
 
   /// ✅ AUTO-ENTER (Android 12+ via simple_pip, Android 8-11 via native channel)
   Future<void> enableAutoNativePiP({int aspectX = 16, int aspectY = 9}) async {
+    // Android 12+ path: simple_pip handles autoEnter natively.
+    // setAutoPipMode THROWS on Android < 12 (plugin returns
+    // "NotImplemented / System Version less than Android S found"), so it is
+    // gated by isAutoPipAvailable AND isolated in its own try/catch so it can
+    // never block the Android 8–11 fallback below.
     try {
-      if (await SimplePip.isPipAvailable) {
-        // Android 12+: simple_pip handles autoEnter natively
+      if (await SimplePip.isPipAvailable && await SimplePip.isAutoPipAvailable) {
         sar.AspectRatio aspectRatio = (aspectX, aspectY);
         await _simplePip.setAutoPipMode(
           aspectRatio: aspectRatio,
@@ -105,21 +126,24 @@ class PiPService {
           autoEnter: true,
         );
       }
-      // Android 8–11: tell our Kotlin onUserLeaveHint to enter PiP on Home press
-      await _setNativeAutoEnter(true);
     } catch (e) {
-      debugPrint('❌ Auto-PiP Error: $e');
+      debugPrint('❌ Auto-PiP (Android 12+) Error: $e');
     }
+    // Android 8–11: tell our Kotlin onUserLeaveHint to enter PiP on Home press.
+    // MUST run unconditionally — it is what makes Home-press PiP work pre-12.
+    await _setNativeAutoEnter(true);
   }
 
   /// ✅ DISABLE AUTO-ENTER
   Future<void> disableAutoNativePiP() async {
     try {
-      await _simplePip.setAutoPipMode(autoEnter: false);
-      await _setNativeAutoEnter(false);
+      if (await SimplePip.isAutoPipAvailable) {
+        await _simplePip.setAutoPipMode(autoEnter: false);
+      }
     } catch (e) {
-      debugPrint('❌ Disable Auto-PiP Error: $e');
+      debugPrint('❌ Disable Auto-PiP (Android 12+) Error: $e');
     }
+    await _setNativeAutoEnter(false);
   }
 
   /// Notifies the Kotlin [MainActivity] whether to auto-enter PiP
@@ -229,5 +253,6 @@ class PiPService {
 
   void dispose() {
     _stateController.close();
+    _pipActionController.close();
   }
 }

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../features/private_browser/private_browser_screen.dart';
 import '../../../../core/constants/legal_content.dart';
 import 'open_source_licenses_screen.dart';
 import 'privacy_policy_screen.dart';
@@ -111,15 +114,15 @@ class AboutScreen extends StatelessWidget {
             title: const Text('Internet Archive'),
             subtitle: const Text('archive.org'),
             trailing: const Icon(Icons.open_in_new),
-            onTap: () => _launchUrl('https://archive.org'),
+            onTap: () => _launchUrl(context, 'https://archive.org'),
           ),
 
           ListTile(
             leading: const Icon(Icons.language),
             title: const Text('Pixabay'),
-            subtitle: const Text('pixabay.org'),
+            subtitle: const Text('pixabay.com'),
             trailing: const Icon(Icons.open_in_new),
-            onTap: () => _launchUrl('https://pixabay.org'),
+            onTap: () => _launchUrl(context, 'https://pixabay.com'),
           ),
 
           ListTile(
@@ -127,7 +130,7 @@ class AboutScreen extends StatelessWidget {
             title: const Text('Contact Support'),
             subtitle: Text(LegalContent.companyEmail),
             trailing: const Icon(Icons.open_in_new),
-            onTap: () => _launchUrl('mailto:${LegalContent.companyEmail}'),
+            onTap: () => _launchUrl(context, 'mailto:${LegalContent.companyEmail}'),
           ),
 
           ListTile(
@@ -136,7 +139,8 @@ class AboutScreen extends StatelessWidget {
             subtitle: const Text('Share your feedback'),
             trailing: const Icon(Icons.open_in_new),
             onTap: () => _launchUrl(
-              'https://play.google.com/store/apps/details?id=com.yourcompany.archivesearch',
+              context,
+              'https://play.google.com/store/apps/details?id=com.slideup.mediaplayer',
             ),
           ),
 
@@ -177,12 +181,23 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _launchUrl(String url) async {
+  Future<void> _launchUrl(BuildContext context, String url) async {
     try {
-      /* final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } */
+      final uri = Uri.parse(url);
+      if (uri.scheme == 'mailto') {
+        await Clipboard.setData(ClipboardData(text: uri.path));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Email address copied to clipboard')),
+        );
+        return;
+      }
+      if (!context.mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PrivateBrowserScreen(initialUrl: url),
+        ),
+      );
     } catch (e) {
       debugPrint('Error launching URL: $e');
     }

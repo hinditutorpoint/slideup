@@ -3,8 +3,8 @@ class LegalContent {
 
   static const String appName = 'Slideup Media Player';
   static const String companyName = 'SlideUp Open Source Project';
-  static const String companyEmail =
-      'https://github.com/hinditutorpoint/slideup/issues';
+  static const String companyEmail = 'hinditutorpoint@gmail.com';
+  static const String grievanceOfficerEmail = 'hinditutorpoint@gmail.com';
   static const String companyWebsite =
       'https://hinditutorpoint.github.io/slideup/';
   static const String lastUpdated = 'January 1, 2025';
@@ -125,7 +125,8 @@ Your continued use of the App after any changes indicates your acceptance of the
 
 If you have questions or concerns about this Privacy Policy, please contact us at:
 
-Email: $companyEmail
+Developer Email: $companyEmail
+Grievance Officer Email: $grievanceOfficerEmail
 Website: $companyWebsite
 
 12. CONSENT

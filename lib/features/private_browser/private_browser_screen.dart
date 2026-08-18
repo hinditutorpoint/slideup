@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,13 +7,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../features/video_player/video_player_launcher.dart';
-import '../../../helpers/audio_playback_helper.dart';
-import '../../../models/media_file.dart';
+import '../documents/models/download_task.dart';
 import '../documents/screens/unified_reader_screen.dart';
 import '../iptv/providers/iptv_providers.dart';
 import '../iptv/screens/iptv_player_screen.dart';
 import '../iptv/services/m3u_parser.dart';
+import '../video_player/video_player_launcher.dart';
+import '../../helpers/audio_playback_helper.dart';
+import '../../models/media_file.dart';
+import '../../providers/download_providers.dart';
+import 'browser_downloads_screen.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
 
@@ -63,7 +67,8 @@ class PrivateBrowserScreen extends ConsumerStatefulWidget {
   const PrivateBrowserScreen({super.key, this.initialUrl});
 
   @override
-  ConsumerState<PrivateBrowserScreen> createState() => _PrivateBrowserScreenState();
+  ConsumerState<PrivateBrowserScreen> createState() =>
+      _PrivateBrowserScreenState();
 }
 
 // ─── Data model ───────────────────────────────────────────────────────────────
@@ -165,6 +170,247 @@ const _kEnhancedPathSegments = <String>[
   '/ad_unit',
   '/pop-under',
 ];
+
+/// Adult, NSFW, Pop-Under, and High-Volume Video Ad Network Domains.
+const _kNsfwAndPopunderHosts = <String>{
+  // Major Adult & NSFW Ad Networks
+  'exoclick.com',
+  'exosrv.com',
+  'juicyads.com',
+  'trafficjunky.com',
+  'trafficjunky.net',
+  'trafficstars.com',
+  'ero-advertising.com',
+  'plugrush.com',
+  'clickaine.com',
+  'adxad.com',
+  'adxxx.com',
+  'trafficfactory.biz',
+  'realsrv.com',
+  'adx1.com',
+  'hubtraffic.com',
+  'adxpansion.com',
+
+  // Pop-Under, Redirect & Push Hijack Networks
+  'popads.net',
+  'popcash.net',
+  'propellerads.com',
+  'propellerclick.com',
+  'adsterra.com',
+  'hilltopads.com',
+  'monetag.com',
+  'clickadu.com',
+  'adcash.com',
+  'yllix.com',
+  'bidvertiser.com',
+  'adtrue.com',
+  'admaven.com',
+  'richpush.co',
+  'evadav.com',
+  'pushground.com',
+  'rollerads.com',
+  'vidoomy.com',
+  'adglare.net',
+  'a-ads.com',
+  'onclickalgo.com',
+  'onclickbright.com',
+  'onclicktop.com',
+  'onclickpredict.com',
+  'onclickmega.com',
+  'adlightning.com',
+  'zergnet.com',
+  'mgid.com',
+  'revcontent.com',
+
+  // Cam / Landing Page Spam & Push Spam Networks
+  'chaturbate.com',
+  'stripchat.com',
+  'livejasmin.com',
+  'camsoda.com',
+  'bongacams.com',
+  'imlive.com',
+  'flirt4free.com',
+  'cam4.com',
+  'streamate.com',
+  'fleshlight.com',
+  'webcamgalore.com',
+  'jerkmate.com',
+
+  // Malicious Gambling Redirects
+  'bet365.com',
+  '1xbet.com',
+  'parimatch.com',
+  'melbet.com',
+  'mostbet.com',
+  'pin-up.bet',
+  '1win.pro',
+
+  // Crypto miners & malware
+  'coinhive.com',
+  'crypto-loot.com',
+  'jsecoin.com',
+  'coin-have.com',
+  'minr.pw',
+};
+
+/// Script injected into WebView to neutralize click-hijack overlays, popunder window.open abuse,
+/// and hide adult banner elements cosmetically with CSS.
+const _kAdBlockUserScript = '''
+(function() {
+  'use strict';
+
+  // 1. Anti-Adblock Defeat (Prevents sites from freezing when ads are blocked)
+  window.adBlock = false;
+  window.canRunAds = true;
+  window.google_ad_status = 1;
+  window.adblocker = false;
+  window.isAdBlockActive = false;
+
+  // 2. Anti-Popunder: Neutralize window.open abuse
+  var _origOpen = window.open;
+  window.open = function(url, target, features) {
+    if (!url || url === 'about:blank' || url === '') {
+      return {
+        closed: false,
+        close: function() {},
+        focus: function() {},
+        blur: function() {},
+        location: { href: '' },
+        document: { write: function() {}, close: function() {} }
+      };
+    }
+    var lowerUrl = (url + '').toLowerCase();
+    var adKeywords = [
+      'popads', 'popcash', 'exoclick', 'juicyads', 'trafficjunky',
+      'adsterra', 'propellerads', 'onclick', 'stripchat', 'chaturbate',
+      'livejasmin', 'bongacams', 'camsoda', 'bet365', '1xbet', 'adcash',
+      'clickadu', 'hilltopads', 'monetag', 'adtrue', 'admaven', 'rollerads'
+    ];
+    for (var i = 0; i < adKeywords.length; i++) {
+      if (lowerUrl.indexOf(adKeywords[i]) !== -1) {
+        return null;
+      }
+    }
+    return _origOpen.apply(this, arguments);
+  };
+
+  // 3. Intercept dynamic clickjacking (<a target="_blank"> created and clicked in code)
+  var _origClick = HTMLElement.prototype.click;
+  HTMLElement.prototype.click = function() {
+    if (this.tagName === 'A' && this.target === '_blank') {
+      var href = (this.href || '').toLowerCase();
+      var adKeywords = [
+        'popads', 'popcash', 'exoclick', 'juicyads', 'trafficjunky',
+        'adsterra', 'propellerads', 'onclick', 'stripchat', 'chaturbate',
+        'livejasmin', 'bongacams', 'camsoda', 'bet365', '1xbet'
+      ];
+      for (var i = 0; i < adKeywords.length; i++) {
+        if (href.indexOf(adKeywords[i]) !== -1) {
+          return;
+        }
+      }
+    }
+    return _origClick.apply(this, arguments);
+  };
+
+  // 4. Remove transparent click-hijack overlays
+  function removeOverlays() {
+    try {
+      var allDivs = document.querySelectorAll('div, a, span');
+      for (var i = 0; i < allDivs.length; i++) {
+        var el = allDivs[i];
+        var style = window.getComputedStyle(el);
+        if (style.position === 'fixed' || style.position === 'absolute') {
+          var zIndex = parseInt(style.zIndex, 10);
+          var opacity = parseFloat(style.opacity);
+          if ((zIndex > 999 && opacity <= 0.05) ||
+              (zIndex > 9999 && el.offsetWidth >= window.innerWidth * 0.9 && el.offsetHeight >= window.innerHeight * 0.9)) {
+            if (!el.getAttribute('role') && !el.querySelector('video, audio, input, form')) {
+              el.remove();
+            }
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 5. Cosmetic CSS Element Hiding for Adult & Video Ads
+  var css = `
+    iframe[src*="exoclick"],
+    iframe[src*="juicyads"],
+    iframe[src*="trafficjunky"],
+    iframe[src*="popads"],
+    iframe[src*="adsterra"],
+    iframe[src*="propellerads"],
+    iframe[src*="clickadu"],
+    .juicyads,
+    .exo-native-widget,
+    .trafficjunky,
+    .ad-container,
+    .ad_container,
+    .banner-ad,
+    .banner_ad,
+    [id*="ad_banner"],
+    [class*="ad_banner"],
+    [class*="ad-banner"],
+    [id*="ad-banner"],
+    [class*="native-ad"],
+    [id*="popunder"],
+    [class*="popunder"],
+    [id*="overlay-ad"],
+    [class*="overlay-ad"],
+    div[class*="floating-ad"],
+    div[id*="floating-ad"],
+    div[class*="sticky-ad"],
+    div[id*="sticky-ad"],
+    div[class*="banner_advertisement"],
+    div[class*="sponsor-banner"],
+    div[id*="sponsored-ad"] {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      width: 0 !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+  `;
+
+  function injectCSS() {
+    if (document.head) {
+      var style = document.createElement('style');
+      style.type = 'text/css';
+      style.appendChild(document.createTextNode(css));
+      document.head.appendChild(style);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      injectCSS();
+      removeOverlays();
+    });
+  } else {
+    injectCSS();
+    removeOverlays();
+  }
+
+  window.addEventListener('load', function() {
+    setTimeout(removeOverlays, 1000);
+    setTimeout(removeOverlays, 3000);
+  });
+
+  var observer = new MutationObserver(function() {
+    removeOverlays();
+  });
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', function() {
+      if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+})();
+''';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -486,6 +732,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   bool _isBlockedHost(Uri uri) {
     final host = uri.host.toLowerCase();
     if (_hostMatch(host, _kTrackerHosts)) return true;
+    if (_hostMatch(host, _kNsfwAndPopunderHosts)) return true;
     if (_trackerMode == TrackerBlockMode.normal) return false;
     if (_hostMatch(host, _kAdvancedTrackerHosts)) return true;
     return false;
@@ -516,6 +763,9 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     }
 
     for (final h in _kTrackerHosts) {
+      addHostRule(h);
+    }
+    for (final h in _kNsfwAndPopunderHosts) {
       addHostRule(h);
     }
     if (_trackerMode.index >= TrackerBlockMode.advanced.index) {
@@ -763,11 +1013,16 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               child: Row(
@@ -803,6 +1058,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final m = media[index];
+                  final uri = Uri.tryParse(m.url);
                   return ListTile(
                     dense: true,
                     leading: Icon(
@@ -823,15 +1079,44 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12),
                     ),
-                    trailing: IconButton(
-                      tooltip: 'Play',
-                      icon: const Icon(Icons.play_circle_outline, size: 22),
-                      color: Colors.teal,
-                      onPressed: () {
-                        Navigator.of(sheetContext).pop();
-                        _playScannedMedia(m.url, isVideo: m.isVideo);
-                      },
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Download',
+                          icon: const Icon(Icons.download_rounded, size: 20),
+                          color: Colors.teal,
+                          onPressed: () {
+                            Navigator.of(sheetContext).pop();
+                            _startDownloadFromBrowser(
+                              url: m.url,
+                              title: m.title.isNotEmpty ? m.title : 'Media File',
+                              mediaType: m.isVideo ? 'video' : 'audio',
+                            );
+                          },
+                        ),
+                        IconButton(
+                          tooltip: 'Play',
+                          icon: const Icon(Icons.play_circle_outline, size: 22),
+                          color: Colors.teal,
+                          onPressed: () {
+                            Navigator.of(sheetContext).pop();
+                            _playScannedMedia(m.url, isVideo: m.isVideo);
+                          },
+                        ),
+                      ],
                     ),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      if (uri != null) {
+                        _showInterceptChoiceModal(
+                          uri,
+                          customTitle: m.title.isNotEmpty ? m.title : null,
+                        );
+                      } else {
+                        _playScannedMedia(m.url, isVideo: m.isVideo);
+                      }
+                    },
                   );
                 },
               ),
@@ -840,26 +1125,87 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           ],
         ),
       ),
+      ),
     );
   }
 
   static const _kDocumentExtensions = [
-    '.pdf', '.epub', '.txt', '.doc', '.docx', '.rtf', '.fb2', '.mobi',
+    '.pdf',
+    '.epub',
+    '.txt',
+    '.doc',
+    '.docx',
+    '.rtf',
+    '.fb2',
+    '.mobi',
   ];
 
   static const _kAudioExtensions = [
-    '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.wma', '.opus',
-    '.aiff', '.ape', '.alac', '.wv', '.tta', '.ac3', '.dts', '.mka',
-    '.ra', '.ram', '.oga', '.mogg', '.mid', '.midi', '.mus', '.psf',
-    '.spc', '.m4b', '.amr',
+    '.mp3',
+    '.wav',
+    '.flac',
+    '.aac',
+    '.m4a',
+    '.ogg',
+    '.wma',
+    '.opus',
+    '.aiff',
+    '.ape',
+    '.alac',
+    '.wv',
+    '.tta',
+    '.ac3',
+    '.dts',
+    '.mka',
+    '.ra',
+    '.ram',
+    '.oga',
+    '.mogg',
+    '.mid',
+    '.midi',
+    '.mus',
+    '.psf',
+    '.spc',
+    '.m4b',
+    '.amr',
   ];
 
   static const _kVideoExtensions = [
-    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.3gp', '.webm',
-    '.m4v', '.mpg', '.mpeg', '.ts', '.m3u8', '.mpd', '.f4v', '.vob',
-    '.ogv', '.drc', '.gifv', '.mng', '.qt', '.yuv', '.rm', '.rmvb',
-    '.asf', '.amv', '.mp2', '.mpe', '.mpv', '.m2v', '.svi', '.3g2',
-    '.mxf', '.roq', '.nsv',
+    '.mp4',
+    '.mkv',
+    '.avi',
+    '.mov',
+    '.wmv',
+    '.flv',
+    '.3gp',
+    '.webm',
+    '.m4v',
+    '.mpg',
+    '.mpeg',
+    '.ts',
+    '.m3u8',
+    '.mpd',
+    '.f4v',
+    '.vob',
+    '.ogv',
+    '.drc',
+    '.gifv',
+    '.mng',
+    '.qt',
+    '.yuv',
+    '.rm',
+    '.rmvb',
+    '.asf',
+    '.amv',
+    '.mp2',
+    '.mpe',
+    '.mpv',
+    '.m2v',
+    '.svi',
+    '.3g2',
+    '.mxf',
+    '.roq',
+    '.nsv',
   ];
 
   static bool _isM3uUrl(Uri uri) {
@@ -896,36 +1242,307 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   }
 
   /// Intercepts and handles M3U Playlists, Documents (PDF/EPUB/TXT), Audio (MP3/etc), and Video.
+  /// Shows modal asking user to Download | Play/View | Cancel.
   /// Returns true if the URL was handled.
   bool _handleSpecialUrl(Uri uri) {
     if (!mounted) return false;
-    final urlStr = uri.toString();
 
-    // 1. M3U / IPTV Playlist files -> Parse and open in IPTV Player
-    if (_isM3uUrl(uri)) {
-      final fileName = _getFileNameFromUri(uri, 'IPTV Playlist');
-      _openM3uPlaylist(urlStr, fileName);
+    if (_isM3uUrl(uri) ||
+        _isDocumentUrl(uri) ||
+        _isAudioUrl(uri) ||
+        _isVideoUrl(uri)) {
+      _showInterceptChoiceModal(uri);
       return true;
     }
 
-    // 2. Documents (PDF, EPUB, TXT, etc.) -> Open in UnifiedReaderScreen
-    if (_isDocumentUrl(uri)) {
-      final fileName = _getFileNameFromUri(uri, 'Document');
+    return false;
+  }
+
+  /// Shows the Download | Play/View | Cancel interception bottom sheet.
+  void _showInterceptChoiceModal(Uri uri, {String? customTitle}) {
+    if (!mounted) return;
+    final urlStr = uri.toString();
+
+    // Determine category and visual traits
+    final String category;
+    final IconData icon;
+    final Color color;
+    final String defaultTitle;
+    final String mediaType;
+
+    if (_isM3uUrl(uri)) {
+      category = 'IPTV Playlist';
+      icon = Icons.live_tv_rounded;
+      color = Colors.purple;
+      defaultTitle = 'IPTV Playlist';
+      mediaType = 'video';
+    } else if (_isDocumentUrl(uri)) {
+      category = 'Document';
+      icon = Icons.menu_book_rounded;
+      color = Colors.indigo;
+      defaultTitle = 'Document';
+      mediaType = 'document';
+    } else if (_isAudioUrl(uri)) {
+      category = 'Audio File';
+      icon = Icons.audiotrack_rounded;
+      color = Colors.deepOrange;
+      defaultTitle = 'Audio File';
+      mediaType = 'audio';
+    } else if (_isVideoUrl(uri)) {
+      category = 'Video';
+      icon = Icons.videocam_rounded;
+      color = Colors.teal;
+      defaultTitle = 'Video File';
+      mediaType = 'video';
+    } else {
+      category = 'Download File';
+      icon = Icons.download_rounded;
+      color = Colors.blueGrey;
+      defaultTitle = 'File';
+      mediaType = 'other';
+    }
+
+    final fileName = customTitle?.isNotEmpty == true
+        ? customTitle!
+        : _getFileNameFromUri(uri, defaultTitle);
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? const Color(0xFF1E222B) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header indicator
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Media Info Card
+              Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: color, size: 28),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            category.toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          fileName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          uri.host.isNotEmpty ? uri.host : urlStr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.grey[400] : Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 22),
+              // Action Buttons: Download | Play/View
+              Row(
+                children: [
+                  // Play / View Action
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        side: BorderSide(color: color.withValues(alpha: 0.5)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: Icon(
+                        _isDocumentUrl(uri)
+                            ? Icons.visibility_rounded
+                            : Icons.play_arrow_rounded,
+                        color: color,
+                      ),
+                      label: Text(
+                        _isDocumentUrl(uri) ? 'View' : 'Play',
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _executeDirectOpen(uri, fileName);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Download Action
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.teal,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.download_rounded, color: Colors.white),
+                      label: const Text(
+                        'Download',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _startDownloadFromBrowser(
+                          url: urlStr,
+                          title: fileName,
+                          mediaType: mediaType,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Cancel Action
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: isDark ? Colors.grey[400] : Colors.grey[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Starts downloading the intercepted file in background with notifications.
+  Future<void> _startDownloadFromBrowser({
+    required String url,
+    required String title,
+    required String mediaType,
+  }) async {
+    try {
+      final notifier = ref.read(downloadsProvider.notifier);
+      final id = const Uuid().v4();
+      final task = await notifier.startDownload(
+        identifier: id,
+        title: title,
+        url: url,
+        mediaType: mediaType,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              task != null
+                  ? 'Download started: $title'
+                  : 'Failed to start download (check permissions)',
+            ),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'View',
+              textColor: Colors.tealAccent,
+              onPressed: _openDownloads,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _showSnack('Error starting download: $e');
+    }
+  }
+
+  void _openDownloads() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BrowserDownloadsScreen()),
+    );
+  }
+
+  /// Directly opens or plays the media/document in its respective player/reader.
+  void _executeDirectOpen(Uri uri, String fileName) {
+    final urlStr = uri.toString();
+    if (_isM3uUrl(uri)) {
+      _openM3uPlaylist(urlStr, fileName);
+    } else if (_isDocumentUrl(uri)) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => UnifiedReaderScreen(
-            documentUrl: urlStr,
-            title: fileName,
-          ),
+          builder: (_) =>
+              UnifiedReaderScreen(documentUrl: urlStr, title: fileName),
         ),
       );
       _showSnack('Opening $fileName in reader');
-      return true;
-    }
-
-    // 3. Audio files (MP3, WAV, FLAC, etc.) -> Open in Audio Player
-    if (_isAudioUrl(uri)) {
-      final fileName = _getFileNameFromUri(uri, 'Audio Stream');
+    } else if (_isAudioUrl(uri)) {
       final mediaFile = MediaFile(
         id: urlStr,
         name: fileName,
@@ -938,16 +1555,11 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       );
       AudioPlaybackHelper.playAudio(ref, mediaFile, [mediaFile]);
       _showSnack('Playing $fileName in audio player');
-      return true;
-    }
-
-    // 4. Video files -> Open in Video Player
-    if (_isVideoUrl(uri)) {
+    } else if (_isVideoUrl(uri)) {
       VideoPlayerLauncher.smart(source: urlStr, context: context);
-      return true;
+    } else {
+      VideoPlayerLauncher.smart(source: urlStr, context: context);
     }
-
-    return false;
   }
 
   Future<void> _openM3uPlaylist(String url, String name) async {
@@ -956,16 +1568,18 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       final datasource = ref.read(iptvDatasourceProvider);
       final content = await datasource.fetchM3uUrl(url);
       final playlistId = const Uuid().v4().replaceAll('-', '');
-      final channels = M3uParser.parse(content: content, playlistId: playlistId);
+      final channels = M3uParser.parse(
+        content: content,
+        playlistId: playlistId,
+      );
 
       if (!mounted) return;
       if (channels.isNotEmpty) {
         // Persist to IPTV playlists database in background
         unawaited(
-          ref.read(iptvPlaylistsProvider.notifier).addFromUrl(
-                url: url,
-                name: name,
-              ),
+          ref
+              .read(iptvPlaylistsProvider.notifier)
+              .addFromUrl(url: url, name: name),
         );
 
         Navigator.of(context).push(
@@ -1143,9 +1757,51 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
               ),
             ),
           ),
+          _buildDownloadsButton(),
           _buildMoreMenu(),
         ],
       ),
+    );
+  }
+
+  Widget _buildDownloadsButton() {
+    final downloadsState = ref.watch(downloadsProvider);
+    final activeCount = downloadsState.activeDownloads
+        .where((t) => t.status == DownloadStatus.downloading)
+        .length;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Downloads',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.download_rounded, size: 21),
+          onPressed: _openDownloads,
+        ),
+        if (activeCount > 0)
+          Positioned(
+            right: 4,
+            top: 4,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(
+                color: Colors.teal,
+                shape: BoxShape.circle,
+              ),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+              child: Text(
+                '$activeCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1158,6 +1814,8 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       constraints: const BoxConstraints(minWidth: 180, maxWidth: 220),
       onSelected: (value) {
         switch (value) {
+          case 'downloads':
+            _openDownloads();
           case 'history':
             _showHistorySheet();
           case 'scan_media':
@@ -1173,6 +1831,13 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         }
       },
       itemBuilder: (context) => [
+        _compactMenuItem(
+          value: 'downloads',
+          icon: Icons.download_rounded,
+          label: 'Downloads',
+          color: Colors.teal,
+        ),
+        _compactMenuDivider(),
         _compactMenuItem(
           value: 'history',
           icon: Icons.history_rounded,
@@ -1282,6 +1947,12 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         url: WebUri(_pendingNavigationUrl ?? 'about:blank'),
       ),
       initialSettings: _buildWebViewSettings(),
+      initialUserScripts: UnmodifiableListView<UserScript>([
+        UserScript(
+          source: _kAdBlockUserScript,
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+        ),
+      ]),
       onWebViewCreated: (controller) {
         _controller = controller;
         // Consume the pending navigation, if any.
@@ -1348,8 +2019,11 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       },
       onDownloadStartRequest: (controller, downloadStartRequest) async {
         final uri = downloadStartRequest.url.uriValue;
-        if (_handleSpecialUrl(uri)) {
-          return;
+        if (!_handleSpecialUrl(uri)) {
+          _showInterceptChoiceModal(
+            uri,
+            customTitle: downloadStartRequest.suggestedFilename,
+          );
         }
       },
       shouldOverrideUrlLoading: (controller, navigationAction) async {
@@ -1462,7 +2136,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         Color(0xFF346DA4),
       ),
       ('GitHub', 'https://github.com', Icons.code, Color(0xFF24292F)),
-      ('X', 'https://x.com', Icons.alternate_email, Color(0xFF1DA1F2)),
+      ('Twitter', 'https://x.com', Icons.alternate_email, Color(0xFF1DA1F2)),
       (
         'Gmail',
         'https://mail.google.com',

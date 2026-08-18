@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 import 'permission_service.dart';
+import 'saf_service.dart';
 
 enum FileOperation { copy, cut, move }
 
@@ -11,12 +12,14 @@ class FileOperationResult {
   final String? error;
   final int processedCount;
   final int totalCount;
+  final bool needsStorageAccess;
 
   const FileOperationResult({
     required this.success,
     this.error,
     this.processedCount = 0,
     this.totalCount = 0,
+    this.needsStorageAccess = false,
   });
 
   FileOperationResult copyWith({
@@ -24,12 +27,14 @@ class FileOperationResult {
     String? error,
     int? processedCount,
     int? totalCount,
+    bool? needsStorageAccess,
   }) {
     return FileOperationResult(
       success: success ?? this.success,
       error: error ?? this.error,
       processedCount: processedCount ?? this.processedCount,
       totalCount: totalCount ?? this.totalCount,
+      needsStorageAccess: needsStorageAccess ?? this.needsStorageAccess,
     );
   }
 
@@ -152,14 +157,41 @@ class FileOperationsService {
   }
 
   /// Enhanced delete files with permission check
+  ///
+  /// Files on writable paths are deleted directly. Files on removable volumes
+  /// (USB OTG / SD card) that block raw-path writes are deleted through the
+  /// Storage Access Framework; if the user hasn't granted tree access yet,
+  /// [FileOperationResult.needsStorageAccess] is set so the UI can prompt.
   Future<FileOperationResult> deleteFilesWithPermissionCheck(
     List<FileSystemEntity> files,
   ) async {
+    if (files.isEmpty) {
+      return const FileOperationResult(
+        success: false,
+        error: 'No files selected',
+      );
+    }
+
     try {
-      // Check write permission for each file's directory
+      final rawDeletable = <FileSystemEntity>[];
+      bool needsTree = false;
+      int safDeleted = 0;
+
       for (final file in files) {
         final fileDir = file.parent.path;
-        if (!await _checkWritePermissionForOperation(fileDir)) {
+        if (await _checkWritePermissionForOperation(fileDir)) {
+          rawDeletable.add(file);
+          continue;
+        }
+
+        final safResult = await SafService.instance.deleteFile(file.path);
+        if (safResult == 'ok') {
+          safDeleted++;
+          debugPrint('🗑️ Deleted via SAF: ${file.path}');
+        } else if (safResult == 'needs_tree') {
+          needsTree = true;
+          rawDeletable.add(file);
+        } else {
           return FileOperationResult(
             success: false,
             error: 'No write permission to delete files from this location.',
@@ -168,7 +200,26 @@ class FileOperationsService {
         }
       }
 
-      return await deleteFiles(files);
+      final rawResult = rawDeletable.isEmpty
+          ? const FileOperationResult(
+              success: true,
+              processedCount: 0,
+              totalCount: 0,
+            )
+          : await deleteFiles(rawDeletable);
+
+      final processed = rawResult.processedCount + safDeleted;
+      final success = rawResult.error == null &&
+          processed == files.length &&
+          !needsTree;
+
+      return FileOperationResult(
+        success: success,
+        error: rawResult.error,
+        processedCount: processed,
+        totalCount: files.length,
+        needsStorageAccess: needsTree,
+      );
     } catch (e) {
       return FileOperationResult(
         success: false,
@@ -393,7 +444,16 @@ class FileOperationsService {
           processedCount++;
           debugPrint('🗑️ Deleted: ${file.path}');
         } catch (e) {
-          errors.add('${path.basename(file.path)}: $e');
+          final raw = e.toString();
+          final isPermissionIssue =
+              raw.contains('Permission denied') ||
+              raw.contains('errno = 13') ||
+              e is PathAccessException;
+          final friendly = isPermissionIssue
+              ? 'No permission to delete. Check storage permission or '
+                  'read-only media.'
+              : '$e';
+          errors.add('${path.basename(file.path)}: $friendly');
           debugPrint('❌ Error deleting ${file.path}: $e');
         }
       }

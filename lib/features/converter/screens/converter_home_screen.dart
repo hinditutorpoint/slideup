@@ -31,6 +31,9 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
   late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   _HistoryFilter _filter = _HistoryFilter.completed;
+  final GlobalKey<_PreviewTabState> _previewTabKey =
+      GlobalKey<_PreviewTabState>();
+  int _previewIndex = 0;
 
   @override
   void initState() {
@@ -48,11 +51,16 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Media Converter')),
+      appBar: _buildAppBar(),
       body: TabBarView(
         controller: _tabController,
         children: [
-          const _PreviewTab(onDone: null),
+          _PreviewTab(
+            key: _previewTabKey,
+            selectedIndex: _previewIndex,
+            onSelected: (i) => setState(() => _previewIndex = i),
+            onDone: null,
+          ),
           _ConvertTab(onDone: () => _tabController.animateTo(2)),
           const _QueueTab(),
           _HistoryTab(
@@ -82,6 +90,63 @@ class _ConverterHomeScreenState extends ConsumerState<ConverterHomeScreen>
         animationDuration: const Duration(milliseconds: 350),
         onTap: (i) => setState(() => _tabController.animateTo(i)),
       ),
+    );
+  }
+
+  AppBar _buildAppBar() {
+    final items = ref.watch(converterPreviewListProvider);
+    final onPreview = _tabController.index == 0;
+    if (!onPreview) {
+      return AppBar(title: const Text('Media Converter'));
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final selected = items.isEmpty
+        ? null
+        : items[_previewIndex.clamp(0, items.length - 1)];
+    return AppBar(
+      title: selected == null
+          ? const Text('Media Converter')
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  selected.name,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  selected.hasVideo
+                      ? 'Selected file · Video'
+                      : selected.hasAudio
+                          ? 'Selected file · Audio'
+                          : 'Selected file · Media',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+      actions: [
+        IconButton(
+          tooltip: 'Add media',
+          onPressed: () => _previewTabKey.currentState?._pickFiles(),
+          icon: const Icon(Icons.add),
+        ),
+        IconButton(
+          tooltip: 'Remove all',
+          icon: const Icon(Icons.delete_sweep_outlined),
+          onPressed: items.isEmpty
+              ? null
+              : () => _previewTabKey.currentState?._clearAll(),
+        ),
+      ],
     );
   }
 }
@@ -690,8 +755,15 @@ String _duplicateLabel(DuplicateStrategy d) {
 // ─────────────────────────────── Preview ───────────────────────────────
 
 class _PreviewTab extends ConsumerStatefulWidget {
-  const _PreviewTab({this.onDone});
+  const _PreviewTab({
+    super.key,
+    required this.selectedIndex,
+    required this.onSelected,
+    this.onDone,
+  });
 
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
   final VoidCallback? onDone;
 
   @override
@@ -699,9 +771,15 @@ class _PreviewTab extends ConsumerStatefulWidget {
 }
 
 class _PreviewTabState extends ConsumerState<_PreviewTab> {
-  int _selectedIndex = 0;
   bool _picking = false;
   String? _activePresetName;
+  final PreviewPlayerController _previewController = PreviewPlayerController();
+
+  @override
+  void dispose() {
+    _previewController.dispose();
+    super.dispose();
+  }
 
   /// Per-file trim points (start/end), keyed by source path. Kept separate
   /// from the shared draft so each preview item keeps its own trim when sent
@@ -714,7 +792,8 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
   }
 
   void _selectItem(int i) {
-    setState(() => _selectedIndex = i);
+    widget.onSelected(i);
+    _previewController.reset();
     // Show the selected file's own trim in the player / Convert tab.
     final item = ref.read(converterPreviewListProvider);
     if (i >= 0 && i < item.length) {
@@ -726,6 +805,11 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
             );
       }
     }
+  }
+
+  void _clearAll() {
+    _itemTrims.clear();
+    ref.read(converterPreviewListProvider.notifier).clear();
   }
 
   Future<void> _pickFiles() async {
@@ -859,45 +943,12 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
   @override
   Widget build(BuildContext context) {
     final items = ref.watch(converterPreviewListProvider);
-    if (_selectedIndex >= items.length && items.isNotEmpty) {
-      _selectedIndex = items.length - 1;
-    }
+    final selectedIndex = items.isEmpty
+        ? 0
+        : widget.selectedIndex.clamp(0, items.length - 1);
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _picking ? null : _pickFiles,
-                  icon: _picking
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add),
-                  label: Text(_picking ? 'Loading…' : 'Add files to preview'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Remove all',
-                icon: const Icon(Icons.delete_sweep_outlined),
-                onPressed: items.isEmpty
-                    ? null
-                    : () {
-                        _itemTrims.clear();
-                        ref
-                            .read(converterPreviewListProvider.notifier)
-                            .clear();
-                      },
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: items.isEmpty
               ? const _EmptyState(
@@ -907,38 +958,56 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
               : Column(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
                       child: AspectRatio(
                         aspectRatio: 16 / 9,
                         child: Builder(builder: (context) {
-                          final draft = ref.watch(converterDraftProvider);
-                          final selectedPath = items[_selectedIndex].path;
-                          final trim = _trimFor(selectedPath);
+                          final selectedPath = items[selectedIndex].path;
                           return ConverterPreviewPlayer(
                             key: ValueKey(selectedPath),
                             path: selectedPath,
-                            title: items[_selectedIndex].name,
-                            hasVideo: items[_selectedIndex].hasVideo,
-                            trimStart: trim.start,
-                            trimEnd: trim.end,
-                            onTrimChanged: (start, end) {
-                              setState(() {
-                                _itemTrims[selectedPath] = (start: start, end: end);
-                              });
-                              // Mirror into the shared draft so the Convert
-                              // tab fields reflect the selected file's trim.
-                              ref
-                                  .read(converterDraftProvider.notifier)
-                                  .apply(
-                                    draft.copyWith(
-                                      trimStart: start,
-                                      trimEnd: end,
-                                    ),
-                                  );
-                            },
+                            hasVideo: items[selectedIndex].hasVideo,
+                            controller: _previewController,
                           );
                         }),
                       ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: PreviewPlayerControls(
+                        controller: _previewController,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: Builder(builder: (context) {
+                        final draft = ref.watch(converterDraftProvider);
+                        final selectedPath = items[selectedIndex].path;
+                        final trim = _trimFor(selectedPath);
+                        return ConverterTrimPanel(
+                          controller: _previewController,
+                          trimStart: trim.start,
+                          trimEnd: trim.end,
+                          onTrimChanged: (start, end) {
+                            setState(() {
+                              _itemTrims[selectedPath] = (
+                                start: start,
+                                end: end,
+                              );
+                            });
+                            // Mirror into the shared draft so the Convert
+                            // tab fields reflect the selected file's trim.
+                            ref
+                                .read(converterDraftProvider.notifier)
+                                .apply(
+                                  draft.copyWith(
+                                    trimStart: start,
+                                    trimEnd: end,
+                                  ),
+                                );
+                          },
+                        );
+                      }),
                     ),
                     const SizedBox(height: 8),
                     Expanded(
@@ -947,34 +1016,42 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                         itemCount: items.length,
                         itemBuilder: (context, i) {
                           final item = items[i];
-                          final selected = i == _selectedIndex;
+                          final selected = i == selectedIndex;
                           return ListTile(
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 0,
+                            ),
+                            minVerticalPadding: 0,
                             selected: selected,
                             selectedTileColor: Theme.of(context)
                                 .colorScheme
                                 .primaryContainer
-                                .withValues(alpha: 0.4),
+                                .withValues(alpha: 0.35),
                             leading: Icon(
                               item.hasVideo
                                   ? Icons.movie_outlined
                                   : Icons.audiotrack,
+                              size: 20,
                             ),
                             title: Text(
                               item.name,
                               overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              item.hasVideo
-                                  ? 'Video'
-                                  : item.hasAudio
-                                      ? 'Audio'
-                                      : 'Media',
+                              maxLines: 1,
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 IconButton(
                                   tooltip: 'Play',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 32,
+                                    height: 32,
+                                  ),
+                                  iconSize: 18,
                                   icon: Icon(
                                     selected
                                         ? Icons.volume_up
@@ -984,6 +1061,12 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                                 ),
                                 IconButton(
                                   tooltip: 'Remove',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 32,
+                                    height: 32,
+                                  ),
+                                  iconSize: 18,
                                   icon: const Icon(Icons.close),
                                   onPressed: () {
                                     _itemTrims.remove(item.path);
@@ -992,10 +1075,13 @@ class _PreviewTabState extends ConsumerState<_PreviewTab> {
                                           converterPreviewListProvider.notifier,
                                         )
                                         .removeAt(i);
-                                    if (_selectedIndex >=
-                                        items.length - 1) {
-                                      _selectedIndex = (items.length - 2)
-                                          .clamp(0, items.length - 1);
+                                    final len = ref
+                                        .read(converterPreviewListProvider)
+                                        .length;
+                                    if (widget.selectedIndex >= len) {
+                                      widget.onSelected(
+                                        len > 0 ? len - 1 : 0,
+                                      );
                                     }
                                   },
                                 ),
@@ -1146,6 +1232,7 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
 
     var start = job.settings.trimStart;
     var end = job.settings.trimEnd;
+    final previewController = PreviewPlayerController();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1187,16 +1274,22 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
                   child: ConverterPreviewPlayer(
                     key: ValueKey(job.id),
                     path: job.sourcePath,
-                    title: job.sourceName,
                     hasVideo:
                         probe?.hasVideo ?? job.settings.format.isVideoContainer,
-                    trimStart: start,
-                    trimEnd: end,
-                    onTrimChanged: (s, e) => setSheetState(() {
-                      start = s;
-                      end = e;
-                    }),
+                    controller: previewController,
                   ),
+                ),
+                const SizedBox(height: 12),
+                PreviewPlayerControls(controller: previewController),
+                const SizedBox(height: 12),
+                ConverterTrimPanel(
+                  controller: previewController,
+                  trimStart: start,
+                  trimEnd: end,
+                  onTrimChanged: (s, e) => setSheetState(() {
+                    start = s;
+                    end = e;
+                  }),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -1232,6 +1325,7 @@ class _ActiveJobTileState extends ConsumerState<_ActiveJobTile> {
         },
       ),
     );
+    previewController.dispose();
   }
 
   @override

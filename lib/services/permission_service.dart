@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart'
+    as permission_handler;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as path;
 import '../models/storage_info.dart';
@@ -29,9 +31,10 @@ class PermissionService {
         return await hasManageExternalStoragePermission();
       } else {
         // Android 10 and below (API 29-)
+        // accessMediaLocation only exists on Android 10 (API 29)+
         return await _checkMultiplePermissions([
           Permission.storage,
-          Permission.accessMediaLocation,
+          if (androidInfo.version.sdkInt >= 29) Permission.accessMediaLocation,
         ]);
       }
     } else if (Platform.isIOS) {
@@ -58,6 +61,17 @@ class PermissionService {
       }
     }
     return true; // iOS handles this differently
+  }
+
+  /// Check if a path is blocked by Android scoped storage (Android 11+).
+  /// On Android 11+ the OS blocks direct access to other apps' Android/data
+  /// and Android/obb folders even with MANAGE_EXTERNAL_STORAGE granted.
+  Future<bool> isProtectedPathUnderScopedStorage(String dirPath) async {
+    if (!Platform.isAndroid) return false;
+    final androidInfo = await DeviceInfoPlugin().androidInfo;
+    if (androidInfo.version.sdkInt < 30) return false;
+    final lower = dirPath.toLowerCase();
+    return lower.contains('/android/data') || lower.contains('/android/obb');
   }
 
   /// Check if we have write permission for a specific path
@@ -212,10 +226,10 @@ class PermissionService {
         return await _requestManageExternalStorage();
       } else {
         // Android 10 and below (API 29-)
-        debugPrint('📱 Requesting Android 10 permissions...');
+        debugPrint('📱 Requesting Android 10 and below permissions...');
         return await _requestMultiplePermissions([
           Permission.storage,
-          Permission.accessMediaLocation,
+          if (androidInfo.version.sdkInt >= 29) Permission.accessMediaLocation,
         ]);
       }
     } else if (Platform.isIOS) {
@@ -451,7 +465,7 @@ class PermissionService {
   /// Open app settings for the user to manually grant permissions
   Future<bool> openAppSettings() async {
     try {
-      return await openAppSettings();
+      return await permission_handler.openAppSettings();
     } catch (e) {
       debugPrint('Error opening app settings: $e');
       return false;
