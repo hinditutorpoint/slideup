@@ -13,6 +13,7 @@ import '../../models/media_file.dart';
 import '../../providers/download_providers.dart';
 import '../../screens/auth_screen.dart';
 import '../../services/security_service.dart';
+import 'media_intercept_helper.dart';
 
 /// Comprehensive browser downloads manager screen supporting Queue,
 /// Live Downloading, and Downloaded completed items with full action suite:
@@ -131,6 +132,11 @@ class _BrowserDownloadsScreenState extends ConsumerState<BrowserDownloadsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Add from URL',
+            icon: const Icon(Icons.add_rounded, size: 24),
+            onPressed: _promptForUrl,
+          ),
           PopupMenuButton<String>(
             tooltip: 'Download options',
             icon: const Icon(Icons.more_vert_rounded),
@@ -859,6 +865,57 @@ class _BrowserDownloadsScreenState extends ConsumerState<BrowserDownloadsScreen>
           }
         }
         break;
+    }
+  }
+
+  Future<void> _promptForUrl() async {
+    final controller = TextEditingController();
+    final entered = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Add from URL'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/media.mp4',
+            prefixIcon: Icon(Icons.link_rounded),
+          ),
+          onSubmitted: (v) => Navigator.pop(dialogCtx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, controller.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted) return;
+    if (entered == null || entered.isEmpty) return;
+
+    var raw = entered;
+    if (!raw.contains('://')) raw = 'https://$raw';
+    final uri = Uri.tryParse(raw);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      _showSnack('Invalid URL');
+      return;
+    }
+
+    if (isMediaUri(uri)) {
+      await showMediaActionSheet(context, ref, uri);
+    } else {
+      _showSnack('Not a media URL (video/audio/document/playlist)');
     }
   }
 

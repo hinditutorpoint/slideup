@@ -5,13 +5,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:uuid/uuid.dart';
 
 import '../documents/models/download_task.dart';
-import '../documents/screens/unified_reader_screen.dart';
-import '../iptv/providers/iptv_providers.dart';
-import '../iptv/screens/iptv_player_screen.dart';
-import '../iptv/services/m3u_parser.dart';
 import '../video_player/video_player_launcher.dart';
 import '../../helpers/audio_playback_helper.dart';
 import '../../models/media_file.dart';
@@ -19,6 +14,7 @@ import '../../providers/download_providers.dart';
 import 'browser_downloads_screen.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
+import 'media_intercept_helper.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PLATFORM LIMITATIONS (read before modifying):
@@ -412,6 +408,94 @@ const _kAdBlockUserScript = '''
 })();
 ''';
 
+/// Script injected at document end that detects media elements (video/audio
+/// sources, HLS/DASH manifests, and direct media file links) in real time.
+///
+/// Reports the found media to Flutter via the `mediaDetected` JavaScript
+/// handler. Uses a MutationObserver so media added after page load (SPA /
+/// dynamic players) is also captured.
+const _kMediaDetectorUserScript = '''
+(function() {
+  'use strict';
+  if (window.__slideupMediaDetector) return;
+  window.__slideupMediaDetector = true;
+
+  function report() {
+    var found = [];
+    var seen = {};
+    function push(abs, type, title) {
+      if (!abs) return;
+      if (/^(blob:|data:)/.test(abs)) return;
+      if (seen[abs]) return;
+      seen[abs] = true;
+      found.push({type: type, url: abs, title: title || document.title || ''});
+    }
+    function collect(node, type) {
+      var title = node.getAttribute('title') || '';
+      if (node.currentSrc) push(new URL(node.currentSrc, location.href).href, type, title);
+      var src = node.getAttribute('src');
+      if (src) push(new URL(src, location.href).href, type, title);
+      var sources = node.querySelectorAll('source');
+      for (var i = 0; i < sources.length; i++) {
+        var s = sources[i];
+        var ssrc = s.getAttribute('src');
+        if (ssrc) push(new URL(ssrc, location.href).href, type, s.getAttribute('title') || title);
+      }
+    }
+    var videos = document.querySelectorAll('video');
+    for (var v = 0; v < videos.length; v++) collect(videos[v], 'video');
+    var audios = document.querySelectorAll('audio');
+    for (var a = 0; a < audios.length; a++) collect(audios[a], 'audio');
+    // HLS / DASH manifests
+    var links = document.querySelectorAll('link[rel="alternate"]');
+    for (var l = 0; l < links.length; l++) {
+      var href = links[l].getAttribute('href');
+      if (!href) continue;
+      var lt = (links[l].getAttribute('type') || '').toLowerCase();
+      if (lt.indexOf('hls') !== -1 || lt.indexOf('mpegurl') !== -1 || lt.indexOf('dash') !== -1) {
+        push(new URL(href, location.href).href, 'video', document.title);
+      }
+    }
+    // Direct media file links (IDM-style detection)
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i2 = 0; i2 < anchors.length; i2++) {
+      var h = anchors[i2].href;
+      if (!h) continue;
+      var lower = h.split('#')[0].split('?')[0].toLowerCase();
+      if (!/\\.(mp4|m4v|mkv|webm|avi|mov|flv|ts|m3u8|mpd|mp3|wav|flac|aac|m4a|ogg|opus|pdf|epub|doc|docx|txt|rtf|fb2|mobi)\$/.test(lower)) continue;
+      var isAudio = /\\.(mp3|wav|flac|aac|m4a|ogg|opus|wma)\$/.test(lower);
+      push(h, isAudio ? 'audio' : 'video', anchors[i2].getAttribute('title') || anchors[i2].textContent || '');
+    }
+    if (found.length > 0 && window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+      window.flutter_inappwebview.callHandler('mediaDetected', found);
+    }
+  }
+
+  function start() {
+    report();
+    if (window.__slideupMediaObserver) return;
+    var timer = null;
+    window.__slideupMediaObserver = new MutationObserver(function() {
+      if (timer) return;
+      timer = setTimeout(function() { timer = null; report(); }, 800);
+    });
+    if (document.body) {
+      window.__slideupMediaObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+  window.addEventListener('load', function() {
+    setTimeout(report, 600);
+    setTimeout(report, 2000);
+  });
+})();
+''';
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
@@ -447,6 +531,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
 
   // UI state
   bool _incognito = true;
+
+  /// Media detected in real time on the current page by the injected
+  /// detector script. Cleared on each navigation; drives the download FAB.
+  final List<_ScannedMedia> _detectedMedia = [];
 
   /// True once [_cleanupAndPop] has started, preventing duplicate calls.
   bool _exitInProgress = false;
@@ -544,6 +632,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _canGoForward = false;
       _isLoading = false;
       _webViewKey = UniqueKey(); // ← triggers WebView recreation
+      _detectedMedia.clear();
     });
 
     _showSnack(
@@ -688,6 +777,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     setState(() {
       _history.clear();
       _controller = null;
+      _detectedMedia.clear();
     });
 
     if (mounted) Navigator.of(context).pop();
@@ -721,6 +811,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _canGoForward = false;
       _isLoading = false;
       _loadingProgress = 0;
+      _detectedMedia.clear();
     });
 
     _navigate('about:blank');
@@ -808,6 +899,11 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       incognito: _incognito,
 
       javaScriptEnabled: _javaScriptEnabled,
+
+      // Required so the onDownloadStartRequest / shouldOverrideUrlLoading
+      // callbacks are actually invoked by the platform WebView.
+      useShouldOverrideUrlLoading: true,
+      useOnDownloadStart: true,
 
       // No disk cache in either mode.
       cacheEnabled: false,
@@ -922,6 +1018,56 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   }
 
   // ── Scan Media ────────────────────────────────────────────────────────────────
+
+  /// Handles media pushed in real time from the injected
+  /// [_kMediaDetectorUserScript] via the `mediaDetected` JS handler. Merges the
+  /// results into [_detectedMedia] (deduped by URL) and shows the FAB.
+  void _onMediaDetected(List<dynamic> args) {
+    if (!mounted || args.isEmpty) return;
+
+    final newMedia = <_ScannedMedia>[];
+    final raw = args.first;
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map) {
+          newMedia.add(
+            _ScannedMedia(
+              url: (item['url'] ?? '').toString(),
+              title: (item['title'] ?? '').toString(),
+              isVideo: (item['type'] ?? '').toString() == 'video',
+            ),
+          );
+        }
+      }
+    } else if (raw is String && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map) {
+              newMedia.add(
+                _ScannedMedia(
+                  url: (item['url'] ?? '').toString(),
+                  title: (item['title'] ?? '').toString(),
+                  isVideo: (item['type'] ?? '').toString() == 'video',
+                ),
+              );
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[PrivateBrowser] mediaDetected decode: $e');
+      }
+    }
+
+    if (newMedia.isEmpty) return;
+    setState(() {
+      final existing = {for (final m in _detectedMedia) m.url};
+      for (final m in newMedia) {
+        if (existing.add(m.url)) _detectedMedia.add(m);
+      }
+    });
+  }
 
   /// Scans the current page for `<video>` / `<audio>` elements and their
   /// source URLs, then shows a sheet with the found media.
@@ -1129,128 +1275,13 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     );
   }
 
-  static const _kDocumentExtensions = [
-    '.pdf',
-    '.epub',
-    '.txt',
-    '.doc',
-    '.docx',
-    '.rtf',
-    '.fb2',
-    '.mobi',
-  ];
-
-  static const _kAudioExtensions = [
-    '.mp3',
-    '.wav',
-    '.flac',
-    '.aac',
-    '.m4a',
-    '.ogg',
-    '.wma',
-    '.opus',
-    '.aiff',
-    '.ape',
-    '.alac',
-    '.wv',
-    '.tta',
-    '.ac3',
-    '.dts',
-    '.mka',
-    '.ra',
-    '.ram',
-    '.oga',
-    '.mogg',
-    '.mid',
-    '.midi',
-    '.mus',
-    '.psf',
-    '.spc',
-    '.m4b',
-    '.amr',
-  ];
-
-  static const _kVideoExtensions = [
-    '.mp4',
-    '.mkv',
-    '.avi',
-    '.mov',
-    '.wmv',
-    '.flv',
-    '.3gp',
-    '.webm',
-    '.m4v',
-    '.mpg',
-    '.mpeg',
-    '.ts',
-    '.m3u8',
-    '.mpd',
-    '.f4v',
-    '.vob',
-    '.ogv',
-    '.drc',
-    '.gifv',
-    '.mng',
-    '.qt',
-    '.yuv',
-    '.rm',
-    '.rmvb',
-    '.asf',
-    '.amv',
-    '.mp2',
-    '.mpe',
-    '.mpv',
-    '.m2v',
-    '.svi',
-    '.3g2',
-    '.mxf',
-    '.roq',
-    '.nsv',
-  ];
-
-  static bool _isM3uUrl(Uri uri) {
-    final path = uri.path.toLowerCase();
-    return path.endsWith('.m3u') ||
-        path.endsWith('.m3u_plus') ||
-        path.endsWith('.m3u8_plus');
-  }
-
-  static bool _isDocumentUrl(Uri uri) {
-    final path = uri.path.toLowerCase();
-    return _kDocumentExtensions.any((ext) => path.endsWith(ext));
-  }
-
-  static bool _isAudioUrl(Uri uri) {
-    final path = uri.path.toLowerCase();
-    return _kAudioExtensions.any((ext) => path.endsWith(ext));
-  }
-
-  static bool _isVideoUrl(Uri uri) {
-    final path = uri.path.toLowerCase();
-    return _kVideoExtensions.any((ext) => path.endsWith(ext));
-  }
-
-  static String _getFileNameFromUri(Uri uri, String fallback) {
-    if (uri.pathSegments.isNotEmpty && uri.pathSegments.last.isNotEmpty) {
-      try {
-        return Uri.decodeComponent(uri.pathSegments.last);
-      } catch (_) {
-        return uri.pathSegments.last;
-      }
-    }
-    return fallback;
-  }
-
   /// Intercepts and handles M3U Playlists, Documents (PDF/EPUB/TXT), Audio (MP3/etc), and Video.
-  /// Shows modal asking user to Download | Play/View | Cancel.
+  /// Shows modal asking user to Download | Play/Read | Cancel.
   /// Returns true if the URL was handled.
   bool _handleSpecialUrl(Uri uri) {
     if (!mounted) return false;
 
-    if (_isM3uUrl(uri) ||
-        _isDocumentUrl(uri) ||
-        _isAudioUrl(uri) ||
-        _isVideoUrl(uri)) {
+    if (isMediaUri(uri)) {
       _showInterceptChoiceModal(uri);
       return true;
     }
@@ -1258,229 +1289,15 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     return false;
   }
 
-  /// Shows the Download | Play/View | Cancel interception bottom sheet.
+  /// Shows the Download | Play/Read | Cancel interception bottom sheet.
   void _showInterceptChoiceModal(Uri uri, {String? customTitle}) {
     if (!mounted) return;
-    final urlStr = uri.toString();
-
-    // Determine category and visual traits
-    final String category;
-    final IconData icon;
-    final Color color;
-    final String defaultTitle;
-    final String mediaType;
-
-    if (_isM3uUrl(uri)) {
-      category = 'IPTV Playlist';
-      icon = Icons.live_tv_rounded;
-      color = Colors.purple;
-      defaultTitle = 'IPTV Playlist';
-      mediaType = 'video';
-    } else if (_isDocumentUrl(uri)) {
-      category = 'Document';
-      icon = Icons.menu_book_rounded;
-      color = Colors.indigo;
-      defaultTitle = 'Document';
-      mediaType = 'document';
-    } else if (_isAudioUrl(uri)) {
-      category = 'Audio File';
-      icon = Icons.audiotrack_rounded;
-      color = Colors.deepOrange;
-      defaultTitle = 'Audio File';
-      mediaType = 'audio';
-    } else if (_isVideoUrl(uri)) {
-      category = 'Video';
-      icon = Icons.videocam_rounded;
-      color = Colors.teal;
-      defaultTitle = 'Video File';
-      mediaType = 'video';
-    } else {
-      category = 'Download File';
-      icon = Icons.download_rounded;
-      color = Colors.blueGrey;
-      defaultTitle = 'File';
-      mediaType = 'other';
-    }
-
-    final fileName = customTitle?.isNotEmpty == true
-        ? customTitle!
-        : _getFileNameFromUri(uri, defaultTitle);
-
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: isDark ? const Color(0xFF1E222B) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header indicator
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Media Info Card
-              Row(
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(icon, color: color, size: 28),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            category.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: color,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          fileName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          uri.host.isNotEmpty ? uri.host : urlStr,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              // Action Buttons: Download | Play/View
-              Row(
-                children: [
-                  // Play / View Action
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        side: BorderSide(color: color.withValues(alpha: 0.5)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: Icon(
-                        _isDocumentUrl(uri)
-                            ? Icons.visibility_rounded
-                            : Icons.play_arrow_rounded,
-                        color: color,
-                      ),
-                      label: Text(
-                        _isDocumentUrl(uri) ? 'View' : 'Play',
-                        style: TextStyle(
-                          color: color,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.of(sheetContext).pop();
-                        _executeDirectOpen(uri, fileName);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Download Action
-                  Expanded(
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.teal,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: const Icon(Icons.download_rounded, color: Colors.white),
-                      label: const Text(
-                        'Download',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.of(sheetContext).pop();
-                        _startDownloadFromBrowser(
-                          url: urlStr,
-                          title: fileName,
-                          mediaType: mediaType,
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Cancel Action
-              TextButton(
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[700],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    showMediaActionSheet(
+      context,
+      ref,
+      uri,
+      customTitle: customTitle,
+      onOpenDownloads: _openDownloads,
     );
   }
 
@@ -1489,146 +1306,21 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     required String url,
     required String title,
     required String mediaType,
-  }) async {
-    try {
-      final notifier = ref.read(downloadsProvider.notifier);
-      final id = const Uuid().v4();
-      final task = await notifier.startDownload(
-        identifier: id,
-        title: title,
-        url: url,
-        mediaType: mediaType,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              task != null
-                  ? 'Download started: $title'
-                  : 'Failed to start download (check permissions)',
-            ),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'View',
-              textColor: Colors.tealAccent,
-              onPressed: _openDownloads,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      _showSnack('Error starting download: $e');
-    }
+  }) {
+    return startBrowserDownload(
+      context,
+      ref,
+      url: url,
+      title: title,
+      mediaType: mediaType,
+      onOpenDownloads: _openDownloads,
+    );
   }
 
   void _openDownloads() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const BrowserDownloadsScreen()),
     );
-  }
-
-  /// Directly opens or plays the media/document in its respective player/reader.
-  void _executeDirectOpen(Uri uri, String fileName) {
-    final urlStr = uri.toString();
-    if (_isM3uUrl(uri)) {
-      _openM3uPlaylist(urlStr, fileName);
-    } else if (_isDocumentUrl(uri)) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) =>
-              UnifiedReaderScreen(documentUrl: urlStr, title: fileName),
-        ),
-      );
-      _showSnack('Opening $fileName in reader');
-    } else if (_isAudioUrl(uri)) {
-      final mediaFile = MediaFile(
-        id: urlStr,
-        name: fileName,
-        path: urlStr,
-        displayPath: urlStr,
-        type: MediaType.audio,
-        size: 0,
-        dateModified: DateTime.now(),
-        dateAdded: DateTime.now(),
-      );
-      AudioPlaybackHelper.playAudio(ref, mediaFile, [mediaFile]);
-      _showSnack('Playing $fileName in audio player');
-    } else if (_isVideoUrl(uri)) {
-      VideoPlayerLauncher.smart(source: urlStr, context: context);
-    } else {
-      VideoPlayerLauncher.smart(source: urlStr, context: context);
-    }
-  }
-
-  Future<void> _openM3uPlaylist(String url, String name) async {
-    _showSnack('Loading playlist: $name...');
-    try {
-      final datasource = ref.read(iptvDatasourceProvider);
-      final content = await datasource.fetchM3uUrl(url);
-      final playlistId = const Uuid().v4().replaceAll('-', '');
-      final channels = M3uParser.parse(
-        content: content,
-        playlistId: playlistId,
-      );
-
-      if (!mounted) return;
-      if (channels.isNotEmpty) {
-        // Content-based detection: if most entries point to audio streams,
-        // treat the playlist as a music playlist and play it in the audio player.
-        final audioCount = channels.where((c) => c.audioOnly).length;
-        final isMusicPlaylist =
-            audioCount > 0 && audioCount / channels.length >= 0.6;
-
-        if (isMusicPlaylist) {
-          final mediaFiles = channels.map((c) {
-            final now = DateTime.now();
-            return MediaFile(
-              id: c.id,
-              name: c.name,
-              path: c.url,
-              displayPath: c.name,
-              type: MediaType.audio,
-              size: 0,
-              dateModified: now,
-              dateAdded: now,
-              mimeType: 'audio/mpeg',
-              parentFolder: url,
-              artist: c.tvgName,
-            );
-          }).toList();
-
-          AudioPlaybackHelper.playAudio(ref, mediaFiles.first, mediaFiles);
-          _showSnack('Playing music playlist: $name');
-          return;
-        }
-
-        // Persist to IPTV playlists database in background
-        unawaited(
-          ref
-              .read(iptvPlaylistsProvider.notifier)
-              .addFromUrl(url: url, name: name),
-        );
-
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => IptvPlayerScreen(
-              channels: channels,
-              playlistName: name,
-              startIndex: 0,
-            ),
-          ),
-        );
-      } else {
-        VideoPlayerLauncher.smart(source: url, context: context);
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnack('Opening stream in video player...');
-        VideoPlayerLauncher.smart(source: url, context: context);
-      }
-    }
   }
 
   Future<void> _playScannedMedia(String url, {bool isVideo = true}) async {
@@ -1641,7 +1333,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       }
 
       if (!isVideo) {
-        final fileName = _getFileNameFromUri(uri, 'Audio Stream');
+        final fileName = fileNameFromUri(uri, 'Audio Stream');
         final mediaFile = MediaFile(
           id: url,
           name: fileName,
@@ -1702,6 +1394,12 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
                     if (_settingsReady) _buildWebView(),
                     if (_currentUrl == null || _currentUrl == 'about:blank')
                       _buildHomePage(theme, dark),
+                    if (_detectedMedia.isNotEmpty)
+                      Positioned(
+                        right: 16,
+                        bottom: 16,
+                        child: _buildMediaFab(),
+                      ),
                   ],
                 ),
               ),
@@ -1910,6 +1608,57 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     );
   }
 
+  /// Floating download button shown when media was detected in real time on the
+  /// current page. Tapping it opens the scanned-media sheet.
+  Widget _buildMediaFab() {
+    final count = _detectedMedia.length;
+    return GestureDetector(
+      onTap: () => _showScannedMediaSheet(_detectedMedia),
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.teal,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Icon(Icons.download_rounded, color: Colors.white, size: 20),
+            Positioned(
+              right: 0,
+              top: 0,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '$count',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.teal,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   PopupMenuEntry<String> _compactMenuItem({
     required String value,
     required IconData icon,
@@ -1981,9 +1730,20 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           source: _kAdBlockUserScript,
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),
+        UserScript(
+          source: _kMediaDetectorUserScript,
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_END,
+        ),
       ]),
       onWebViewCreated: (controller) {
         _controller = controller;
+        controller.addJavaScriptHandler(
+          handlerName: 'mediaDetected',
+          callback: (args) {
+            _onMediaDetected(args);
+            return null;
+          },
+        );
         // Consume the pending navigation, if any.
         final pending = _pendingNavigationUrl;
         if (pending != null && pending != 'about:blank') {
@@ -2003,6 +1763,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         setState(() {
           _isLoading = true;
           _loadingProgress = 0;
+          _detectedMedia.clear();
           if (urlStr.isNotEmpty) {
             _currentUrl = urlStr;
             _urlController.text = urlStr;
@@ -2077,6 +1838,16 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
 
         // Handle direct documents (PDF, EPUB, TXT), Audio, and Video files.
         if (isMainFrame && _handleSpecialUrl(url.uriValue)) {
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // iOS marks download navigations (server-protected files, attachment
+        // responses) via shouldPerformDownload. Intercept them here so the
+        // user gets the Download/Play dialog instead of the native download.
+        if (navigationAction.shouldPerformDownload == true) {
+          if (mounted) {
+            _showInterceptChoiceModal(url.uriValue);
+          }
           return NavigationActionPolicy.CANCEL;
         }
 
