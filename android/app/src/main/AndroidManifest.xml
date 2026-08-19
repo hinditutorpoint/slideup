@@ -61,7 +61,8 @@
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:allowBackup="true"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:extractNativeLibs="true">
         
         <!-- ════════════════════════════════════════════════════════════ -->
         <!-- MAIN ACTIVITY -->

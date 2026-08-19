@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
@@ -21,70 +23,84 @@ class SettingsSheetWidget extends ConsumerWidget {
           return _buildErrorWidget(context, 'Player state is null');
         }
 
-        return Container(
-          decoration: BoxDecoration(
-            color: Colors.grey[900] ?? Colors.grey,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildHandleBar(),
-                _buildTitle(),
-                const Divider(color: Colors.white12, height: 1),
-                Flexible(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Column(
-                      children: [
-                        _SettingsItem(
-                          icon: Icons.speed,
-                          title: 'Playback Speed',
-                          subtitle: _formatSpeed(playerState.speed),
-                          onTap: () => _showSpeedSelector(context, ref),
-                        ),
-                        _SettingsItem(
-                          icon: Icons.audiotrack,
-                          title: 'Audio Track',
-                          subtitle: _getAudioSubtitle(playerState),
-                          onTap: () => _showAudioTrackSelector(context, ref),
-                        ),
-                        _SettingsItem(
-                          icon: Icons.subtitles,
-                          title: 'Subtitles',
-                          subtitle: _getSubtitleSubtitle(playerState),
-                          onTap: () => _showSubtitleSelector(context, ref),
-                        ),
-                        _SettingsItem(
-                          icon: Icons.high_quality,
-                          title: 'Quality',
-                          subtitle: _getQualitySubtitle(playerState),
-                          onTap: () => _showQualitySelector(context, ref),
-                        ),
-                        _SettingsItem(
-                          icon: Icons.camera_alt,
-                          title: 'Take Screenshot',
-                          onTap: () => _takeScreenshot(context, ref),
-                        ),
-                        _SettingsItem(
-                          icon: Icons.loop,
-                          title: 'Loop',
-                          subtitle: playerState.is2xSpeed ? 'On' : 'Off',
-                          onTap: () => _toggleLoop(context, ref),
-                        ),
-                        const SizedBox(height: 16),
-                        _SettingsItem(
-                          icon: Icons.edit,
-                          title: 'Edit Video',
-                          subtitle: 'Edit video',
-                          onTap: () => _editVideo(context, ref),
-                        ),
-                      ],
-                    ),
-                  ),
+        return ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.62),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
                 ),
-              ],
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildHandleBar(),
+                    _buildTitle(),
+                    const Divider(color: Colors.white12, height: 1),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: Column(
+                          children: [
+                            _SettingsItem(
+                              icon: Icons.speed,
+                              title: 'Playback Speed',
+                              subtitle: _formatSpeed(playerState.speed),
+                              onTap: () =>
+                                  _showSpeedSelector(context, ref),
+                            ),
+                            _SettingsItem(
+                              icon: Icons.audiotrack,
+                              title: 'Audio Track',
+                              subtitle: _getAudioSubtitle(playerState),
+                              onTap: () =>
+                                  _showAudioTrackSelector(context, ref),
+                            ),
+                            _SettingsItem(
+                              icon: Icons.subtitles,
+                              title: 'Subtitles',
+                              subtitle: _getSubtitleSubtitle(playerState),
+                              onTap: () =>
+                                  _showSubtitleSelector(context, ref),
+                            ),
+                            _SettingsItem(
+                              icon: Icons.high_quality,
+                              title: 'Quality',
+                              subtitle: _getQualitySubtitle(playerState),
+                              onTap: () =>
+                                  _showQualitySelector(context, ref),
+                            ),
+                            _SettingsItem(
+                              icon: Icons.camera_alt,
+                              title: 'Take Screenshot',
+                              onTap: () => _takeScreenshot(context, ref),
+                            ),
+                            _SettingsItem(
+                              icon: Icons.loop,
+                              title: 'Loop',
+                              subtitle:
+                                  playerState.is2xSpeed ? 'On' : 'Off',
+                              onTap: () => _toggleLoop(context, ref),
+                            ),
+                            const SizedBox(height: 12),
+                            _SettingsItem(
+                              icon: Icons.edit,
+                              title: 'Edit Video',
+                              subtitle: 'Edit video',
+                              onTap: () => _editVideo(context, ref),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         );
@@ -124,12 +140,12 @@ class SettingsSheetWidget extends ConsumerWidget {
 
   Widget _buildTitle() {
     return const Padding(
-      padding: EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Text(
         'Settings',
         style: TextStyle(
           color: Colors.white,
-          fontSize: 18,
+          fontSize: 16,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -655,13 +671,24 @@ class SettingsSheetWidget extends ConsumerWidget {
     try {
       showModalBottomSheet(
         context: context,
-        backgroundColor: Colors.grey[900] ?? Colors.grey,
+        backgroundColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
         ),
         builder: (sheetContext) {
           try {
-            return builder(sheetContext);
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  child: builder(sheetContext),
+                ),
+              ),
+            );
           } catch (e) {
             debugPrint('❌ Sheet builder error: $e');
             return _SheetErrorWidget(
@@ -794,15 +821,24 @@ class _SettingsItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Icon(icon, color: Colors.white70),
-      title: Text(title, style: const TextStyle(color: Colors.white)),
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      leading: Icon(icon, color: Colors.white70, size: 22),
+      title: Text(
+        title,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
       subtitle: subtitle != null
           ? Text(
               subtitle!,
-              style: TextStyle(color: Colors.grey[400] ?? Colors.grey),
+              style: TextStyle(
+                color: Colors.grey[400] ?? Colors.grey,
+                fontSize: 12,
+              ),
             )
           : null,
-      trailing: const Icon(Icons.chevron_right, color: Colors.white38),
+      trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 20),
       onTap: onTap,
     );
   }
@@ -853,6 +889,8 @@ class _SpeedSelectorSheet extends StatelessWidget {
 
   Widget _buildSpeedTile(double speed, bool isSelected) {
     return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(
         isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
         color: isSelected ? Colors.red : Colors.white54,
@@ -882,11 +920,13 @@ class _SpeedSelectorSheet extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context, String title) {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 12, 16, 6),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
             onPressed: () {
               try {
                 Navigator.of(context).pop();
@@ -895,11 +935,12 @@ class _SpeedSelectorSheet extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(width: 4),
           Text(
             title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -976,6 +1017,8 @@ class _AudioTrackSelectorSheet extends StatelessWidget {
     }
 
     return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(
         isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
         color: isSelected ? Colors.red : Colors.white54,
@@ -1044,11 +1087,13 @@ class _AudioTrackSelectorSheet extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context, String title) {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 12, 16, 6),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
             onPressed: () {
               try {
                 Navigator.of(context).pop();
@@ -1057,11 +1102,12 @@ class _AudioTrackSelectorSheet extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(width: 4),
           Text(
             title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -1100,6 +1146,8 @@ class _SubtitleSelectorSheet extends StatelessWidget {
 
           // Off option
           ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
             leading: Icon(
               isOffSelected
                   ? Icons.radio_button_checked
@@ -1160,6 +1208,8 @@ class _SubtitleSelectorSheet extends StatelessWidget {
     }
 
     return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(
         isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
         color: isSelected ? Colors.red : Colors.white54,
@@ -1211,11 +1261,13 @@ class _SubtitleSelectorSheet extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context, String title) {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 12, 16, 6),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
             onPressed: () {
               try {
                 Navigator.of(context).pop();
@@ -1224,11 +1276,12 @@ class _SubtitleSelectorSheet extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(width: 4),
           Text(
             title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -1322,6 +1375,8 @@ class _QualitySelectorSheet extends StatelessWidget {
     }
 
     return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(
         isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
         color: isSelected ? Colors.red : Colors.white54,
@@ -1374,11 +1429,13 @@ class _QualitySelectorSheet extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context, String title) {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 12, 16, 6),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
             onPressed: () {
               try {
                 Navigator.of(context).pop();
@@ -1387,11 +1444,12 @@ class _QualitySelectorSheet extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(width: 4),
           Text(
             title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),

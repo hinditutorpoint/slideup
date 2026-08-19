@@ -11,6 +11,8 @@ import '../video_player/video_player_launcher.dart';
 import '../../helpers/audio_playback_helper.dart';
 import '../../models/media_file.dart';
 import '../../providers/download_providers.dart';
+import '../../data/ad_domains.dart';
+import 'ad_block_list_service.dart';
 import 'browser_downloads_screen.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
@@ -39,6 +41,8 @@ import 'media_intercept_helper.dart';
 //
 // Tracker blocking:
 //   ContentBlocker rules block known hostname-anchored tracker/ad domains.
+//   Advanced tier adds AdDomains (ad_domains.dart); Enhanced tier adds AdGuard's
+//   adservers.txt (fetched once per app run, cached in memory).
 //   This will NOT catch obfuscated domains not in the blocklist and is NOT
 //   equivalent to uBlock Origin.
 //
@@ -249,6 +253,24 @@ const _kNsfwAndPopunderHosts = <String>{
   'minr.pw',
 };
 
+final RegExp _kAdHostnamePattern =
+    RegExp(r'^[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)+$');
+final RegExp _kAdSuffixPattern = RegExp(r'^\.[a-z0-9\-]+$');
+
+/// Hostname-only entries extracted from [AdDomains.blockedDomains]
+/// (e.g. `googlesyndication.com`). Path/query patterns (`facebook.com/tr`,
+/// `utm_source`) and generic keywords are dropped — they are not host matches.
+final Set<String> _kAppAdHosts = AdDomains.blockedDomains
+    .where((d) => _kAdHostnamePattern.hasMatch(d.toLowerCase()))
+    .toSet();
+
+/// TLD / suffix-only entries from [AdDomains.blockedDomains] (e.g. `.shop`),
+/// matched with `host.endsWith(suffix)`.
+final Set<String> _kAppAdSuffixes = AdDomains.blockedDomains
+    .where((d) => _kAdSuffixPattern.hasMatch(d.toLowerCase()))
+    .map((d) => d.toLowerCase())
+    .toSet();
+
 /// Script injected into WebView to neutralize click-hijack overlays, popunder window.open abuse,
 /// and hide adult banner elements cosmetically with CSS.
 const _kAdBlockUserScript = '''
@@ -330,72 +352,86 @@ const _kAdBlockUserScript = '''
     } catch(e) {}
   }
 
-  // 5. Cosmetic CSS Element Hiding for Adult & Video Ads
-  var css = `
-    iframe[src*="exoclick"],
-    iframe[src*="juicyads"],
-    iframe[src*="trafficjunky"],
-    iframe[src*="popads"],
-    iframe[src*="adsterra"],
-    iframe[src*="propellerads"],
-    iframe[src*="clickadu"],
-    .juicyads,
-    .exo-native-widget,
-    .trafficjunky,
-    .ad-container,
-    .ad_container,
-    .banner-ad,
-    .banner_ad,
-    [id*="ad_banner"],
-    [class*="ad_banner"],
-    [class*="ad-banner"],
-    [id*="ad-banner"],
-    [class*="native-ad"],
-    [id*="popunder"],
-    [class*="popunder"],
-    [id*="overlay-ad"],
-    [class*="overlay-ad"],
-    div[class*="floating-ad"],
-    div[id*="floating-ad"],
-    div[class*="sticky-ad"],
-    div[id*="sticky-ad"],
-    div[class*="banner_advertisement"],
-    div[class*="sponsor-banner"],
-    div[id*="sponsored-ad"] {
-      display: none !important;
-      visibility: hidden !important;
-      height: 0 !important;
-      width: 0 !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-    }
-  `;
+  // 5. Cosmetic Ad Hiding (JS-driven so real media containers are NEVER hidden)
+  var adSelector =
+    'iframe[src*="exoclick"], ' +
+    'iframe[src*="juicyads"], ' +
+    'iframe[src*="trafficjunky"], ' +
+    'iframe[src*="popads"], ' +
+    'iframe[src*="adsterra"], ' +
+    'iframe[src*="propellerads"], ' +
+    'iframe[src*="clickadu"], ' +
+    '.juicyads, .exo-native-widget, .trafficjunky, ' +
+    '.ad-container, .ad_container, .banner-ad, .banner_ad, ' +
+    '[id*="ad_banner"], [class*="ad_banner"], [class*="ad-banner"], [id*="ad-banner"], ' +
+    '[class*="native-ad"], [id*="popunder"], [class*="popunder"], ' +
+    '[id*="overlay-ad"], [class*="overlay-ad"], ' +
+    'div[class*="floating-ad"], div[id*="floating-ad"], ' +
+    'div[class*="sticky-ad"], div[id*="sticky-ad"], ' +
+    'div[class*="banner_advertisement"], div[class*="sponsor-banner"], ' +
+    'div[id*="sponsored-ad"]';
+  var adHiddenAttr = 'data-slideup-adhidden';
 
-  function injectCSS() {
-    if (document.head) {
-      var style = document.createElement('style');
-      style.type = 'text/css';
-      style.appendChild(document.createTextNode(css));
-      document.head.appendChild(style);
+  // An element is treated as real media content if it contains (or is) a
+  // video/audio element or an interactive form control.
+  function isMediaContainer(el) {
+    return !!el.querySelector('video, audio, input, form');
+  }
+
+  function hideAd(el) {
+    el.setAttribute(adHiddenAttr, '1');
+    el.style.setProperty('display', 'none', 'important');
+    el.style.setProperty('visibility', 'hidden', 'important');
+    el.style.setProperty('height', '0', 'important');
+    el.style.setProperty('width', '0', 'important');
+    el.style.setProperty('opacity', '0', 'important');
+    el.style.setProperty('pointer-events', 'none', 'important');
+  }
+
+  function showEl(el) {
+    el.removeAttribute(adHiddenAttr);
+    el.style.removeProperty('display');
+    el.style.removeProperty('visibility');
+    el.style.removeProperty('height');
+    el.style.removeProperty('width');
+    el.style.removeProperty('opacity');
+    el.style.removeProperty('pointer-events');
+  }
+
+  function applyAdHiding() {
+    if (!document.body) return;
+    // 1. Un-hide anything that now contains real media (e.g. an ad slot
+    //    reused for the actual video after the pre-roll).
+    var hidden = document.querySelectorAll('[' + adHiddenAttr + ']');
+    for (var i = 0; i < hidden.length; i++) {
+      if (isMediaContainer(hidden[i])) showEl(hidden[i]);
+    }
+    // 2. Hide ad matches that do not contain real media.
+    var matches = document.querySelectorAll(adSelector);
+    for (var j = 0; j < matches.length; j++) {
+      var m = matches[j];
+      if (isMediaContainer(m) || m.hasAttribute(adHiddenAttr)) continue;
+      hideAd(m);
     }
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
-      injectCSS();
+      applyAdHiding();
       removeOverlays();
     });
   } else {
-    injectCSS();
+    applyAdHiding();
     removeOverlays();
   }
 
   window.addEventListener('load', function() {
-    setTimeout(removeOverlays, 1000);
-    setTimeout(removeOverlays, 3000);
+    setTimeout(function() { applyAdHiding(); removeOverlays(); }, 1000);
+    setTimeout(function() { applyAdHiding(); removeOverlays(); }, 3000);
   });
 
   var observer = new MutationObserver(function() {
+    applyAdHiding();
     removeOverlays();
   });
   if (document.body) {
@@ -503,7 +539,27 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   // Controllers / keys
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocus = FocusNode();
+  final FocusNode _homeFocus = FocusNode();
   InAppWebViewController? _controller;
+
+  /// Native pull-to-refresh control attached to the WebView (Android
+  /// SwipeRefreshLayout / iOS UIRefreshControl). Reloads the current page.
+  PullToRefreshController? _pullToRefreshController;
+
+  /// Creates (or recreates) the native pull-to-refresh control. Recreated
+  /// whenever the WebView itself is recreated ([_toggleIncognito]).
+  void _initPullToRefreshController() {
+    _pullToRefreshController?.dispose();
+    _pullToRefreshController = PullToRefreshController(
+      settings: PullToRefreshSettings(
+        color: Colors.teal,
+        backgroundColor: const Color(0xFF1B1E26),
+      ),
+      onRefresh: () {
+        _controller?.reload();
+      },
+    );
+  }
 
   /// Replacing this key tears down the old InAppWebView and creates a fresh one.
   /// Used when [_incognito] is toggled — incognito cannot be changed on a live
@@ -529,6 +585,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   bool _blockPopups = true;
   bool _settingsReady = false;
 
+  /// Ad-server hostnames fetched from AdGuard's adservers.txt (Enhanced
+  /// blocking tier). Empty until the background fetch completes.
+  Set<String> _remoteAdHosts = const {};
+
   // UI state
   bool _incognito = true;
 
@@ -553,7 +613,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _urlController.text = _pendingNavigationUrl!;
     }
 
+    _initPullToRefreshController();
+
     _loadSettings();
+    unawaited(_loadAdBlockHosts());
   }
 
   @override
@@ -561,6 +624,8 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     WidgetsBinding.instance.removeObserver(this);
     _urlController.dispose();
     _urlFocus.dispose();
+    _homeFocus.dispose();
+    _pullToRefreshController?.dispose();
     // No async work here. In incognito mode, the platform WebView handles
     // session cleanup when the widget is destroyed by the Flutter engine.
     // Explicit user-triggered cleanup lives in _clearSessionNow() and
@@ -569,6 +634,23 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   }
 
   // ── Settings ─────────────────────────────────────────────────────────────────
+
+  /// Fetches AdGuard's ad-server hostname list in the background and merges it
+  /// into the blocklist. Content-blocker settings are refreshed (no reload) so
+  /// iOS rule lists pick up the new hosts for future navigations; Android's
+  /// request-level checks read [_remoteAdHosts] live.
+  Future<void> _loadAdBlockHosts() async {
+    final hosts = await AdBlockListService.fetchAdservers();
+    if (!mounted || hosts.isEmpty) return;
+    setState(() => _remoteAdHosts = hosts);
+    final ctrl = _controller;
+    if (ctrl == null) return;
+    try {
+      await ctrl.setSettings(settings: _buildWebViewSettings());
+    } catch (e) {
+      debugPrint('[PrivateBrowser] apply ad block list: $e');
+    }
+  }
 
   Future<void> _loadSettings() async {
     await BrowserSettings.instance.load();
@@ -633,6 +715,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _isLoading = false;
       _webViewKey = UniqueKey(); // ← triggers WebView recreation
       _detectedMedia.clear();
+      _initPullToRefreshController();
     });
 
     _showSnack(
@@ -826,11 +909,23 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     if (_hostMatch(host, _kNsfwAndPopunderHosts)) return true;
     if (_trackerMode == TrackerBlockMode.normal) return false;
     if (_hostMatch(host, _kAdvancedTrackerHosts)) return true;
+    // Advanced tier: app-hosted AdDomains hostnames and `.suffix` rules.
+    if (_trackerMode == TrackerBlockMode.advanced) {
+      if (_hostMatch(host, _kAppAdHosts)) return true;
+      if (_suffixMatch(host, _kAppAdSuffixes)) return true;
+    }
+    // Enhanced tier: dynamically fetched AdGuard ad-server hostnames.
+    if (_trackerMode == TrackerBlockMode.enhanced) {
+      if (_hostMatch(host, _remoteAdHosts)) return true;
+    }
     return false;
   }
 
   bool _hostMatch(String host, Set<String> list) =>
       list.any((t) => host == t || host.endsWith('.$t'));
+
+  bool _suffixMatch(String host, Set<String> suffixes) =>
+      suffixes.any((s) => host.endsWith(s));
 
   /// Builds hostname-anchored ContentBlocker rules.
   ///
@@ -861,6 +956,22 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     }
     if (_trackerMode.index >= TrackerBlockMode.advanced.index) {
       for (final h in _kAdvancedTrackerHosts) {
+        addHostRule(h);
+      }
+    }
+    // Advanced tier: app-hosted AdDomains hosts + `.suffix` rules.
+    if (_trackerMode == TrackerBlockMode.advanced) {
+      for (final h in _kAppAdHosts) {
+        addHostRule(h);
+      }
+      // `.shop`-style suffix rules: block any host ending with the suffix.
+      for (final s in _kAppAdSuffixes) {
+        addHostRule(s.substring(1));
+      }
+    }
+    // Enhanced tier: dynamically fetched AdGuard ad-server hostnames.
+    if (_trackerMode == TrackerBlockMode.enhanced) {
+      for (final h in _remoteAdHosts) {
         addHostRule(h);
       }
     }
@@ -1725,6 +1836,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         url: WebUri(_pendingNavigationUrl ?? 'about:blank'),
       ),
       initialSettings: _buildWebViewSettings(),
+      pullToRefreshController: _pullToRefreshController,
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
           source: _kAdBlockUserScript,
@@ -1784,6 +1896,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           _canGoBack = canBack;
           _canGoForward = canFwd;
         });
+        _pullToRefreshController?.endRefreshing();
       },
       onTitleChanged: (controller, title) {
         if (!mounted) return;
@@ -2066,7 +2179,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
               ),
               child: TextField(
                 controller: _urlController,
-                focusNode: _urlFocus,
+                focusNode: _homeFocus,
                 keyboardType: TextInputType.url,
                 textInputAction: TextInputAction.search,
                 onSubmitted: (_) => _submitAddress(),

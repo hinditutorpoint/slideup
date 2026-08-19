@@ -1,0 +1,24 @@
+NOTICE
+======
+
+Copyright (c) 2026 SlideUp Project (hinditutorpoint)
+
+This project is licensed under the GNU General Public License v3.0
+(see LICENSE).
+
+Third-Party Notice
+------------------
+The "extractor" plugin (https://pub.dev/packages/extractor) embeds
+youtubedl-android and yt-dlp components that are licensed under
+GPL-3.0. Their licenses are reproduced in the LICENSE file and the
+plugin's own LICENSE/acknowledgments.
+
+Trademarks
+----------
+The names "SlideUp" and "Slideup Media Player", the SlideUp logo, icon
+artwork, screenshots, and visual branding assets are proprietary trademarks
+of SlideUp Project (hinditutorpoint). The GNU General Public License does
+not grant any rights to use these names or branding assets in any
+derivative work, product, or publication. Any use of the SlideUp
+trademarks requires the prior written permission of SlideUp Project
+(hinditutorpoint).
