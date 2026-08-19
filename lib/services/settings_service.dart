@@ -17,6 +17,7 @@ class SettingsService {
   static const String _keyShowHiddenFiles = 'show_hidden_files';
   static const String _keySortBy = 'sort_by';
   static const String _keySortOrder = 'sort_order';
+  static const String _keyLastTab = 'main_tab_index';
 
   Box get _box => Hive.box(_boxName);
 
@@ -128,6 +129,25 @@ class SettingsService {
       await _box.put(_keyLastLocation, path);
     } catch (e) {
       debugPrint('Error saving last location: $e');
+    }
+  }
+
+  // ---------------- Last tab ----------------
+
+  Future<int> getLastTabIndex() async {
+    try {
+      return _box.get(_keyLastTab, defaultValue: 0) as int;
+    } catch (e) {
+      debugPrint('Error loading last tab: $e');
+      return 0;
+    }
+  }
+
+  Future<void> setLastTabIndex(int index) async {
+    try {
+      await _box.put(_keyLastTab, index);
+    } catch (e) {
+      debugPrint('Error saving last tab: $e');
     }
   }
 

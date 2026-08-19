@@ -65,6 +65,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
   }
 
   Future<void> _initialize() async {
+    final notifier = ref.read(fileBrowserProvider.notifier);
+
     // Check permissions first
     final hasPermissions = await PermissionService.instance.hasAllPermissions();
 
@@ -75,7 +77,6 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
     } else {
       // Load last location or default to first available storage
       final lastLocation = await SettingsService.instance.getLastLocation();
-      final notifier = ref.read(fileBrowserProvider.notifier);
       if (lastLocation != null && Directory(lastLocation).existsSync()) {
         if (mounted) {
           await notifier.navigateToDirectory(Directory(lastLocation));
@@ -2870,6 +2871,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
 
     if (result.success) {
       _showSnackBar('Renamed successfully');
+      if (!mounted) return;
       final state = ref.read(fileBrowserProvider);
       if (state.currentDirectory != null) {
         notifier.navigateToDirectory(state.currentDirectory!);
@@ -2950,6 +2952,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       }
       if (result.success) {
         _showSnackBar('File deleted successfully');
+        if (!mounted) return;
         final state = ref.read(fileBrowserProvider);
         if (state.currentDirectory != null) {
           notifier.navigateToDirectory(state.currentDirectory!);

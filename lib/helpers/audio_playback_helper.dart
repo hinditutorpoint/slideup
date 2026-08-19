@@ -1,9 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 import '../models/media_file.dart';
 import '../providers/audio_handler_provider.dart';
+import '../providers/download_providers.dart';
 import '../providers/mini_player_provider.dart';
 import '../providers/media_provider.dart';
+import '../features/documents/models/download_task.dart';
 
 class AudioPlaybackHelper {
   /// Play audio with mini player
@@ -30,6 +33,13 @@ class AudioPlaybackHelper {
 
       if (audioFiles.isEmpty) return;
 
+      // Replace URL sources with their completed local downloads so the
+      // player streams from disk instead of the network.
+      final resolved = <MediaFile>[];
+      for (final file in audioFiles) {
+        resolved.add(await _resolveDownloadedSource(ref, file));
+      }
+
       // Find index
       final index =
           startIndex ??
@@ -37,7 +47,7 @@ class AudioPlaybackHelper {
 
       // Load and play
       await audioHandler.loadPlaylist(
-        audioFiles,
+        resolved,
         initialIndex: index >= 0 ? index : 0,
       );
 
@@ -45,6 +55,52 @@ class AudioPlaybackHelper {
     } catch (e) {
       debugPrint('Error playing audio: $e');
       ref.read(miniPlayerProvider.notifier).hide();
+    }
+  }
+
+  /// If [file] points at a URL that already has a completed download, return
+  /// a copy pointing at the local file; otherwise return the file unchanged.
+  static Future<MediaFile> _resolveDownloadedSource(
+    WidgetRef ref,
+    MediaFile file,
+  ) async {
+    if (!file.path.startsWith('http')) return file;
+    try {
+      final task = await ref
+          .read(downloadServiceProvider)
+          .getDownloadByIdentifier(file.path);
+      if (task != null &&
+          task.status == DownloadStatus.completed &&
+          task.filePath != null &&
+          File(task.filePath!).existsSync()) {
+        return file.copyWith(
+          path: task.filePath,
+          mimeType: _mimeForPath(task.filePath!),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error resolving downloaded source: $e');
+    }
+    return file;
+  }
+
+  static String? _mimeForPath(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'm4a':
+        return 'audio/mp4';
+      case 'flac':
+        return 'audio/flac';
+      case 'wav':
+        return 'audio/wav';
+      case 'ogg':
+        return 'audio/ogg';
+      case 'aac':
+        return 'audio/aac';
+      default:
+        return 'audio/mpeg';
     }
   }
 

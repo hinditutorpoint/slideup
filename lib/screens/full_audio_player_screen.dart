@@ -6,11 +6,17 @@ import 'dart:io';
 import 'dart:async';
 import 'package:share_plus/share_plus.dart';
 import '../models/media_file.dart';
+import '../models/playlist.dart';
 import '../models/audio_data.dart';
 import '../providers/audio_handler_provider.dart';
 import '../providers/favorites_provider.dart';
+import '../providers/playlist_provider.dart';
+import '../providers/download_providers.dart';
+import '../helpers/audio_playback_helper.dart';
 import '../helpers/format_helper.dart';
 import '../services/database_service.dart';
+import '../core/constants/archive_constants.dart';
+import '../widgets/download_button.dart';
 import '../widgets/lyrics_view_widget.dart';
 
 class FullAudioPlayerScreen extends ConsumerStatefulWidget {
@@ -39,6 +45,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   bool _showLyrics = false;
   String? _trackInfoPath;
   Future<AudioData?>? _trackInfoFuture;
+  String? _savedPlaylistId;
 
   @override
   void initState() {
@@ -227,12 +234,20 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                             height: lyricsPanelHeight,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                              child: LyricsViewWidget(
-                                songTitle: currentTitle,
-                                artist: currentArtist,
-                                duration: currentDuration,
-                                onClose: () =>
-                                    setState(() => _showLyrics = false),
+                              child: FutureBuilder<AudioData?>(
+                                future: _audioDataForPath(
+                                  mediaItem?.extras?['path'] as String?,
+                                ),
+                                builder: (context, audioSnapshot) {
+                                  return LyricsViewWidget(
+                                    songTitle: currentTitle,
+                                    artist: currentArtist,
+                                    duration: currentDuration,
+                                    audioData: audioSnapshot.data,
+                                    onClose: () =>
+                                        setState(() => _showLyrics = false),
+                                  );
+                                },
                               ),
                             ),
                           )
@@ -692,7 +707,37 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _saveQueueAsPlaylist(asNew: false);
+                      },
+                      icon: const Icon(Icons.save_outlined, size: 18),
+                      label: const Text('Save'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _saveQueueAsPlaylist(asNew: true);
+                      },
+                      icon: const Icon(Icons.save_as, size: 18),
+                      label: const Text('Save As'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _openPlaylist();
+                      },
+                      icon: const Icon(Icons.folder_open_outlined, size: 18),
+                      label: const Text('Open'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 Expanded(
                   child: StreamBuilder<List<MediaItem>>(
                     stream: audioHandler.queue,
@@ -715,6 +760,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                             itemBuilder: (context, index) {
                               final item = queue[index];
                               final isPlaying = index == currentIndex;
+                              final itemUrl = _itemUrl(item);
 
                               return ListTile(
                                 leading: Container(
@@ -758,12 +804,53 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                                   ),
                                 ),
                                 subtitle: Text(item.artist ?? 'Unknown Artist'),
-                                trailing: isPlaying
-                                    ? Icon(
-                                        Icons.equalizer,
-                                        color: Theme.of(context).primaryColor,
-                                      )
-                                    : null,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (itemUrl != null)
+                                      DownloadButton(
+                                        identifier: itemUrl,
+                                        title: item.title,
+                                        downloadUrl: itemUrl,
+                                        mediaType:
+                                            ArchiveConstants.mediaTypeAudio,
+                                        thumbnailUrl: item.artUri?.toString(),
+                                        size: 30,
+                                      ),
+                                    PopupMenuButton<_QueueAction>(
+                                      onSelected: (action) =>
+                                          _onQueueItemAction(
+                                            context,
+                                            action,
+                                            item,
+                                            index,
+                                          ),
+                                      itemBuilder: (context) => [
+                                        PopupMenuItem(
+                                          value: _QueueAction.play,
+                                          child: const Text('Play'),
+                                        ),
+                                        if (itemUrl != null)
+                                          PopupMenuItem(
+                                            value: _QueueAction.download,
+                                            child: const Text('Download'),
+                                          ),
+                                        PopupMenuItem(
+                                          value: _QueueAction.details,
+                                          child: const Text('Details'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: _QueueAction.share,
+                                          child: const Text('Share'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: _QueueAction.remove,
+                                          child: const Text('Remove from List'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                                 onTap: () {
                                   audioHandler.skipToQueueItem(index);
                                   Navigator.pop(context);
@@ -782,6 +869,237 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
         },
       ),
     );
+  }
+
+  String? _itemUrl(MediaItem item) {
+    final path = item.extras?['path'] as String? ?? '';
+    return path.startsWith('http') ? path : null;
+  }
+
+  MediaFile _mediaItemToMediaFile(MediaItem item) {
+    return MediaFile(
+      id: item.id,
+      name: item.title,
+      path: item.extras?['path'] ?? '',
+      displayPath: item.extras?['displayPath'],
+      type: MediaType.audio,
+      documentType: null,
+      size: item.extras?['size'] ?? 0,
+      dateModified: DateTime.fromMillisecondsSinceEpoch(
+        item.extras?['dateModified'] ?? DateTime.now().millisecondsSinceEpoch,
+      ),
+      dateAdded: item.extras?['dateAdded'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(item.extras!['dateAdded'])
+          : null,
+      mimeType: item.extras?['mimeType'],
+      thumbnailPath: item.artUri?.path,
+      duration: item.duration?.inMilliseconds,
+      isLocked: item.extras?['isLocked'] ?? false,
+      parentFolder: item.extras?['parentFolder'],
+      artist: item.artist,
+      album: item.album,
+    );
+  }
+
+  void _onQueueItemAction(
+    BuildContext sheetContext,
+    _QueueAction action,
+    MediaItem item,
+    int index,
+  ) {
+    final audioHandler = ref.read(audioHandlerProvider);
+    final url = _itemUrl(item);
+    switch (action) {
+      case _QueueAction.play:
+        Navigator.pop(sheetContext);
+        audioHandler.skipToQueueItem(index);
+        audioHandler.play();
+      case _QueueAction.download:
+        if (url != null) {
+          Navigator.pop(sheetContext);
+          _startItemDownload(item, url);
+        }
+      case _QueueAction.details:
+        Navigator.pop(sheetContext);
+        _showSongDetails(item);
+      case _QueueAction.share:
+        Navigator.pop(sheetContext);
+        _shareQueueItem(item);
+      case _QueueAction.remove:
+        audioHandler.removeFromQueue(index);
+    }
+  }
+
+  Future<void> _startItemDownload(MediaItem item, String url) async {
+    final result = await ref
+        .read(downloadsProvider.notifier)
+        .startDownload(
+          identifier: url,
+          title: item.title,
+          url: url,
+          mediaType: ArchiveConstants.mediaTypeAudio,
+          thumbnailUrl: item.artUri?.toString(),
+        );
+    ref.invalidate(isDownloadedProvider(url));
+    if (result == null && context.mounted) {
+      _showSnack('Failed to start download');
+    }
+  }
+
+  void _shareQueueItem(MediaItem item) {
+    final path = item.extras?['path'] as String?;
+    if (_itemUrl(item) != null) {
+      // ignore: deprecated_member_use
+      Share.share('Check out this song: ${item.title}\n$path');
+    } else if (path != null) {
+      // ignore: deprecated_member_use
+      Share.shareXFiles([XFile(path)], text: 'Check out this song: ${item.title}');
+    }
+  }
+
+  Future<void> _saveQueueAsPlaylist({required bool asNew}) async {
+    final audioHandler = ref.read(audioHandlerProvider);
+    final queue = audioHandler.queue.value;
+
+    if (queue.isEmpty) {
+      _showSnack('Queue is empty');
+      return;
+    }
+
+    final name = await _promptPlaylistName();
+    if (name == null || name.trim().isEmpty) return;
+
+    final mediaIds = queue
+        .map((item) => encodePlaylistMediaId(_mediaItemToMediaFile(item)))
+        .toList();
+
+    final savedId = await ref
+        .read(playlistsProvider.notifier)
+        .savePlaylistWithMedia(
+          name: name.trim(),
+          playlistId: asNew ? null : _savedPlaylistId,
+          mediaIds: mediaIds,
+        );
+
+    if (context.mounted) {
+      setState(() => _savedPlaylistId = savedId);
+      _showSnack(asNew ? 'Saved as new playlist' : 'Playlist saved');
+    }
+  }
+
+  Future<void> _openPlaylist() async {
+    final playlists = ref.read(playlistsProvider);
+    if (playlists.value == null || playlists.value!.isEmpty) {
+      _showSnack('No playlists found');
+      return;
+    }
+
+    final selected = await showModalBottomSheet<Playlist>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20.0),
+              child: Text(
+                'Open Playlist',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: playlists.value!.length,
+                itemBuilder: (context, index) {
+                  final playlist = playlists.value![index];
+                  return ListTile(
+                    leading: const Icon(Icons.queue_music),
+                    title: Text(playlist.name),
+                    subtitle: Text('${playlist.mediaIds.length} items'),
+                    onTap: () => Navigator.pop(context, playlist),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+
+    if (selected == null || !context.mounted) return;
+
+    final files =
+        await ref.read(playlistMediaFilesProvider(selected.id).future);
+    final audioFiles = files
+        .where((file) => file.type == MediaType.audio)
+        .toList();
+    if (audioFiles.isEmpty) {
+      _showSnack('Playlist has no audio');
+      return;
+    }
+
+    await AudioPlaybackHelper.playAudio(ref, audioFiles.first, audioFiles);
+    if (context.mounted) {
+      setState(() => _savedPlaylistId = selected.id);
+      _showSnack('Playing ${selected.name}');
+    }
+  }
+
+  Future<String?> _promptPlaylistName() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Playlist Name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Enter playlist name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return name;
+  }
+
+  void _showSnack(String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showMoreOptions() {
@@ -896,9 +1214,9 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
     );
   }
 
-  void _showSongDetails() {
+  void _showSongDetails([MediaItem? item]) {
     final audioHandler = ref.read(audioHandlerProvider);
-    final mediaItem = audioHandler.mediaItem.value;
+    final mediaItem = item ?? audioHandler.mediaItem.value;
 
     if (mediaItem == null) return;
 
@@ -989,7 +1307,10 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
     add('Writer', data?.writer);
     add('Composer', data?.composer);
     add('Genre', data?.genre ?? item.genre);
-    add('Year', data?.year?.toString());
+    final extrasYear = item.extras?['year'];
+    final yearValue = data?.year?.toString() ??
+        (extrasYear is num ? extrasYear.toString() : null);
+    add('Year', yearValue);
     add('Date', data?.date);
     add('Track Number', data?.trackNumber?.toString());
     add('Disc Number', data?.discNumber?.toString());
@@ -1102,3 +1423,5 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
     }
   }
 }
+
+enum _QueueAction { play, download, details, share, remove }

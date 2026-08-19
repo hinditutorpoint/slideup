@@ -211,6 +211,7 @@ class FileScannerService {
 
   Future<List<MediaFile>> scanAllMedia({
     Function(int current, int total)? onProgress,
+    Map<String, MediaFile>? existingByPath,
   }) async {
     final allFiles = <MediaFile>[];
 
@@ -233,7 +234,11 @@ class FileScannerService {
               }
 
               if (entity is File) {
-                final mediaFile = await _processFile(entity);
+                final existing = existingByPath?[entity.path];
+                final mediaFile = await _processFile(
+                  entity,
+                  existing: existing,
+                );
                 if (mediaFile != null) {
                   allFiles.add(mediaFile);
                 }
@@ -313,7 +318,7 @@ class FileScannerService {
     return files;
   }
 
-  Future<MediaFile?> _processFile(File file) async {
+  Future<MediaFile?> _processFile(File file, {MediaFile? existing}) async {
     try {
       final stat = await file.stat();
       final fileName = path.basename(file.path);
@@ -329,10 +334,36 @@ class FileScannerService {
 
       if (mediaType == MediaType.other) return null;
 
+      // Fast path: if this file was already scanned and is unchanged, reuse
+      // its stored metadata (title, artist, duration, thumbnail) instead of
+      // re-running FFprobe/FFmpeg. This avoids spawning heavy native processes
+      // for every file on every app launch, which can stall the main thread.
+      // Exception: audio files whose metadata extraction previously FAILED are
+      // re-probed so "Unknown Artist/Album" gets healed. A failed probe leaves
+      // duration null too, while a genuinely tag-less file still reports
+      // duration from ffprobe format info — so only files that were never
+      // successfully probed (or came from non-scanner creation paths) re-probe,
+      // and tag-less files are reused like any other.
+      final needsMetadataProbe = mediaType == MediaType.audio &&
+          existing != null &&
+          existing.artist == null &&
+          existing.album == null &&
+          existing.duration == null;
+      if (!needsMetadataProbe &&
+          existing != null &&
+          existing.type == mediaType &&
+          existing.size == stat.size &&
+          existing.dateModified == stat.modified) {
+        return existing;
+      }
+
       String? thumbnailPath;
       int? duration;
+      String? title;
       String? artist;
       String? album;
+      String? genre;
+      int? year;
 
       // Generate thumbnail for videos (except streaming formats)
       if (mediaType == MediaType.video &&
@@ -340,21 +371,31 @@ class FileScannerService {
         thumbnailPath = await _generateVideoThumbnail(file.path);
       }
 
-      // Extract metadata (artist, album, duration) for audio/video files
+      // Extract metadata (title, artist, album, duration) for audio/video files
       if (mediaType == MediaType.audio || mediaType == MediaType.video) {
         try {
           final meta = await MediaMetadataService.getMediaMetadata(file.path);
+          title = MediaMetadataService.getTitle(meta);
           artist = MediaMetadataService.getArtist(meta);
           album = MediaMetadataService.getAlbum(meta);
+          genre = MediaMetadataService.getGenre(meta);
+          year = MediaMetadataService.getYear(meta);
           duration = MediaMetadataService.getDuration(meta)?.inMilliseconds;
         } catch (e) {
           debugPrint('Error extracting metadata from ${file.path}: $e');
         }
       }
 
+      // Use the embedded title tag as the display name for audio files when
+      // present (e.g. ID3v2 TIT2), falling back to the raw file name.
+      final isUsableTitle = title != null && title.trim().isNotEmpty;
+      final displayName = mediaType == MediaType.audio && isUsableTitle
+          ? title.trim()
+          : fileName;
+
       return MediaFile(
         id: _uuid.v4(),
-        name: fileName,
+        name: displayName,
         path: file.path,
         displayPath: _getDisplayPath(file.path),
         type: mediaType,
@@ -370,6 +411,8 @@ class FileScannerService {
         parentFolder: path.dirname(file.path),
         artist: artist,
         album: album,
+        genre: genre,
+        year: year,
       );
     } catch (e) {
       debugPrint('Error processing file ${file.path}: $e');

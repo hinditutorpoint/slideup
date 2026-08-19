@@ -320,6 +320,10 @@ class DownloadManager {
 
       _activeTasks.remove(modelId);
 
+      // Non-cancel failure: remove the partial download so it cannot leak
+      // hundreds of MB in the app cache.
+      await _cleanupTask(modelId, task?.tempFilePath);
+
       final errorMessage = _getErrorMessage(e);
       return DownloadResult(
         success: false,
@@ -332,6 +336,9 @@ class DownloadManager {
 
       _extractingTasks.remove(modelId);
       _activeTasks.remove(modelId);
+
+      // Unexpected failure: remove the partial download from the cache.
+      await _cleanupTask(modelId, task?.tempFilePath);
 
       return DownloadResult(
         success: false,

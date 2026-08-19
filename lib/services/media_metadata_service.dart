@@ -80,13 +80,30 @@ class MediaMetadataService {
   // Convenience getters
   // -------------------------------
   static Duration? getDuration(Map<String, dynamic> meta) {
-    final d = meta['format']?['duration'];
-    if (d == null) return null;
+    // Prefer format-level duration (accurate for most containers).
+    final formatDuration = meta['format']?['duration'];
+    if (formatDuration != null) {
+      final seconds = double.tryParse(formatDuration.toString());
+      if (seconds != null && seconds > 0) {
+        return Duration(milliseconds: (seconds * 1000).round());
+      }
+    }
 
-    final seconds = double.tryParse(d.toString());
-    if (seconds == null) return null;
+    // Fallback: some audio formats (e.g. raw WAV/PCM) report the duration
+    // only on the stream, not at the container level.
+    final streams = meta['streams'];
+    if (streams is List) {
+      for (final s in streams) {
+        final streamDuration = s['duration'];
+        if (streamDuration == null) continue;
+        final seconds = double.tryParse(streamDuration.toString());
+        if (seconds != null && seconds > 0) {
+          return Duration(milliseconds: (seconds * 1000).round());
+        }
+      }
+    }
 
-    return Duration(milliseconds: (seconds * 1000).round());
+    return null;
   }
 
   static int? getYear(Map<String, dynamic> meta) {

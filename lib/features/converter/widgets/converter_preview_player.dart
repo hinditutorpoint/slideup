@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../video_player/video_player_init.dart';
+
 /// Shared playback state so controls can live outside the player surface.
 class PreviewPlayerController {
   final ValueNotifier<Duration> position = ValueNotifier(Duration.zero);
@@ -80,6 +82,7 @@ class _ConverterPreviewPlayerState extends State<ConverterPreviewPlayer>
 
   Future<void> _initPlayer() async {
     try {
+      await VideoPlayerInit.initialize();
       final player = Player(
         configuration: const PlayerConfiguration(title: 'Converter Preview'),
       );

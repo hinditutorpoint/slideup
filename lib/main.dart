@@ -22,12 +22,12 @@ import 'widgets/app_lifecycle_handler.dart';
 import 'providers/theme_provider.dart';
 import 'core/theme/app_theme.dart';
 import 'services/database_service.dart';
+import 'services/cache_cleanup_service.dart';
 import 'services/audio_service.dart';
 import 'services/intent_handler_service.dart';
 import 'services/notification_service.dart' as notification_service;
 import 'providers/audio_handler_provider.dart';
 import 'providers/intent_handler_provider.dart';
-import 'features/video_player/video_player_init.dart';
 import 'features/converter/services/conversion_manager.dart';
 import 'features/converter/widgets/converter_global_indicator.dart';
 import 'features/epub_reader/models/epub_book.dart';
@@ -161,12 +161,6 @@ Future<void> _initBackgroundServices() async {
   }
 
   try {
-    await VideoPlayerInit.initialize();
-  } catch (e) {
-    debugPrint('VideoPlayerInit error: $e');
-  }
-
-  try {
     await IntentHandlerService.initialize();
   } catch (e) {
     debugPrint('IntentHandler error: $e');
@@ -182,6 +176,12 @@ Future<void> _initBackgroundServices() async {
     await ConversionManager.instance.initializeAndRecover();
   } catch (e) {
     debugPrint('Converter init error: $e');
+  }
+
+  try {
+    await CacheCleanupService.instance.cleanupOrphanedTempFiles();
+  } catch (e) {
+    debugPrint('Cache cleanup error: $e');
   }
 }
 

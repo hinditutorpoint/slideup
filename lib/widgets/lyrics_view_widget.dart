@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/audio_data.dart';
 import '../models/lyric_line.dart';
 import '../providers/audio_handler_provider.dart';
 import '../providers/lyrics_provider.dart';
+import '../services/lyrics_service.dart';
 
 class LyricsViewWidget extends ConsumerStatefulWidget {
   final String songTitle;
   final String? artist;
   final Duration? duration;
   final VoidCallback? onClose;
+  final AudioData? audioData;
 
   const LyricsViewWidget({
     super.key,
@@ -16,6 +19,7 @@ class LyricsViewWidget extends ConsumerStatefulWidget {
     this.artist,
     this.duration,
     this.onClose,
+    this.audioData,
   });
 
   @override
@@ -27,6 +31,9 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
   int _lastActiveIndex = -1;
   bool _userIsScrolling = false;
 
+  String get _effectiveTitle => widget.audioData?.title ?? widget.songTitle;
+  String? get _effectiveArtist => widget.audioData?.artist ?? widget.artist;
+
   @override
   void initState() {
     super.initState();
@@ -36,8 +43,10 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
   @override
   void didUpdateWidget(covariant LyricsViewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.songTitle != widget.songTitle ||
-        oldWidget.artist != widget.artist) {
+    final oldEffectiveTitle = oldWidget.audioData?.title ?? oldWidget.songTitle;
+    final oldEffectiveArtist = oldWidget.audioData?.artist ?? oldWidget.artist;
+    if (oldEffectiveTitle != _effectiveTitle ||
+        oldEffectiveArtist != _effectiveArtist) {
       _loadLyrics();
     }
   }
@@ -45,8 +54,8 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
   void _loadLyrics({bool force = false}) {
     Future.microtask(() {
       ref.read(lyricsProvider.notifier).loadLyrics(
-            title: widget.songTitle,
-            artist: widget.artist,
+            title: _effectiveTitle,
+            artist: _effectiveArtist,
             duration: widget.duration,
             forceRefresh: force,
           );
@@ -87,10 +96,14 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
   }
 
   void _showManualSearchDialog() {
+    final cleanedTitle = LyricsService.cleanQuery(_effectiveTitle);
+    final cleanedArtist = _effectiveArtist != null
+        ? LyricsService.cleanQuery(_effectiveArtist!)
+        : null;
     final searchCtrl = TextEditingController(
-      text: widget.artist != null && widget.artist!.isNotEmpty
-          ? '${widget.songTitle} ${widget.artist}'
-          : widget.songTitle,
+      text: cleanedArtist != null && cleanedArtist.isNotEmpty
+          ? '$cleanedTitle $cleanedArtist'
+          : cleanedTitle,
     );
 
     showDialog(
@@ -174,18 +187,21 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
                   ),
                   if (lyricsState.data?.source != null) ...[
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        lyricsState.data!.source!,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.primary,
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          lyricsState.data!.source!,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.primary,
+                          ),
                         ),
                       ),
                     ),

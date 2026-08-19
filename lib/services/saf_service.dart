@@ -48,4 +48,20 @@ class SafService {
       return null;
     }
   }
+
+  /// Stores a tree URI (e.g. granted through the `saf` plugin's
+  /// [Saf.pickDirectory]) into the persisted registry so [deleteFile] can
+  /// reuse it. Returns the removable volume root id, or null if the URI is
+  /// not a removable-volume tree.
+  Future<String?> storeTree(String treeUri) async {
+    if (!_isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('storeTree', {
+        'treeUri': treeUri,
+      });
+    } catch (e) {
+      debugPrint('❌ SAF storeTree error: $e');
+      return null;
+    }
+  }
 }

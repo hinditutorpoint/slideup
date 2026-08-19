@@ -22,6 +22,8 @@ import 'locked_files_screen.dart';
 import 'file_extensions_screen.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:saf/saf.dart';
+import '../services/saf_service.dart';
 
 // Import enums from settings service
 export '../services/settings_service.dart' show SortBy, SortOrder;
@@ -342,6 +344,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: granted ? Colors.green : null,
                 ),
                 onTap: () => _handleStoragePermissionTap(granted),
+              );
+            },
+          ),
+
+          FutureBuilder<List<SafPersistedPermission>>(
+            future: _getPersistedSafPermissions(),
+            builder: (context, snapshot) {
+              final grants = snapshot.data ?? const <SafPersistedPermission>[];
+              final granted = grants.isNotEmpty;
+              return ListTile(
+                title: const Text('Removable Storage Access'),
+                subtitle: Text(
+                  granted
+                      ? 'USB/SD granted - file operations work on removable drives'
+                      : 'Grant access to USB/SD drives for delete, move & modify',
+                ),
+                trailing: Icon(
+                  granted ? Icons.check_circle : Icons.chevron_right,
+                  color: granted ? Colors.green : null,
+                ),
+                onTap: () => _handleRemovableStorageAccessTap(granted),
               );
             },
           ),
@@ -997,6 +1020,90 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } else {
       await ref.read(settingsProvider.notifier).setVideoPopupEnabled(false);
     }
+  }
+
+  Future<List<SafPersistedPermission>> _getPersistedSafPermissions() async {
+    if (!Platform.isAndroid) return const [];
+    try {
+      return await Saf().persistedPermissions();
+    } catch (e) {
+      debugPrint('Error loading persisted SAF permissions: $e');
+      return const [];
+    }
+  }
+
+  Future<void> _handleRemovableStorageAccessTap(bool currentlyGranted) async {
+    if (!Platform.isAndroid) {
+      _showSnack('Removable storage access is only available on Android');
+      return;
+    }
+
+    if (currentlyGranted) {
+      _showRemovableStorageGrantedDialog();
+      return;
+    }
+
+    try {
+      final dir = await Saf().pickDirectory();
+      if (dir == null || !mounted) {
+        _showSnack('Removable storage access not granted');
+        return;
+      }
+
+      // Bridge the grant into the native registry so deletes/moves work too.
+      final rootId = await SafService.instance.storeTree(dir.uri);
+      if (!mounted) return;
+      setState(() {});
+      _showSnack(
+        rootId != null
+            ? 'USB/SD storage access granted'
+            : 'Folder access granted',
+      );
+    } catch (e) {
+      debugPrint('❌ Removable storage access error: $e');
+      if (!mounted) return;
+      _showSnack('Failed to grant removable storage access');
+    }
+  }
+
+  void _showRemovableStorageGrantedDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Removable Storage Access'),
+        content: const Text(
+          'USB/SD storage access is already granted. File operations on '
+          'removable drives now work.\n\n'
+          'You can manage or revoke grants from the Android system settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await openAppSettings();
+              if (mounted) setState(() {});
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showOverlayPermissionDialog() {

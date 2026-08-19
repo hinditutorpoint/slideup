@@ -91,12 +91,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         });
       }
 
-      // Trigger media scan in background without blocking screen transition
-      unawaited(
-        ref.read(mediaProvider.notifier).scanMedia().catchError((e) {
-          debugPrint('Media scan background error: $e');
-        }),
-      );
+      // Trigger media scan in background without blocking screen transition.
+      // The notifier is captured before navigation and the scan is started
+      // only after MainScreen is on screen so the heavy FFprobe/FFmpeg work
+      // never competes with the first frame (avoids ANR on low-end devices).
+      final mediaNotifier = ref.read(mediaProvider.notifier);
 
       // Ensure splash screen remains visible for a comfortable duration
       final elapsed = DateTime.now().difference(startTime);
@@ -109,7 +108,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         await Future.delayed(const Duration(milliseconds: 200));
 
         if (mounted) {
-          Navigator.pushReplacement(
+          await Navigator.pushReplacement(
             context,
             PageRouteBuilder(
               transitionDuration: const Duration(milliseconds: 450),
@@ -119,6 +118,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               },
             ),
           );
+
+          // Start the scan after MainScreen has been given a frame to render.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            Future.delayed(const Duration(milliseconds: 800), () {
+              unawaited(mediaNotifier.scanMedia().catchError((e) {
+                debugPrint('Media scan background error: $e');
+              }));
+            });
+          });
         }
       }
     } catch (e) {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,7 @@ import 'extracted_files_screen.dart';
 import 'favorites_screen.dart';
 import 'about_screen.dart';
 import '../services/security_service.dart';
+import '../services/settings_service.dart';
 import 'auth_screen.dart';
 import 'image_gallery_screen.dart';
 import '../widgets/play_url_dialog.dart';
@@ -107,6 +109,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+    _restoreLastTab();
     _checkAuthentication();
   }
 
@@ -134,6 +137,13 @@ class _MainScreenState extends ConsumerState<MainScreen>
       if (result != true && mounted) {
         SystemNavigator.pop();
       }
+    }
+  }
+
+  Future<void> _restoreLastTab() async {
+    final index = await SettingsService.instance.getLastTabIndex();
+    if (mounted && index >= 0 && index < _destinations.length) {
+      setState(() => _selectedIndex = index);
     }
   }
 
@@ -1560,6 +1570,9 @@ class _MainScreenState extends ConsumerState<MainScreen>
     if (_selectedIndex != index) {
       HapticFeedback.selectionClick();
       setState(() => _selectedIndex = index);
+      unawaited(
+        SettingsService.instance.setLastTabIndex(index),
+      );
     }
   }
 

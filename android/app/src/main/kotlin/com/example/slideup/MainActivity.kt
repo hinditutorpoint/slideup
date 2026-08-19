@@ -343,6 +343,31 @@ class MainActivity : AudioServiceActivity() {
                         result.error("PICK_ERROR", e.message, null)
                     }
                 }
+                // Stores a tree URI granted through any picker (e.g. the
+                // `saf` plugin's pickDirectory) into the persisted registry
+                // so deleteFile can reuse it. Returns the volume root id, or
+                // null when the URI is not a removable-volume tree.
+                "storeTree" -> {
+                    val treeUriStr = call.argument<String>("treeUri")
+                    if (treeUriStr == null) {
+                        result.error("INVALID_URI", "Tree URI is null", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val treeUri = Uri.parse(treeUriStr)
+                        val rootId = rootIdFromTreeUri(treeUri)
+                        if (rootId == null) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        safPrefs.edit().putString("tree_$rootId", treeUriStr).apply()
+                        Log.d(TAG, "🔑 SAF tree stored for volume $rootId")
+                        result.success(rootId)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "SAF storeTree failed", e)
+                        result.error("STORE_ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

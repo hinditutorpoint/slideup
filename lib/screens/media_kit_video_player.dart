@@ -5,6 +5,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
+import '../features/video_player/video_player_init.dart';
 import 'dart:async';
 
 class MediaKitVideoPlayer extends StatefulWidget {
@@ -80,6 +81,9 @@ class _MediaKitVideoPlayerState extends State<MediaKitVideoPlayer>
     try {
       await WakelockPlus.enable();
       VolumeController.instance.showSystemUI = false;
+
+      // ✅ Lazy MediaKit init (deferred from startup to reduce first-launch load)
+      await VideoPlayerInit.initialize();
 
       // ✅ Create player with configuration (1.2.0 feature)
       _player = Player(

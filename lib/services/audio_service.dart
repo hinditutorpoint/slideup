@@ -152,6 +152,8 @@ class AudioPlayerHandler extends BaseAudioHandler
         'mimeType': file.mimeType,
         'isLocked': file.isLocked,
         'parentFolder': file.parentFolder,
+        'genre': file.genre,
+        'year': file.year,
       },
     );
   }
@@ -182,6 +184,10 @@ class AudioPlayerHandler extends BaseAudioHandler
       artist: data.artist ?? item.artist,
       album: data.album ?? item.album,
       genre: data.genre ?? item.genre,
+      extras: {
+        ...?item.extras,
+        if (data.year != null) 'year': data.year,
+      },
     );
 
     if (updated.artist == item.artist && updated.album == item.album) return;

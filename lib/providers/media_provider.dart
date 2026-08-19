@@ -25,7 +25,14 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
   final _scanner = FileScannerService.instance;
   final _uuid = const Uuid();
 
-  Future<void> scanMedia() async {
+  /// Scans storage for media files.
+  ///
+  /// When [force] is false (default) and the database already contains files,
+  /// an incremental scan is performed: files that are unchanged since the last
+  /// scan are reused as-is, so FFprobe/FFmpeg native processes are only spawned
+  /// for new or modified files. This keeps app startup fast and avoids stalling
+  /// the UI thread on every launch.
+  Future<void> scanMedia({bool force = false}) async {
     state = const AsyncValue.loading();
 
     try {
@@ -35,9 +42,26 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
         throw Exception('Storage permission denied');
       }
 
-      final files = await _scanner.scanAllMedia();
+      final existing = await _db.getAllMediaFiles();
+      final idByPath = {for (final f in existing) f.path: f.id};
+
+      final files = await _scanner.scanAllMedia(
+        existingByPath: force ? null : {for (final f in existing) f.path: f},
+      );
+      // Preserve stable ids across rescans: playlists, favorites and recent
+      // files reference media by id, but the scanner mints a new uuid per
+      // scan. Reuse the previous id for any file that matches by path.
+      final mapped = files
+          .map((f) {
+            final existingId = idByPath[f.path];
+            if (existingId != null && existingId != f.id) {
+              return f.copyWith(id: existingId);
+            }
+            return f;
+          })
+          .toList();
       await _db.clearMediaFiles();
-      await _db.insertMediaFiles(files);
+      await _db.insertMediaFiles(mapped);
 
       state = const AsyncValue.data(null);
     } catch (e, stack) {

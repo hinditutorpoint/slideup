@@ -91,6 +91,7 @@ dependencies:
   # Private Browser
   flutter_inappwebview: ^6.1.5
   flutter_foreground_task: ^9.2.2
+  saf: ^2.1.0
 
 dev_dependencies:
   flutter_test:

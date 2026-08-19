@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:uuid/uuid.dart';
 import 'dart:io';
 import 'package:path/path.dart' as path;
 import '../models/playlist.dart';
@@ -514,7 +515,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
             if (file.duration != null) ...[
               const SizedBox(width: 8),
               Text(
-                _formatDuration(file.duration! as Duration),
+                _formatDuration(Duration(milliseconds: file.duration!)),
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             ],
@@ -619,8 +620,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     try {
       final file = files[index];
 
-      // Check if file exists
-      if (!File(file.path).existsSync()) {
+      // Check if file exists (URL-based items are streamed, not local files)
+      if (!file.path.startsWith('http') && !File(file.path).existsSync()) {
         _showError('File not found: ${path.basename(file.path)}');
         return;
       }
@@ -1006,11 +1007,20 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       }
 
       int addedCount = 0;
+      final db = DatabaseService.instance;
       for (final file in files) {
         try {
+          // Persist the scanned file so its id resolves in the playlist.
+          final existing = await db.getMediaFileByPath(file.path);
+          if (existing == null) {
+            await db.insertMediaFile(file);
+          }
           await ref
               .read(playlistsProvider.notifier)
-              .addMediaToPlaylist(widget.playlist.id, file.id);
+              .addMediaToPlaylist(
+                widget.playlist.id,
+                existing?.id ?? file.id,
+              );
           addedCount++;
         } catch (e) {
           debugPrint('Error adding file: $e');
@@ -1052,7 +1062,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
           : null;
 
       final mediaFile = MediaFile(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        id: const Uuid().v4(),
         path: filePath,
         name: path.basename(filePath),
         type: mediaType,
@@ -1217,7 +1227,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
               if (file.duration != null)
                 _buildDetailRow(
                   'Duration',
-                  _formatDuration(file.duration as Duration),
+                  _formatDuration(Duration(milliseconds: file.duration!)),
                 ),
               _buildDetailRow(
                 'Added',

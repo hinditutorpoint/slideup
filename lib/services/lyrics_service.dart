@@ -10,12 +10,18 @@ class LyricsService {
   // In-memory cache: "title|artist" -> LyricsData
   final Map<String, LyricsData> _cache = {};
 
+  /// Audio file extensions stripped from a title that is really a filename.
+  static final RegExp _extensionPattern = RegExp(
+    r'\.(mp3|m4a|aac|flac|wav|ogg|opus|wma|amr|aiff|aif|m4b|m4p|m4r|3gp|ape|mid|midi|caf|mka|oga|mp2|wv|spx|tta|dsf|dff|ac3|dts|vorbis)$',
+    caseSensitive: false,
+  );
+
   /// Clean song name / title from common tags, extensions, file artefacts
   static String cleanQuery(String raw) {
     String cleaned = raw;
 
     // Remove file extension
-    cleaned = cleaned.replaceAll(RegExp(r'\.(mp3|m4a|aac|flac|wav|ogg|opus)$', caseSensitive: false), '');
+    cleaned = cleaned.replaceAll(_extensionPattern, '');
 
     // Remove leading track numbers like "01 - ", "01. ", "01 "
     cleaned = cleaned.replaceAll(RegExp(r'^\d+[\s\.\-_]+'), '');
@@ -32,35 +38,63 @@ class LyricsService {
     // Remove feat / ft
     cleaned = cleaned.replaceAll(RegExp(r'\b(?:feat|ft)\.?\s+.*$', caseSensitive: false), '');
 
+    // Strip any embedded URL / domain (e.g. "Song www.abc.com")
+    cleaned = cleaned.replaceAll(_urlPattern, '');
+
     // Collapse multiple spaces & trim
     cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
 
     return cleaned.isNotEmpty ? cleaned : raw.trim();
   }
 
-  /// Primary fetch method: Tries LRCLIB first, falls back to JioSaavn API for Bollywood/Indian tracks.
+  /// Matches bare domains / URLs (e.g. www.example.com, example.org,
+  /// https://site.in) or placeholder metadata ("Unknown Track/Artist/Album").
+  static final RegExp _urlPattern = RegExp(
+    r'(?:https?://|www\.)|\b[\w-]+\.(?:com|org|net|in|io|co|info|tv|xyz|site|me|us|uk|ru|de|fr|jp|cn|au|ca|biz|eu|download|zip|rar)(?:[/\s]|$)',
+    caseSensitive: false,
+  );
+
+  /// Returns true when metadata is a placeholder or looks like a URL, so the
+  /// lyrics API is not queried with meaningless values.
+  static bool isPlaceholderOrUrl(String? value) {
+    if (value == null) return true;
+    final v = value.trim();
+    if (v.isEmpty) return true;
+    final lower = v.toLowerCase();
+    if (lower == 'unknown track' ||
+        lower == 'unknown title' ||
+        lower == 'unknown artist' ||
+        lower == 'unknown album' ||
+        lower == 'unknown') {
+      return true;
+    }
+    return _urlPattern.hasMatch(v);
+  }
+
+  /// Primary fetch method using LRCLIB.
   Future<LyricsData?> fetchLyrics({
     required String rawTitle,
     String? rawArtist,
     Duration? duration,
+    bool force = false,
   }) async {
     final title = cleanQuery(rawTitle);
-    final artist = (rawArtist != null && rawArtist.toLowerCase() != 'unknown artist')
+    final artist = (rawArtist != null && !isPlaceholderOrUrl(rawArtist) && rawArtist.toLowerCase() != 'unknown artist')
         ? cleanQuery(rawArtist)
         : null;
 
+    // Skip the lookup entirely when the metadata is meaningless (placeholder
+    // like "Unknown Track"/"Unknown Artist" or a promotional URL).
+    if (isPlaceholderOrUrl(title)) {
+      return null;
+    }
+
     final cacheKey = '$title|${artist ?? ""}';
-    if (_cache.containsKey(cacheKey)) {
+    if (!force && _cache.containsKey(cacheKey)) {
       return _cache[cacheKey];
     }
 
-    // 1. Try LRCLIB (Best for Synced Karaoke Lyrics)
-    LyricsData? result = await _fetchFromLrcLib(title: title, artist: artist, duration: duration);
-
-    // 2. If no synced lyrics or not found, try JioSaavn API fallback (Best for Bollywood)
-    if (result == null || result.isEmpty) {
-      result = await _fetchFromSaavn(title: title, artist: artist);
-    }
+    final result = await _fetchFromLrcLib(title: title, artist: artist, duration: duration);
 
     if (result != null && result.isNotEmpty) {
       _cache[cacheKey] = result;
@@ -70,56 +104,70 @@ class LyricsService {
     return null;
   }
 
-  /// LRCLIB API Integration (https://lrclib.net)
+  /// LRCLIB API Integration (https://lrclib.net/docs)
+  ///
+  /// Doc requirements enforced here:
+  ///  - Lyrics are always resolved through `/api/search` (max 20 results,
+  ///    no pagination). The free-text `q` param matches keywords in ANY field
+  ///    (title, artist, album) and takes precedence over the structured
+  ///    `track_name`/`artist_name` params — the same search the LRCLIB website
+  ///    uses, so results match what users see there.
+  ///  - Requests must identify the client via User-Agent.
+  ///  - On 429 Too Many Requests, honor the Retry-After header.
   Future<LyricsData?> _fetchFromLrcLib({
     required String title,
     String? artist,
     Duration? duration,
   }) async {
+    const userAgent = 'SlideUpMusicPlayer/1.0.0 (https://github.com)';
+    const timeout = Duration(seconds: 6);
+
     try {
-      // Step A: Exact get request
-      final queryParams = <String, String>{
-        'track_name': title,
-      };
-      if (artist != null && artist.isNotEmpty) {
-        queryParams['artist_name'] = artist;
-      }
-      if (duration != null && duration.inSeconds > 0) {
-        queryParams['duration'] = duration.inSeconds.toString();
-      }
-
-      final uri = Uri.https('lrclib.net', '/api/get', queryParams);
-      final response = await http.get(uri, headers: {
-        'User-Agent': 'SlideUpMusicPlayer/1.0.0 (https://github.com)',
-      }).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final lyrics = _parseLrcLibResponse(data);
-        if (lyrics != null && lyrics.isNotEmpty) {
-          return lyrics;
-        }
-      }
-
-      // Step B: Search request fallback on LRCLIB
+      // /api/search requires at least ONE of `q` OR `track_name`. Using `q`
+      // (title + artist keywords) mirrors the LRCLIB website search.
+      final q = artist != null && artist.isNotEmpty ? '$title $artist' : title;
       final searchUri = Uri.https('lrclib.net', '/api/search', {
-        'q': artist != null && artist.isNotEmpty ? '$title $artist' : title,
+        'q': q,
       });
 
+      debugPrint('🎤 LRCLIB request: $searchUri');
       final searchResponse = await http.get(searchUri, headers: {
-        'User-Agent': 'SlideUpMusicPlayer/1.0.0 (https://github.com)',
-      }).timeout(const Duration(seconds: 5));
+        'User-Agent': userAgent,
+      }).timeout(timeout);
+      debugPrint(
+        '🎤 LRCLIB response: status=${searchResponse.statusCode} '
+        'body=${searchResponse.body.length} chars',
+      );
 
       if (searchResponse.statusCode == 200) {
         final List results = jsonDecode(searchResponse.body) as List;
         if (results.isNotEmpty) {
-          // Find first result with synced lyrics or plain lyrics
-          for (final item in results) {
+          // Find first result with synced lyrics or plain lyrics.
+          // Prefer one whose duration matches (within ±2s) when provided.
+          List<dynamic> ordered = results;
+          if (duration != null && duration.inSeconds > 0) {
+            ordered = results.toList()
+              ..sort((a, b) {
+                final aDur = ((a as Map<String, dynamic>)['duration'] ?? 0) as int;
+                final bDur = ((b as Map<String, dynamic>)['duration'] ?? 0) as int;
+                final aDiff = (aDur - duration.inSeconds).abs();
+                final bDiff = (bDur - duration.inSeconds).abs();
+                return aDiff.compareTo(bDiff);
+              });
+          }
+          for (final item in ordered) {
             final parsed = _parseLrcLibResponse(item as Map<String, dynamic>);
             if (parsed != null && parsed.isNotEmpty) {
               return parsed;
             }
           }
+        }
+      } else if (searchResponse.statusCode == 429) {
+        // Honoring Retry-After as required by the LRCLIB docs.
+        final retryAfter = searchResponse.headers['retry-after'];
+        final seconds = int.tryParse(retryAfter ?? '');
+        if (seconds != null && seconds > 0 && seconds <= 30) {
+          await Future<void>.delayed(Duration(seconds: seconds));
         }
       }
     } catch (e) {
@@ -160,78 +208,6 @@ class LyricsService {
       );
     }
 
-    return null;
-  }
-
-  /// JioSaavn Public API Integration for Indian & Bollywood Tracks
-  Future<LyricsData?> _fetchFromSaavn({
-    required String title,
-    String? artist,
-  }) async {
-    const endpoints = [
-      'https://saavn.dev/api',
-      'https://saavn.me/api',
-    ];
-
-    for (final base in endpoints) {
-      try {
-        final query = artist != null && artist.isNotEmpty ? '$title $artist' : title;
-        final searchUrl = Uri.parse('$base/search/songs?query=${Uri.encodeComponent(query)}&limit=5');
-
-        final response = await http.get(searchUrl).timeout(const Duration(seconds: 5));
-        if (response.statusCode != 200) continue;
-
-        final body = jsonDecode(response.body);
-        final dynamic resultsData = body['data'];
-        final List? songs = resultsData is Map ? resultsData['results'] as List? : (resultsData is List ? resultsData : null);
-
-        if (songs == null || songs.isEmpty) continue;
-
-        for (final song in songs) {
-          final songId = song['id']?.toString();
-          final bool hasLyrics = song['hasLyrics'] == 'true' || song['hasLyrics'] == true || song['lyrics'] != null;
-
-          if (songId != null && hasLyrics) {
-            // Check if lyrics are directly included
-            if (song['lyrics'] != null && song['lyrics'].toString().isNotEmpty) {
-              final rawLyrics = _cleanHtml(song['lyrics'].toString());
-              return LyricsData(
-                isSynced: false,
-                lines: _plainTextToLines(rawLyrics),
-                plainLyrics: rawLyrics,
-                source: 'JioSaavn',
-                trackName: song['name'] ?? song['title'],
-                artistName: song['primaryArtists'] ?? song['artist'],
-              );
-            }
-
-            // Otherwise fetch lyrics by song ID
-            final lyricsUrl = Uri.parse('$base/lyrics?id=$songId');
-            final lyricsResp = await http.get(lyricsUrl).timeout(const Duration(seconds: 4));
-
-            if (lyricsResp.statusCode == 200) {
-              final lBody = jsonDecode(lyricsResp.body);
-              final lData = lBody['data'];
-              final rawLyricText = lData is Map ? (lData['lyrics'] as String?) : (lData as String?);
-
-              if (rawLyricText != null && rawLyricText.isNotEmpty) {
-                final cleanedLyrics = _cleanHtml(rawLyricText);
-                return LyricsData(
-                  isSynced: false,
-                  lines: _plainTextToLines(cleanedLyrics),
-                  plainLyrics: cleanedLyrics,
-                  source: 'JioSaavn',
-                  trackName: song['name'] ?? song['title'],
-                  artistName: song['primaryArtists'] ?? song['artist'],
-                );
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('JioSaavn fetch error via $base: $e');
-      }
-    }
     return null;
   }
 
@@ -285,17 +261,5 @@ class LyricsService {
         .where((l) => l.isNotEmpty)
         .map((l) => LyricLine(time: Duration.zero, text: l))
         .toList();
-  }
-
-  static String _cleanHtml(String htmlString) {
-    return htmlString
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#039;', "'")
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll(RegExp(r'<[^>]*>'), '')
-        .trim();
   }
 }

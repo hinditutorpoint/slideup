@@ -1563,7 +1563,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   }
 
   Future<void> _openM3uPlaylist(String url, String name) async {
-    _showSnack('Loading IPTV playlist: $name...');
+    _showSnack('Loading playlist: $name...');
     try {
       final datasource = ref.read(iptvDatasourceProvider);
       final content = await datasource.fetchM3uUrl(url);
@@ -1575,6 +1575,35 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
 
       if (!mounted) return;
       if (channels.isNotEmpty) {
+        // Content-based detection: if most entries point to audio streams,
+        // treat the playlist as a music playlist and play it in the audio player.
+        final audioCount = channels.where((c) => c.audioOnly).length;
+        final isMusicPlaylist =
+            audioCount > 0 && audioCount / channels.length >= 0.6;
+
+        if (isMusicPlaylist) {
+          final mediaFiles = channels.map((c) {
+            final now = DateTime.now();
+            return MediaFile(
+              id: c.id,
+              name: c.name,
+              path: c.url,
+              displayPath: c.name,
+              type: MediaType.audio,
+              size: 0,
+              dateModified: now,
+              dateAdded: now,
+              mimeType: 'audio/mpeg',
+              parentFolder: url,
+              artist: c.tvgName,
+            );
+          }).toList();
+
+          AudioPlaybackHelper.playAudio(ref, mediaFiles.first, mediaFiles);
+          _showSnack('Playing music playlist: $name');
+          return;
+        }
+
         // Persist to IPTV playlists database in background
         unawaited(
           ref

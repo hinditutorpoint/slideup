@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../video_player/video_player_init.dart';
 import '../models/iptv_models.dart';
 
 /// Professional inline IPTV player.
@@ -90,6 +91,7 @@ class _IptvPlayerState extends State<IptvPlayer> with WidgetsBindingObserver {
 
   Future<void> _initPlayer() async {
     try {
+      await VideoPlayerInit.initialize();
       final player = Player(
         configuration: const PlayerConfiguration(
           title: 'IPTV',

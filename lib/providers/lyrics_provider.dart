@@ -58,6 +58,7 @@ class LyricsNotifier extends Notifier<LyricsState> {
         rawTitle: title,
         rawArtist: artist,
         duration: duration,
+        force: forceRefresh,
       );
 
       if (lyrics != null && lyrics.isNotEmpty) {

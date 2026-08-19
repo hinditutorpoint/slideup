@@ -11,6 +11,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
+import '../video_player_init.dart';
 
 import '../../../navigation_service.dart';
 import '../models/video_player_state.dart';
@@ -105,6 +106,7 @@ class VideoPlayerService {
       }
 
       // Create player
+      await VideoPlayerInit.initialize();
       _player = mk.Player(
         configuration: mk.PlayerConfiguration(
           title: 'Video Player',
