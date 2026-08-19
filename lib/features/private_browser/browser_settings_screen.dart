@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ad_block_list_service.dart';
 import 'browser_settings.dart';
 
 /// Full-screen control panel for the privacy browser.
@@ -19,6 +20,10 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   late TrackerBlockMode _trackerMode;
   late bool _javaScriptEnabled;
   late bool _blockPopups;
+  int _adHostCount = 0;
+  DateTime? _adLastUpdated;
+  bool _adUpdating = false;
+  bool? _adUpdateAvailable;
 
   @override
   void initState() {
@@ -28,12 +33,16 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
 
   Future<void> _load() async {
     await BrowserSettings.instance.load();
+    final localHosts = await AdBlockListService.loadLocalAdservers();
+    final lastUpdated = await AdBlockListService.loadLastUpdated();
     if (!mounted) return;
     setState(() {
       _httpsOnly = BrowserSettings.instance.httpsOnly;
       _trackerMode = BrowserSettings.instance.trackerMode;
       _javaScriptEnabled = BrowserSettings.instance.javaScriptEnabled;
       _blockPopups = BrowserSettings.instance.blockPopups;
+      _adHostCount = localHosts.length;
+      _adLastUpdated = lastUpdated;
       _loaded = true;
     });
   }
@@ -91,6 +100,144 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   void _setBlockPopups(bool value) {
     setState(() => _blockPopups = value);
     BrowserSettings.instance.setBlockPopups(value);
+  }
+
+  Future<void> _checkAdGuardUpdate() async {
+    setState(() => _adUpdating = true);
+    final result = await AdBlockListService.checkForUpdate();
+    if (!mounted) return;
+    setState(() {
+      _adUpdating = false;
+      _adUpdateAvailable = result.changed;
+    });
+    _showSnack(
+      result.changed
+          ? 'Update available: ${result.hosts.length} hosts'
+          : 'AdGuard database is up to date',
+    );
+  }
+
+  Future<void> _updateAdGuard() async {
+    setState(() => _adUpdating = true);
+    final result = await AdBlockListService.checkForUpdate();
+    if (!mounted) return;
+    if (!result.changed) {
+      setState(() {
+        _adUpdating = false;
+        _adUpdateAvailable = false;
+      });
+      _showSnack('Already up to date');
+      return;
+    }
+    await AdBlockListService.saveLocalAdservers(
+      result.hosts,
+      updatedAt: result.lastModified,
+    );
+    if (!mounted) return;
+    setState(() {
+      _adUpdating = false;
+      _adUpdateAvailable = false;
+      _adHostCount = result.hosts.length;
+      _adLastUpdated = result.lastModified ?? DateTime.now();
+    });
+    _showSnack('Database updated: ${result.hosts.length} hosts');
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildAdGuardSection(ThemeData theme) {
+    final lastUpdated = _adLastUpdated;
+    final updatedText = lastUpdated == null
+        ? 'Not downloaded yet'
+        : '${lastUpdated.day}/${lastUpdated.month}/${lastUpdated.year} '
+            '${lastUpdated.hour.toString().padLeft(2, '0')}:'
+            '${lastUpdated.minute.toString().padLeft(2, '0')}';
+
+    final String statusText;
+    final Color statusColor;
+    switch (_adUpdateAvailable) {
+      case true:
+        statusText = 'Update available — $_adHostCount hosts ready';
+        statusColor = Colors.teal;
+      case false:
+        statusText = 'Up to date';
+        statusColor = Colors.green;
+      default:
+        statusText = 'No update check yet';
+        statusColor = theme.colorScheme.onSurfaceVariant;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.workspaces_outline, size: 22),
+          title: const Text('AdGuard ad-server database'),
+          subtitle: Text('Hosts: $_adHostCount  •  Updated: $updatedText'),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            statusText,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: statusColor,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              if (_adUpdating) ...[
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+              ],
+              OutlinedButton.icon(
+                onPressed: _adUpdating ? null : _checkAdGuardUpdate,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Check for Updates'),
+              ),
+              const SizedBox(width: 8),
+              if (_adUpdateAvailable == true)
+                FilledButton.icon(
+                  onPressed: _adUpdating ? null : _updateAdGuard,
+                  icon: const Icon(Icons.download_done_rounded, size: 18),
+                  label: const Text('Update Now'),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            'Stored on this device and used by the Enhanced blocking tier. '
+            'Checking and updating here avoids re-downloading the list on '
+            'every browser start.',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -180,6 +327,8 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
                   activeColor: Colors.teal,
                   onChanged: _setBlockPopups,
                 ),
+                const Divider(height: 24),
+                _buildAdGuardSection(theme),
                 const Divider(height: 32),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
