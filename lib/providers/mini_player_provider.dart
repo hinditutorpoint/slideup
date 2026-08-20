@@ -85,7 +85,13 @@ class MiniPlayerNotifier extends Notifier<MiniPlayerState> {
             state.isAppInForeground) {
           debugPrint('🎵 Playback completed, hiding mini player');
           Future.delayed(const Duration(milliseconds: 500), () {
-            hide();
+            // Re-check the LIVE state: only hide if still completed
+            final ps = audioHandler.playbackState.value;
+            if (ps.processingState == AudioProcessingState.completed &&
+                ps.repeatMode == AudioServiceRepeatMode.none &&
+                state.isVisible) {
+              hide();
+            }
           });
         }
       } else if (playbackState.processingState ==
@@ -95,7 +101,13 @@ class MiniPlayerNotifier extends Notifier<MiniPlayerState> {
         if (state.isVisible && state.isAppInForeground) {
           debugPrint('🎵 Paused, hiding mini player');
           Future.delayed(const Duration(milliseconds: 500), () {
-            if (state.isVisible) {
+            // Re-check the LIVE state: a fresh track may have resumed to
+            // playing during the delay, so only hide if still paused.
+            final ps = audioHandler.playbackState.value;
+            final stillPaused =
+                ps.processingState == AudioProcessingState.ready &&
+                !ps.playing;
+            if (stillPaused && state.isVisible) {
               hide();
             }
           });

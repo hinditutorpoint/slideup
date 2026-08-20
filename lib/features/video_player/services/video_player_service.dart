@@ -12,6 +12,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import '../video_player_init.dart';
+import 'pip_service.dart';
 
 import '../models/video_player_state.dart';
 import '../models/player_settings.dart';
@@ -309,6 +310,21 @@ class VideoPlayerService {
             _updateState(_state.copyWith(hasError: true, errorMessage: error));
           }
         }, onError: (e) => debugPrint('⚠️ Error stream error: $e')),
+      );
+
+      // Force-hide the controls (incl. the center play/pause button) the
+      // moment the OS puts the app into system PiP — belt-and-suspenders on
+      // top of the widget's own `!pipState.isNativeActive` gates.
+      _subscriptions.add(
+        PiPService().stateStream.listen((pipState) {
+          if (_isDisposed) return;
+          if (pipState == PiPState.nativeActive) {
+            _hideControlsTimer?.cancel();
+            if (_state.showControls) {
+              _updateState(_state.copyWith(showControls: false));
+            }
+          }
+        }, onError: (e) => debugPrint('⚠️ PiP state stream error: $e')),
       );
     } catch (e) {
       debugPrint('❌ Failed to setup listeners: $e');
@@ -760,6 +776,9 @@ class VideoPlayerService {
 
   /// Public wrapper used by the notifier's resumeFromPrompt().
   Future<void> resumeFromPosition(Duration position) async {
+    if (!_isDisposed) {
+      _updateState(_state.copyWith(clearResumePrompt: true));
+    }
     await _resumeFromPosition(position);
   }
 
@@ -771,6 +790,13 @@ class VideoPlayerService {
     } catch (e) {
       debugPrint('⚠️ Failed to clear resume position: $e');
     }
+  }
+
+  /// Clear the in-player resume prompt from the service state so it cannot
+  /// re-surface on the next state emission.
+  Future<void> clearResumePromptState() async {
+    if (_isDisposed) return;
+    _updateState(_state.copyWith(clearResumePrompt: true));
   }
 
   /// Skip the video intro when the toggle is on and the video is starting
@@ -810,7 +836,16 @@ class VideoPlayerService {
 
   /// Public wrapper used by the notifier's skipIntroFromPrompt().
   Future<void> skipIntroSeek(Duration position) async {
+    if (!_isDisposed) {
+      _updateState(_state.copyWith(clearSkipIntroPrompt: true));
+    }
     await _resumeFromPosition(position);
+  }
+
+  /// Clear the in-player skip-intro prompt from the service state.
+  Future<void> clearSkipIntroPromptState() async {
+    if (_isDisposed) return;
+    _updateState(_state.copyWith(clearSkipIntroPrompt: true));
   }
 
   Future<void> playOrPause() async {

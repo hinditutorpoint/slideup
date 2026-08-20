@@ -56,6 +56,31 @@ class PiPService {
   PiPPosition _position = const PiPPosition(x: 20, y: 100);
   PiPSize _size = PiPSize.small;
 
+  // Polls the real OS PiP state every second so the player UI (center play
+  // button, controls) is hidden even when the plugin's onPipEntered callback
+  // is missed or delayed by the OS/OEM.
+  Timer? _statePollTimer;
+
+  void _startStatePoll() {
+    _statePollTimer ??= Timer.periodic(const Duration(seconds: 1), (_) async {
+      try {
+        final active = await SimplePip.isPipActivated;
+        if (active && _state != PiPState.nativeActive) {
+          if (_state == PiPState.customActive) _wasCustomActive = true;
+          _updateState(PiPState.nativeActive);
+        } else if (!active && _state == PiPState.nativeActive) {
+          _updateState(_wasCustomActive ? PiPState.customActive : PiPState.inactive);
+          _wasCustomActive = false;
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _stopStatePoll() {
+    _statePollTimer?.cancel();
+    _statePollTimer = null;
+  }
+
   PiPService._internal() {
     // Forward native PiP menu actions (tapped in the OS PiP window) to Dart.
     const MethodChannel('com.slideup.mediaplayer/background_video')
@@ -132,6 +157,7 @@ class PiPService {
     // Android 8–11: tell our Kotlin onUserLeaveHint to enter PiP on Home press.
     // MUST run unconditionally — it is what makes Home-press PiP work pre-12.
     await _setNativeAutoEnter(true);
+    _startStatePoll();
   }
 
   /// ✅ DISABLE AUTO-ENTER
@@ -144,6 +170,7 @@ class PiPService {
       debugPrint('❌ Disable Auto-PiP (Android 12+) Error: $e');
     }
     await _setNativeAutoEnter(false);
+    _stopStatePoll();
   }
 
   /// Notifies the Kotlin [MainActivity] whether to auto-enter PiP
@@ -165,6 +192,7 @@ class PiPService {
         aspectRatio: aspectRatio,
         autoEnter: false, // Manual entry doesn't need autoEnter flag usually
       );
+      _startStatePoll();
     } catch (e) {
       debugPrint('❌ Manual Enter PiP Error: $e');
     }
@@ -252,6 +280,7 @@ class PiPService {
   }
 
   void dispose() {
+    _stopStatePoll();
     _stateController.close();
     _pipActionController.close();
   }

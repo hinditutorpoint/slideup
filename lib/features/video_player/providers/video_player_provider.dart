@@ -453,9 +453,9 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
     if (isDisposed) return;
     final fileId = state.resumeFileId;
     state = state.copyWith(clearResumePrompt: true);
-    if (fileId == null) return;
     try {
-      await service.clearResumePosition(fileId);
+      await service.clearResumePromptState();
+      if (fileId != null) await service.clearResumePosition(fileId);
     } catch (e) {
       debugPrint('❌ Cancel resume prompt error: $e');
     }
@@ -478,6 +478,11 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
   Future<void> cancelSkipIntroPrompt() async {
     if (isDisposed) return;
     state = state.copyWith(clearSkipIntroPrompt: true);
+    try {
+      await service.clearSkipIntroPromptState();
+    } catch (e) {
+      debugPrint('❌ Cancel skip intro error: $e');
+    }
   }
 
   // ═══════════════════════════════════════════════════════

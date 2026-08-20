@@ -203,7 +203,20 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
               _isOverCloseZone = _isInCloseZone(_position, screenSize);
             });
           },
-          onPanEnd: (_) {
+          onPanEnd: (details) {
+            // Tiny player: long-press then fast swipe left/right reveals
+            // the mini player features (restores the full mini bar).
+            if (isTiny) {
+              final vx = details.velocity.pixelsPerSecond.dx;
+              if (vx.abs() > 200) {
+                setState(() {
+                  _isDragging = false;
+                  _isOverCloseZone = false;
+                });
+                ref.read(miniPlayerProvider.notifier).restoreMini();
+                return;
+              }
+            }
             if (_isOverCloseZone) {
               _onDismiss();
             } else {

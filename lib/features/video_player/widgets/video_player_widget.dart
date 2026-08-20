@@ -95,7 +95,25 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
       if (_isDisposed || !mounted || _isExiting) return;
 
       final notifier = ref.read(videoPlayerProvider.notifier);
-      await notifier.openPlaylist(widget.playlist);
+
+      // The service (and its media_kit player) survives native PiP and keeps
+      // the playlist loaded and playing. VideoPlayerWidget is disposed while
+      // native PiP is active (VideoPlayerScreen swaps it for a black scaffold)
+      // and recreated on restore — a fresh initState would otherwise re-open
+      // the playlist from its ORIGINAL start index at position 0, losing the
+      // current item and playback position. Only open when no equivalent
+      // playlist is already loaded.
+      final existing = notifier.currentPlaylist;
+      final alreadyLoaded =
+          !notifier.isDisposed &&
+          existing != null &&
+          _playlistMatches(existing, widget.playlist);
+
+      if (!alreadyLoaded) {
+        await notifier.openPlaylist(widget.playlist);
+      } else {
+        debugPrint('🎬 Playlist already loaded - skipping re-open on re-attach');
+      }
 
       if (_isDisposed || !mounted || _isExiting) return;
 
@@ -119,6 +137,21 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
         widget.onError?.call(e.toString());
       }
     }
+  }
+
+  /// True when [a] and [b] reference the same media items (same order, same
+  /// urls/ids) regardless of instance — used to detect a re-attach of the
+  /// already-loaded playlist after native PiP.
+  bool _playlistMatches(PlayerPlaylist a, PlayerPlaylist b) {
+    if (identical(a, b)) return true;
+    if (a.items.length != b.items.length) return false;
+    for (var i = 0; i < a.items.length; i++) {
+      if (a.items[i].url != b.items[i].url ||
+          a.items[i].id != b.items[i].id) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
