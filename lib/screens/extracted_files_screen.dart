@@ -1,26 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:open_filex/open_filex.dart';
 import 'package:uuid/uuid.dart';
 import '../widgets/empty_state_widget.dart';
-import 'image_viewer_screen.dart';
-import 'main_screen.dart';
+import '../widgets/text_viewer_widget.dart';
+import '../core/utils/download_location_helper.dart';
 import '../models/media_file.dart';
+import '../features/video_player/video_player_launcher.dart';
+import '../helpers/audio_playback_helper.dart';
+import '../helpers/m3u_playlist_helper.dart';
+import 'image_viewer_screen.dart';
+import 'pdf_viewer_screen.dart';
+import 'main_screen.dart';
 
-class ExtractedFilesScreen extends StatefulWidget {
+class ExtractedFilesScreen extends ConsumerStatefulWidget {
   const ExtractedFilesScreen({super.key});
 
   @override
-  State<ExtractedFilesScreen> createState() => _ExtractedFilesScreenState();
+  ConsumerState<ExtractedFilesScreen> createState() => _ExtractedFilesScreenState();
 }
 
-class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
+class _ExtractedFilesScreenState extends ConsumerState<ExtractedFilesScreen> {
   late Directory _filesDir;
+  Directory? _downloadScreenshotsDir;
+  Directory? _downloadClipsDir;
   bool _isLoading = true;
   String?
-  _selectedCategory; // 'screenshots', 'audio', 'frames', or null for all
+  _selectedCategory; // 'screenshots', 'audio', 'frames', 'clips', or null for all
 
   @override
   void initState() {
@@ -35,6 +44,19 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
 
       if (!await _filesDir.exists()) {
         await _filesDir.create(recursive: true);
+      }
+
+      final downloadDir = await DownloadLocationHelper.configuredDirectory();
+      if (downloadDir != null) {
+        _downloadScreenshotsDir = Directory('${downloadDir.path}/screenshots');
+        if (!await _downloadScreenshotsDir!.exists()) {
+          await _downloadScreenshotsDir!.create(recursive: true);
+        }
+
+        _downloadClipsDir = Directory('${downloadDir.path}/clips');
+        if (!await _downloadClipsDir!.exists()) {
+          await _downloadClipsDir!.create(recursive: true);
+        }
       }
 
       setState(() => _isLoading = false);
@@ -52,20 +74,31 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
 
       List<FileSystemEntity> allFiles = [];
 
-      if (_selectedCategory == null) {
-        // Get all files from all subdirectories
+      if (_selectedCategory == null || _selectedCategory == 'screenshots') {
+        // Get screenshots from app documents dir
         final screenshotsDir = Directory('${_filesDir.path}/screenshots');
         if (await screenshotsDir.exists()) {
           final files = await screenshotsDir.list().toList();
           allFiles.addAll(files.whereType<File>());
         }
 
+        // Also get screenshots from download location
+        if (_downloadScreenshotsDir != null &&
+            await _downloadScreenshotsDir!.exists()) {
+          final files = await _downloadScreenshotsDir!.list().toList();
+          allFiles.addAll(files.whereType<File>());
+        }
+      }
+
+      if (_selectedCategory == null || _selectedCategory == 'audio') {
         final audioDir = Directory('${_filesDir.path}/audio');
         if (await audioDir.exists()) {
           final files = await audioDir.list().toList();
           allFiles.addAll(files.whereType<File>());
         }
+      }
 
+      if (_selectedCategory == null || _selectedCategory == 'frames') {
         final framesDir = Directory('${_filesDir.path}/frames');
         if (await framesDir.exists()) {
           final subdirs = await framesDir.list().toList();
@@ -74,22 +107,12 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
             allFiles.addAll(files.whereType<File>());
           }
         }
-      } else {
-        // Get files from specific category
-        final categoryDir = Directory('${_filesDir.path}/$_selectedCategory');
-        if (await categoryDir.exists()) {
-          if (_selectedCategory == 'frames') {
-            // Frames are organized in subdirectories
-            final subdirs = await categoryDir.list().toList();
-            for (var subdir in subdirs.whereType<Directory>()) {
-              final files = await subdir.list().toList();
-              allFiles.addAll(files.whereType<File>());
-            }
-          } else {
-            // Screenshots and audio are flat
-            final files = await categoryDir.list().toList();
-            allFiles.addAll(files.whereType<File>());
-          }
+      }
+
+      if (_selectedCategory == null || _selectedCategory == 'clips') {
+        if (_downloadClipsDir != null && await _downloadClipsDir!.exists()) {
+          final files = await _downloadClipsDir!.list().toList();
+          allFiles.addAll(files.whereType<File>());
         }
       }
 
@@ -123,21 +146,60 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
 
   Future<void> _openFile(File file) async {
     try {
-      if (file.path.endsWith('.png') ||
-          file.path.endsWith('.jpg') ||
-          file.path.endsWith('.jpeg') ||
-          file.path.endsWith('.gif') ||
-          file.path.endsWith('.bmp') ||
-          file.path.endsWith('.webp')) {
-        // Open image in custom viewer
-        final MediaFile mediaFile = MediaFile(
-          id: Uuid().v4(),
+      final extension = path.extension(file.path).toLowerCase();
+
+      // Video files
+      if ([
+        '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm',
+        '.m4v', '.ts', '.3gp', '.mpeg', '.mp2', '.rmvb',
+      ].contains(extension)) {
+        final mediaFile = MediaFile(
+          id: const Uuid().v4(),
+          name: path.basename(file.path),
+          path: file.path,
+          type: MediaType.video,
+          size: file.lengthSync(),
+          dateModified: file.lastModifiedSync(),
+        );
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VideoPlayerLauncher.screen(file: mediaFile),
+          ),
+        );
+        return;
+      }
+
+      // Audio files
+      if ([
+        '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg',
+      ].contains(extension)) {
+        final mediaFile = MediaFile(
+          id: const Uuid().v4(),
+          name: path.basename(file.path),
+          path: file.path,
+          type: MediaType.audio,
+          size: file.lengthSync(),
+          dateModified: file.lastModifiedSync(),
+        );
+        AudioPlaybackHelper.playAudio(ref, mediaFile, [mediaFile], startIndex: 0);
+        return;
+      }
+
+      // Image files
+      if ([
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.svg',
+      ].contains(extension)) {
+        final mediaFile = MediaFile(
+          id: const Uuid().v4(),
           name: path.basename(file.path),
           path: file.path,
           type: MediaType.image,
           size: file.lengthSync(),
           dateModified: file.lastModifiedSync(),
         );
+        if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -147,6 +209,67 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
         );
         return;
       }
+
+      // PDF files
+      if (extension == '.pdf') {
+        final mediaFile = MediaFile(
+          id: const Uuid().v4(),
+          name: path.basename(file.path),
+          path: file.path,
+          type: MediaType.document,
+          documentType: DocumentType.pdf,
+          size: file.lengthSync(),
+          dateModified: file.lastModifiedSync(),
+        );
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PDFViewerScreen(
+              mediaFile: mediaFile,
+              playlist: [mediaFile],
+              currentIndex: 0,
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Text / code files
+      if ([
+        '.txt', '.html', '.htm', '.xml', '.json', '.css', '.js',
+      ].contains(extension)) {
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TextViewerWidget(filePath: file.path),
+          ),
+        );
+        return;
+      }
+
+      // M3U playlists
+      if ([
+        '.m3u', '.m3u8', '.m3u_plus', '.m3u8_plus',
+      ].contains(extension)) {
+        final content = await file.readAsString();
+        if (!mounted) return;
+        await openLocalM3uPlaylist(
+          context: context,
+          ref: ref,
+          file: file,
+          content: content,
+          onSnack: (msg) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(msg)),
+            );
+          },
+        );
+        return;
+      }
+
+      // Fallback: try to open with external app
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done) {
         _showError('Could not open file');
@@ -273,6 +396,8 @@ class _ExtractedFilesScreenState extends State<ExtractedFilesScreen> {
                   _buildCategoryChip('All', null),
                   const SizedBox(width: 8),
                   _buildCategoryChip('Screenshots', 'screenshots'),
+                  const SizedBox(width: 8),
+                  _buildCategoryChip('Clips', 'clips'),
                   const SizedBox(width: 8),
                   _buildCategoryChip('Audio', 'audio'),
                   const SizedBox(width: 8),

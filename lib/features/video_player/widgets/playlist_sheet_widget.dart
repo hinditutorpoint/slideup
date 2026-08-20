@@ -49,7 +49,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
         child: Container(
           height: MediaQuery.of(context).size.height * 0.7,
           decoration: const BoxDecoration(
-            color: Colors.black87,
+            color: Colors.black54,
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: SafeArea(
@@ -374,7 +374,7 @@ class _PlaylistListItem extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.black87,
+                  color: Colors.black54,
                   borderRadius: BorderRadius.circular(2),
                 ),
                 child: Text(
@@ -532,7 +532,7 @@ class _PlaylistGridItem extends StatelessWidget {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black87,
+                          color: Colors.black54,
                           borderRadius: BorderRadius.circular(2),
                         ),
                         child: Text(

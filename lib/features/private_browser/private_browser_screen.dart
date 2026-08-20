@@ -300,6 +300,21 @@ const _kAdBlockUserScript = '''
         return null;
       }
     }
+
+    // Capture "external player" media URLs opened via window.open
+    var MEDIA_RE = /\\.(mp4|m4v|mkv|webm|avi|mov|flv|wmv|mpg|mpeg|3gp|ogv|m3u8|m3u|mpd)(\\?|#)/i;
+    var STREAM_RE = /(videoplayback|googlevideo|\\/hls\\/|\\/dash\\/|\\/manifest\\/|\\/media\\/|\\/stream\\/|\\/playlist\\/|\\/chunklist)/i;
+    if (MEDIA_RE.test(lowerUrl) || STREAM_RE.test(lowerUrl)) {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler('slideupMediaDetected', [{
+          url: url,
+          mediaType: 'directFile',
+          title: document.title || 'External Player'
+        }]);
+      }
+      return null;
+    }
+
     return _origOpen.apply(this, arguments);
   };
 
@@ -322,7 +337,29 @@ const _kAdBlockUserScript = '''
     return _origClick.apply(this, arguments);
   };
 
-  // 4. Remove transparent click-hijack overlays
+  // 4. Clipboard interception: capture media URLs copied by "external player" buttons
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    var _origWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = function(text) {
+      if (text) {
+        var lower = (text + '').toLowerCase();
+        var MEDIA_RE = /\\.(mp4|m4v|mkv|webm|avi|mov|flv|wmv|mpg|mpeg|3gp|ogv|m3u8|m3u|mpd)(\\?|#)/i;
+        var STREAM_RE = /(videoplayback|googlevideo|\\/hls\\/|\\/dash\\/|\\/manifest\\/|\\/media\\/|\\/stream\\/|\\/playlist\\/|\\/chunklist)/i;
+        if (MEDIA_RE.test(lower) || STREAM_RE.test(lower)) {
+          if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+            window.flutter_inappwebview.callHandler('slideupMediaDetected', [{
+              url: text,
+              mediaType: 'directFile',
+              title: document.title || 'External Player'
+            }]);
+          }
+        }
+      }
+      return _origWriteText(text);
+    };
+  }
+
+  // 5. Remove transparent click-hijack overlays
   function removeOverlays() {
     try {
       var allDivs = document.querySelectorAll('div, a, span');
@@ -486,6 +523,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   TrackerBlockMode _trackerMode = TrackerBlockMode.normal;
   bool _javaScriptEnabled = true;
   bool _blockPopups = true;
+  bool _allowAutoPlay = true;
   bool _settingsReady = false;
 
   /// Ad-server hostnames fetched from AdGuard's adservers.txt (Enhanced
@@ -605,6 +643,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _trackerMode = BrowserSettings.instance.trackerMode;
       _javaScriptEnabled = BrowserSettings.instance.javaScriptEnabled;
       _blockPopups = BrowserSettings.instance.blockPopups;
+      _allowAutoPlay = BrowserSettings.instance.allowAutoPlay;
       _settingsReady = true;
     });
     unawaited(
@@ -987,7 +1026,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       javaScriptCanOpenWindowsAutomatically: false,
 
       // Require a user gesture to start media (prevents autoplaying ads).
-      mediaPlaybackRequiresUserGesture: true,
+      mediaPlaybackRequiresUserGesture: !_allowAutoPlay,
 
       // Android Safe Browsing — warns on known malicious URLs.
       safeBrowsingEnabled: true,
@@ -1847,12 +1886,22 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       onCreateWindow: (controller, createWindowAction) async {
         // This is a single-tab browser.
         //
+        // Always intercept direct media URLs (external player links)
+        // regardless of popup blocking setting.
+        final url = createWindowAction.request.url;
+        if (url != null) {
+          final uri = url.uriValue;
+          if (isMediaUri(uri)) {
+            _showInterceptChoiceModal(uri);
+            return false;
+          }
+        }
+
         // Popup blocking ON  → cancel the new window (return false immediately).
         // Popup blocking OFF → open the URL in the current tab, return false
         //                      (we handled it; don't create a new WebView).
         if (_blockPopups) return false;
 
-        final url = createWindowAction.request.url;
         if (url != null) _navigate(url.toString());
         return false;
       },

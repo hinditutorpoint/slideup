@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+enum PlaylistPlayingMode { normal, middle, last, custom }
+
 @immutable
 class PlayerSettings {
   final double defaultSpeed;
@@ -9,10 +11,6 @@ class PlayerSettings {
   final bool autoPlay;
   final bool loopPlaylist;
   final bool shufflePlaylist;
-  final int seekDuration; // seconds
-  final int doubleTapSeekDuration;
-  final bool enableGestures;
-  final bool enableHapticFeedback;
   final bool enablePiP;
   final bool enableBackgroundAudio;
   final bool enableLockScreenControls;
@@ -23,6 +21,9 @@ class PlayerSettings {
   final double subtitleFontSize;
   final String subtitleFontColor;
   final String subtitleBackgroundColor;
+  /// Playlist playing mode: normal, middle, last, custom
+  final PlaylistPlayingMode playlistPlayingMode;
+  final int doubleTapSeekDuration;
 
   const PlayerSettings({
     this.defaultSpeed = 1.0,
@@ -32,10 +33,6 @@ class PlayerSettings {
     this.autoPlay = true,
     this.loopPlaylist = false,
     this.shufflePlaylist = false,
-    this.seekDuration = 10,
-    this.doubleTapSeekDuration = 10,
-    this.enableGestures = true,
-    this.enableHapticFeedback = true,
     this.enablePiP = true,
     this.enableBackgroundAudio = true,
     this.enableLockScreenControls = true,
@@ -46,6 +43,8 @@ class PlayerSettings {
     this.subtitleFontSize = 16.0,
     this.subtitleFontColor = '#FFFFFF',
     this.subtitleBackgroundColor = '#80000000',
+    this.playlistPlayingMode = PlaylistPlayingMode.normal,
+    this.doubleTapSeekDuration = 10,
   });
 
   PlayerSettings copyWith({
@@ -56,10 +55,6 @@ class PlayerSettings {
     bool? autoPlay,
     bool? loopPlaylist,
     bool? shufflePlaylist,
-    int? seekDuration,
-    int? doubleTapSeekDuration,
-    bool? enableGestures,
-    bool? enableHapticFeedback,
     bool? enablePiP,
     bool? enableBackgroundAudio,
     bool? enableLockScreenControls,
@@ -70,6 +65,8 @@ class PlayerSettings {
     double? subtitleFontSize,
     String? subtitleFontColor,
     String? subtitleBackgroundColor,
+    PlaylistPlayingMode? playlistPlayingMode,
+    int? doubleTapSeekDuration,
   }) {
     return PlayerSettings(
       defaultSpeed: defaultSpeed ?? this.defaultSpeed,
@@ -79,11 +76,6 @@ class PlayerSettings {
       autoPlay: autoPlay ?? this.autoPlay,
       loopPlaylist: loopPlaylist ?? this.loopPlaylist,
       shufflePlaylist: shufflePlaylist ?? this.shufflePlaylist,
-      seekDuration: seekDuration ?? this.seekDuration,
-      doubleTapSeekDuration:
-          doubleTapSeekDuration ?? this.doubleTapSeekDuration,
-      enableGestures: enableGestures ?? this.enableGestures,
-      enableHapticFeedback: enableHapticFeedback ?? this.enableHapticFeedback,
       enablePiP: enablePiP ?? this.enablePiP,
       enableBackgroundAudio:
           enableBackgroundAudio ?? this.enableBackgroundAudio,
@@ -100,6 +92,10 @@ class PlayerSettings {
       subtitleFontColor: subtitleFontColor ?? this.subtitleFontColor,
       subtitleBackgroundColor:
           subtitleBackgroundColor ?? this.subtitleBackgroundColor,
+      playlistPlayingMode:
+          playlistPlayingMode ?? this.playlistPlayingMode,
+      doubleTapSeekDuration:
+          doubleTapSeekDuration ?? this.doubleTapSeekDuration,
     );
   }
 
@@ -112,10 +108,6 @@ class PlayerSettings {
       'autoPlay': autoPlay,
       'loopPlaylist': loopPlaylist,
       'shufflePlaylist': shufflePlaylist,
-      'seekDuration': seekDuration,
-      'doubleTapSeekDuration': doubleTapSeekDuration,
-      'enableGestures': enableGestures,
-      'enableHapticFeedback': enableHapticFeedback,
       'enablePiP': enablePiP,
       'enableBackgroundAudio': enableBackgroundAudio,
       'enableLockScreenControls': enableLockScreenControls,
@@ -126,6 +118,8 @@ class PlayerSettings {
       'subtitleFontSize': subtitleFontSize,
       'subtitleFontColor': subtitleFontColor,
       'subtitleBackgroundColor': subtitleBackgroundColor,
+      'playlistPlayingMode': playlistPlayingMode.name,
+      'doubleTapSeekDuration': doubleTapSeekDuration,
     };
   }
 
@@ -138,10 +132,6 @@ class PlayerSettings {
       autoPlay: json['autoPlay'] as bool? ?? true,
       loopPlaylist: json['loopPlaylist'] as bool? ?? false,
       shufflePlaylist: json['shufflePlaylist'] as bool? ?? false,
-      seekDuration: json['seekDuration'] as int? ?? 10,
-      doubleTapSeekDuration: json['doubleTapSeekDuration'] as int? ?? 10,
-      enableGestures: json['enableGestures'] as bool? ?? true,
-      enableHapticFeedback: json['enableHapticFeedback'] as bool? ?? true,
       enablePiP: json['enablePiP'] as bool? ?? true,
       enableBackgroundAudio: json['enableBackgroundAudio'] as bool? ?? true,
       enableLockScreenControls:
@@ -155,6 +145,10 @@ class PlayerSettings {
       subtitleFontColor: json['subtitleFontColor'] as String? ?? '#FFFFFF',
       subtitleBackgroundColor:
           json['subtitleBackgroundColor'] as String? ?? '#80000000',
+      playlistPlayingMode: PlaylistPlayingMode.values
+          .firstWhere((mode) => mode.name == json['playlistPlayingMode'],
+              orElse: () => PlaylistPlayingMode.normal),
+      doubleTapSeekDuration: json['doubleTapSeekDuration'] as int? ?? 10,
     );
   }
 }

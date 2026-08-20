@@ -424,31 +424,34 @@ class _MetaRow extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Views
-                Icon(Icons.visibility, size: 10, color: metaColor),
-                const SizedBox(width: 2),
-                Text(
-                  item.formattedDownloads,
-                  style: TextStyle(fontSize: fontSize, color: metaColor),
-                ),
-
-                // Year
-                if (item.year != null) ...[
-                  _MicroDot(color: metaColor),
+                // Frame size / resolution (left)
+                if (item.resolution != null) ...[
                   Text(
-                    item.year!,
+                    item.resolution!,
                     style: TextStyle(fontSize: fontSize, color: metaColor),
                   ),
+                  const SizedBox(width: 4),
+                ] else ...[
+                  Icon(Icons.format_color_reset, size: 10, color: Colors.grey),
+                  const SizedBox(width: 4),
                 ],
-
-                // Size
+                // File size (center)
                 _MicroDot(color: metaColor),
-                Icon(Icons.sd_storage, size: 10, color: metaColor),
                 const SizedBox(width: 2),
                 Text(
                   item.formattedSize,
                   style: TextStyle(fontSize: fontSize, color: metaColor),
                 ),
+                const Spacer(),
+                // Duration on right
+                if (item.formattedDuration.isNotEmpty) ...[
+                  _MicroDot(color: metaColor),
+                  const SizedBox(width: 2),
+                  Text(
+                    item.formattedDuration,
+                    style: TextStyle(fontSize: fontSize, color: metaColor),
+                  ),
+                ],
               ],
             ),
           ),

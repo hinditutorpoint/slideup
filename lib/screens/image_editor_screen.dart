@@ -20,7 +20,6 @@ class ImageEditorScreen extends StatefulWidget {
 
 class _ImageEditorScreenState extends State<ImageEditorScreen> {
   String _currentImagePath = '';
-  int _rotation = 0;
 
   @override
   void initState() {
@@ -44,12 +43,9 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         children: [
           Expanded(
             child: Center(
-              child: RotatedBox(
-                quarterTurns: _rotation ~/ 90,
-                child: Image.file(
-                  File(_currentImagePath),
-                  fit: BoxFit.contain,
-                ),
+              child: Image.file(
+                File(_currentImagePath),
+                fit: BoxFit.contain,
               ),
             ),
           ),
@@ -132,11 +128,6 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
   }
 
   void _rotateImage() async {
-    setState(() {
-      _rotation = (_rotation + 90) % 360;
-    });
-
-    // Actually rotate the image file
     final rotatedPath = await ImageHelper.rotateImage(_currentImagePath, 90);
     if (rotatedPath != null) {
       setState(() => _currentImagePath = rotatedPath);

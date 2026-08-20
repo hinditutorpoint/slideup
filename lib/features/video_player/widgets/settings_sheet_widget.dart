@@ -83,7 +83,7 @@ class SettingsSheetWidget extends ConsumerWidget {
                               icon: Icons.loop,
                               title: 'Loop',
                               subtitle:
-                                  playerState.is2xSpeed ? 'On' : 'Off',
+                                  ref.read(videoPlayerProvider.notifier).settings.loopPlaylist ? 'On' : 'Off',
                               onTap: () => _toggleLoop(context, ref),
                             ),
                             const SizedBox(height: 12),
@@ -644,7 +644,8 @@ class SettingsSheetWidget extends ConsumerWidget {
 
   void _toggleLoop(BuildContext context, WidgetRef ref) {
     try {
-      _showMessage(context, 'Loop toggle not implemented', Colors.blue);
+      ref.read(videoPlayerProvider.notifier).toggleLoopPlaylist();
+      _showMessage(context, 'Loop toggled', Colors.blue);
     } catch (e) {
       debugPrint('❌ _toggleLoop error: $e');
     }

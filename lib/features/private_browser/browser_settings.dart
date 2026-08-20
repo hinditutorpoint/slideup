@@ -48,12 +48,14 @@ class BrowserSettings {
   static const _javaScriptKey = 'browser_javascript';
   static const _blockPopupsKey = 'browser_block_popups';
   static const _pullToRefreshKey = 'browser_pull_to_refresh';
+  static const _allowAutoPlayKey = 'browser_allow_autoplay';
 
   bool httpsOnly = true;
   TrackerBlockMode trackerMode = TrackerBlockMode.normal;
   bool javaScriptEnabled = true;
   bool blockPopups = true;
   bool pullToRefresh = true;
+  bool allowAutoPlay = true;
 
   /// Reads every preference from secure storage (fast, idempotent).
   Future<void> load() async {
@@ -64,6 +66,7 @@ class BrowserSettings {
     javaScriptEnabled = await _readBool(_javaScriptKey, true);
     blockPopups = await _readBool(_blockPopupsKey, true);
     pullToRefresh = await _readBool(_pullToRefreshKey, true);
+    allowAutoPlay = await _readBool(_allowAutoPlayKey, true);
   }
 
   Future<void> setHttpsOnly(bool value) async {
@@ -89,6 +92,11 @@ class BrowserSettings {
   Future<void> setPullToRefresh(bool value) async {
     pullToRefresh = value;
     await _write(_pullToRefreshKey, value.toString());
+  }
+
+  Future<void> setAllowAutoPlay(bool value) async {
+    allowAutoPlay = value;
+    await _write(_allowAutoPlayKey, value.toString());
   }
 
   Future<bool> _readBool(String key, bool fallback) async {

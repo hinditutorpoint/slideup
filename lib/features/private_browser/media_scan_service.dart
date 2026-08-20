@@ -194,11 +194,11 @@ const _enhancedScript = '''
   
   var STREAM_RE = /(videoplayback|googlevideo|\\/hls\\/|\\/dash\\/|\\/manifest\\/|\\/media\\/|\\/stream\\/|\\/playlist\\/|\\/chunklist)/i;
   
-  // Thumbnail/preview patterns
-  var THUMB_RE = /(thumb|thumbnail|preview|sprite|poster|placeholder|avatar|icon|logo|banner|badge)/i;
+  // Thumbnail/preview patterns (broadened for NSFW sites)
+  var THUMB_RE = /(thumb|thumbnail|preview|sprite|poster|placeholder|avatar|icon|logo|banner|badge|snap|screenshot|teaser|cover|sample|preview_|_preview|thumb_|_thumb|small|tiny|mini|\\.jpg[?]|\\.jpeg[?]|\\.png[?]|\\.gif[?]|\\.webp[?])/i;
   
   // Ad patterns
-  var AD_VIDEO_RE = /(ad-creative|adcreative|advertising|preroll|midroll|postroll|vast\\/|vpaid\\/|ima\\/|freewheel|tremor|spotx)/i;
+  var AD_VIDEO_RE = /(ad-creative|adcreative|advertising|preroll|midroll|postroll|vast\\/|vpaid\\/|ima\\/|freewheel|tremor|spotx|\\/pop[?]|\\/clickunder|\\/interstitial|\\/splash|\\/popup[?]|\\/exo-ad|\\/banner[?]|\\/native-ad)/i;
 
   var AD_HOSTS = [
     'doubleclick', 'googlesyndication', 'googleadservices', 'googleadsserving',
@@ -215,7 +215,15 @@ const _enhancedScript = '''
     'trafficjunky', 'adsterra', 'propellerads', 'clickadu', 'monetag',
     'hilltopads', 'quantserve', 'revcontent', 'rlcdn', 'smaato', 'sonobi',
     'stickyadstv', 'teads', 'theadexchange', 'tubemogul', 'undertone',
-    'vidible', 'videology', 'yieldmo', 'zedo', 'imasdk', 'video-ad-stats'
+    'vidible', 'videology', 'yieldmo', 'zedo', 'imasdk', 'video-ad-stats',
+    // NSFW ad networks / ad-serving CDNs (NOT content sites)
+    'trafficfactory', 'ero-advertising', 'eroadvertising', 'adult-ads', 'adultads',
+    'trillionads', 'adme', 'ad-maven', 'admarketplace', 'adscend', 'adsgame',
+    'adshore', 'adskeeper', 'adunite', 'advertserve', 'advombat', 'adwave',
+    'adwhirl', 'adxpoint', 'bongacash', 'crakrevenue', 'craktraffic',
+    'eforce', 'fpcdn', 'gammadia', 'mediaclicks', 'mgcash',
+    'naiadsystems', 'onrampads', 'profitrex', 'rbcash', 'revjet',
+    'smartadserver', 'trafficstars', 'vividcash', 'xclick'
   ];
 
   var AD_WRAP_RE = /(ad-container|ad_container|ad-wrapper|ad_wrapper|banner-?ad|ad_banner|ad-banner|native-?ad|popunder|overlay-?ad|floating-?ad|sticky-?ad|sponsored|sponsor|advertisement|advert|promoted|ad-slot|ad_slot)/i;
@@ -271,13 +279,19 @@ const _enhancedScript = '''
     if (inAdContainer(el)) return true;
     if (isAdUrl(url)) return true;
     
+    // Small autoplay muted videos (classic ad pattern)
     if (el.autoplay && el.muted) {
       var w = el.videoWidth || el.width || 0;
       var h = el.videoHeight || el.height || 0;
       if (w > 0 && h > 0 && w <= 400 && h <= 300) return true;
     }
     
+    // Very short videos are usually ads or preview clips
     if (el.duration > 0 && el.duration < MIN_DURATION) return true;
+    
+    // Looping muted video is usually a background preview loop
+    if (el.loop && el.muted) return true;
+    
     return false;
   }
 
@@ -287,6 +301,9 @@ const _enhancedScript = '''
     var w = el.videoWidth || el.width || 0;
     var h = el.videoHeight || el.height || 0;
     if (w > 0 && h > 0 && (w < MIN_WIDTH || h < MIN_HEIGHT)) return true;
+    
+    // NSFW: muted video with poster is usually a preview/thumbnail clip
+    if (el.muted && el.poster && el.poster.indexOf('data:') === -1) return true;
     
     return false;
   }
@@ -751,7 +768,7 @@ const _enhancedScript = '''
     setTimeout(function() {
       try { observer.disconnect(); } catch (e) {}
       try { if (resourceObserver) resourceObserver.disconnect(); } catch (e) {}
-    }, 20000);
+    }, 60000);
   });
 })();
 ''';

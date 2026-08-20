@@ -45,6 +45,7 @@ class VideoPlayerService {
   bool _isDisposed = false;
   bool _isDisposing = false;
   bool _isInitialized = false;
+  double _preMuteVolume = 1.0;
 
   final List<StreamSubscription> _subscriptions = [];
 
@@ -262,7 +263,7 @@ class VideoPlayerService {
       );
 
       _subscriptions.add(
-        _player!.stream.playlist.listen((playlist) {
+        _player!.stream.playlist.listen((playlist) async {
           if (!_isDisposed) {
             final newIndex = playlist.index;
             final newTitle = _getTitleForIndex(newIndex);
@@ -290,6 +291,46 @@ class VideoPlayerService {
                 currentFileId: newFileId, // ✅ ADD
               ),
             );
+
+            // Check for saved position (resume candidate) before applying skip intro
+            var resumeCandidate = false;
+            if (_settings.rememberPosition && newFileId != null) {
+              try {
+                var savedPosition =
+                    await SettingsStorageService.getPlaybackPosition(newFileId);
+                // Network URLs played via the launcher may have been saved under the
+                // url.hashCode key (PlayerMedia.fromUrl) while recent-history items
+                // pass the raw URL as fileId. Try both.
+                if (savedPosition == null &&
+                    (newFileId.startsWith('http://') ||
+                        newFileId.startsWith('https://'))) {
+                  savedPosition = await SettingsStorageService.getPlaybackPosition(
+                    newFileId.hashCode.toString(),
+                  );
+                }
+                if (savedPosition != null && savedPosition.inSeconds > 5) {
+                  resumeCandidate = true;
+                  debugPrint(
+                    '🎬 Saved position found for next video: '
+                    '${savedPosition.inSeconds}s',
+                  );
+                  if (await _confirmResumeFromLastPosition(
+                    savedPosition,
+                    newFileId,
+                  )) {
+                    await _resumeFromPosition(savedPosition);
+                  }
+                }
+              } catch (e) {
+                debugPrint('⚠️ Failed to restore position for next video: $e');
+              }
+            }
+
+            // Only skip the intro when the video is starting from the very
+            // beginning (no resume candidate existed).
+            if (!resumeCandidate) {
+              await _maybeApplySkipIntro();
+            }
           }
         }, onError: (e) => debugPrint('⚠️ Playlist stream error: $e')),
       );
@@ -1066,9 +1107,10 @@ class VideoPlayerService {
 
     try {
       if (_state.isMuted) {
-        await setVolume(_state.volume > 0 ? _state.volume : 1.0);
+        await setVolume(_preMuteVolume > 0 ? _preMuteVolume : 1.0);
         _updateState(_state.copyWith(isMuted: false));
       } else {
+        _preMuteVolume = _state.volume;
         await _player!.setVolume(0);
         _updateState(_state.copyWith(isMuted: true));
       }
@@ -1568,6 +1610,12 @@ class VideoPlayerService {
     } catch (e) {
       debugPrint('❌ updateSettings error: $e');
     }
+  }
+
+  Future<void> toggleLoopPlaylist() async {
+    if (_isDisposed) return;
+    final newSettings = _settings.copyWith(loopPlaylist: !_settings.loopPlaylist);
+    await updateSettings(newSettings);
   }
 
   // ═══════════════════════════════════════════════════════

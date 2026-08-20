@@ -19,6 +19,9 @@ class AppSettings {
   final String? speechService;
   final bool isDefaultMediaPlayer;
   bool? errorDebuggingEnabled;
+  final bool enableDoubleTapSeek;
+  final bool enableSeekPreview;
+  final bool enableDoubleTapAccumulator;
 
   AppSettings({
     this.videoPopupEnabled = false,
@@ -37,6 +40,9 @@ class AppSettings {
     this.speechService,
     this.isDefaultMediaPlayer = false,
     this.errorDebuggingEnabled = false,
+    this.enableDoubleTapSeek = true,
+    this.enableSeekPreview = true,
+    this.enableDoubleTapAccumulator = true,
   });
 
   AppSettings copyWith({
@@ -56,6 +62,9 @@ class AppSettings {
     String? speechService,
     bool? isDefaultMediaPlayer,
     bool? errorDebuggingEnabled,
+    bool? enableDoubleTapSeek,
+    bool? enableSeekPreview,
+    bool? enableDoubleTapAccumulator,
   }) {
     return AppSettings(
       videoPopupEnabled: videoPopupEnabled ?? this.videoPopupEnabled,
@@ -80,6 +89,10 @@ class AppSettings {
       isDefaultMediaPlayer: isDefaultMediaPlayer ?? this.isDefaultMediaPlayer,
       errorDebuggingEnabled:
           errorDebuggingEnabled ?? this.errorDebuggingEnabled,
+      enableDoubleTapSeek: enableDoubleTapSeek ?? this.enableDoubleTapSeek,
+      enableSeekPreview: enableSeekPreview ?? this.enableSeekPreview,
+      enableDoubleTapAccumulator:
+          enableDoubleTapAccumulator ?? this.enableDoubleTapAccumulator,
     );
   }
 }
@@ -158,6 +171,18 @@ class SettingsNotifier extends Notifier<AppSettings> {
         isDefaultMediaPlayer: _settingsBox.get(
           'isDefaultMediaPlayer',
           defaultValue: false,
+        ),
+        enableDoubleTapSeek: _settingsBox.get(
+          'enableDoubleTapSeek',
+          defaultValue: true,
+        ),
+        enableSeekPreview: _settingsBox.get(
+          'enableSeekPreview',
+          defaultValue: true,
+        ),
+        enableDoubleTapAccumulator: _settingsBox.get(
+          'enableDoubleTapAccumulator',
+          defaultValue: true,
         ),
       );
 
@@ -261,6 +286,24 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await _ensureInitialized();
     await _settingsBox.put('isDefaultMediaPlayer', isDefault);
     state = state.copyWith(isDefaultMediaPlayer: isDefault);
+  }
+
+  Future<void> setEnableDoubleTapSeek(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('enableDoubleTapSeek', enabled);
+    state = state.copyWith(enableDoubleTapSeek: enabled);
+  }
+
+  Future<void> setEnableSeekPreview(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('enableSeekPreview', enabled);
+    state = state.copyWith(enableSeekPreview: enabled);
+  }
+
+  Future<void> setEnableDoubleTapAccumulator(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('enableDoubleTapAccumulator', enabled);
+    state = state.copyWith(enableDoubleTapAccumulator: enabled);
   }
 }
 

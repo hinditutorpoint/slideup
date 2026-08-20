@@ -320,8 +320,8 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
             if ((playerState.isLoading || !_isInitialized) && !hasAnyError)
               _buildLoadingOverlay(playerState),
 
-            // Layer 3: Buffering indicator
-            if (playerState.isBuffering && !playerState.isLoading && isReady)
+            // Layer 3: Buffering indicator (hidden when controls are visible — play button spinner handles it)
+            if (playerState.isBuffering && !playerState.isLoading && isReady && !playerState.showControls)
               _buildBufferingIndicator(),
 
             // Layer 4: Gesture detector
@@ -345,7 +345,8 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
               ),
 
             if (playerState.showSeekPreview &&
-                playerState.isSeekingHorizontally)
+                playerState.isSeekingHorizontally &&
+                ref.read(settingsProvider).enableSeekPreview)
               ThumbnailPreviewWidget(
                 thumbnail: playerState.seekPreviewThumbnail,
                 targetPosition: playerState.seekPreviewPosition!,
@@ -732,6 +733,9 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
 
       final settings = notifier.settings;
       final seekDuration = settings.doubleTapSeekDuration;
+      final appSettings = ref.read(settingsProvider);
+      final doubleTapSeekEnabled = appSettings.enableDoubleTapSeek;
+      final accumulatorEnabled = appSettings.enableDoubleTapAccumulator;
 
       switch (zone) {
         case GestureZone.topLeft:
@@ -745,12 +749,22 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
           HapticFeedback.mediumImpact();
           break;
         case GestureZone.centerLeft:
-          notifier.seekRelative(-seekDuration);
-          HapticFeedback.lightImpact();
+          if (!doubleTapSeekEnabled) return;
+          if (accumulatorEnabled) {
+            _handleAccumulatedSeek(-seekDuration);
+          } else {
+            notifier.seekRelative(-seekDuration);
+            HapticFeedback.lightImpact();
+          }
           break;
         case GestureZone.centerRight:
-          notifier.seekRelative(seekDuration);
-          HapticFeedback.lightImpact();
+          if (!doubleTapSeekEnabled) return;
+          if (accumulatorEnabled) {
+            _handleAccumulatedSeek(seekDuration);
+          } else {
+            notifier.seekRelative(seekDuration);
+            HapticFeedback.lightImpact();
+          }
           break;
         case GestureZone.center:
         case GestureZone.topCenter:
@@ -762,6 +776,14 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
     } catch (e) {
       debugPrint('⚠️ Handle double tap error: $e');
     }
+  }
+
+  void _handleAccumulatedSeek(int seekDuration) {
+    final notifier = ref.read(videoPlayerProvider.notifier);
+    if (notifier.isDisposed) return;
+
+    notifier.seekRelative(seekDuration);
+    HapticFeedback.lightImpact();
   }
 
   void _handleLongPressStart(GestureZone zone) {

@@ -134,6 +134,7 @@ class VideoPlayerState {
     this.showSeekPreview = false,
     this.accumulatedSeekSeconds = 0,
     this.isSeekingHorizontally = false,
+
     this.isCompleted = false,
 
     this.showResumePrompt = false,

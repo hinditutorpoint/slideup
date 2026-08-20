@@ -16,6 +16,8 @@ class VideoItem extends Equatable {
   final String? subject;
   final String? collection;
   final String? language;
+  /// Video resolution string (e.g., "1920×1080", "4K", "720p")
+  final String? resolution;
 
   const VideoItem({
     required this.identifier,
@@ -33,6 +35,7 @@ class VideoItem extends Equatable {
     this.subject,
     this.collection,
     this.language,
+    this.resolution,
   });
 
   // Thumbnail URL for Archive.org items
@@ -134,6 +137,7 @@ class VideoItem extends Equatable {
       subject: _parseSubject(json['subject']),
       collection: _parseCollection(json['collection']),
       language: json['language']?.toString(),
+      resolution: _parseResolution(json['resolution']),
     );
   }
 
@@ -144,6 +148,16 @@ class VideoItem extends Equatable {
       return creator.first.toString();
     }
     return null;
+  }
+
+  static String? _parseResolution(dynamic resolution) {
+    if (resolution == null) return null;
+    if (resolution is String) return resolution;
+    if (resolution is int) {
+      // Handle resolution as width (e.g., 1080 for 1080p)
+      return '${resolution}p';
+    }
+    return resolution.toString();
   }
 
   static String? _parseFormat(dynamic format) {
@@ -209,6 +223,7 @@ class VideoItem extends Equatable {
       'subject': subject,
       'collection': collection,
       'language': language,
+      'resolution': resolution,
     };
   }
 
@@ -274,6 +289,7 @@ class VideoItem extends Equatable {
     String? subject,
     String? collection,
     String? language,
+    String? resolution,
   }) {
     return VideoItem(
       identifier: identifier ?? this.identifier,
@@ -291,6 +307,7 @@ class VideoItem extends Equatable {
       subject: subject ?? this.subject,
       collection: collection ?? this.collection,
       language: language ?? this.language,
+      resolution: resolution ?? this.resolution,
     );
   }
 
@@ -305,6 +322,7 @@ class VideoItem extends Equatable {
     downloads,
     itemSize,
     format,
+    resolution,
     isSaved,
     isLiked,
     duration,

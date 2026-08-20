@@ -93,7 +93,7 @@ class NativePiPWidget extends ConsumerWidget {
                 ),
 
               Align(
-                alignment: Alignment.center,
+                alignment: Alignment.bottomCenter,
                 child: _buildCenterControls(
                   ref,
                   playerState,
@@ -102,11 +102,14 @@ class NativePiPWidget extends ConsumerWidget {
                 ),
               ),
 
-              if (showProgress)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: _buildProgressBar(playerState),
-                ),
+          if (showProgress)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 56),
+                child: _buildProgressBar(playerState),
+              ),
+            ),
             ],
           );
         },

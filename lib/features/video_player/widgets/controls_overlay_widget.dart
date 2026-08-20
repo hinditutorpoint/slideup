@@ -1,6 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:path/path.dart' as p;
+import '../../../core/utils/download_location_helper.dart';
 
 import '../models/video_player_state.dart';
 import '../models/player_media.dart';
@@ -502,11 +508,38 @@ class _BottomBar extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Progress bar
-            _ProgressBar(
-              playerState: playerState,
-              ref: ref,
-              onInteraction: onInteraction,
+            // Progress bar with time labels on left/right
+            Row(
+              children: [
+                // Current position (left)
+                Text(
+                  _formatDuration(playerState.position),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Slider
+                Expanded(
+                  child: _ProgressBar(
+                    playerState: playerState,
+                    ref: ref,
+                    onInteraction: onInteraction,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Duration (right)
+                Text(
+                  _formatDuration(playerState.duration),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             // Controls row
@@ -514,21 +547,6 @@ class _BottomBar extends ConsumerWidget {
               height: 48,
               child: Row(
                 children: [
-                  // Time display
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Text(
-                      '${_formatDuration(playerState.position)} / ${_formatDuration(playerState.duration)}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 4),
-
                   // Scrollable controls
                   Expanded(
                     child: LayoutBuilder(
@@ -544,6 +562,22 @@ class _BottomBar extends ConsumerWidget {
                               mainAxisAlignment: MainAxisAlignment.end,
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                // Screenshot
+                                _ScreenshotButton(
+                                  onInteraction: onInteraction,
+                                ),
+
+                                // Scene Capture (hold to record)
+                                _SceneCaptureButton(
+                                  playerState: playerState,
+                                  onInteraction: onInteraction,
+                                ),
+
+                                // Loop
+                                _LoopButton(
+                                  onInteraction: onInteraction,
+                                ),
+
                                 // Speed
                                 _SpeedButton(
                                   speed: playerState.speed,
@@ -653,6 +687,334 @@ class _BottomBar extends ConsumerWidget {
     } catch (e) {
       return '00:00';
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ LOOP BUTTON - Toggle Playlist Loop
+// ═══════════════════════════════════════════════════════
+
+class _LoopButton extends ConsumerWidget {
+  final VoidCallback onInteraction;
+
+  const _LoopButton({required this.onInteraction});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return const SizedBox.shrink();
+
+      final isLooping = notifier.settings.loopPlaylist;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            notifier.toggleLoopPlaylist();
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              Icons.repeat,
+              color: isLooping ? Colors.white : Colors.white38,
+              size: 24,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ SCREENSHOT BUTTON - Capture & Save to Download Path
+// ═══════════════════════════════════════════════════════
+
+class _ScreenshotButton extends ConsumerWidget {
+  final VoidCallback onInteraction;
+
+  const _ScreenshotButton({required this.onInteraction});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    try {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            onInteraction();
+            _captureScreenshot(context, ref);
+          },
+          borderRadius: BorderRadius.circular(24),
+          splashColor: Colors.white24,
+          highlightColor: Colors.white10,
+          child: const Padding(
+            padding: EdgeInsets.all(10),
+            child: Icon(Icons.camera_alt, color: Colors.white, size: 24),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+  }
+
+  Future<void> _captureScreenshot(BuildContext context, WidgetRef ref) async {
+    try {
+      final notifier = ref.read(videoPlayerProvider.notifier);
+      if (notifier.isDisposed) return;
+
+      final Uint8List? imageBytes = await notifier.takeScreenshot();
+      if (imageBytes == null || imageBytes.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to capture screenshot'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      final downloadDir = await DownloadLocationHelper.configuredDirectory();
+      if (downloadDir == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No download path set. Please set one in Settings.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      final screenshotsDir = Directory('${downloadDir.path}/screenshots');
+      if (!await screenshotsDir.exists()) {
+        await screenshotsDir.create(recursive: true);
+      }
+
+      final now = DateTime.now();
+      final fileName = 'slideup_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}.png';
+      final file = File('${screenshotsDir.path}/$fileName');
+      await file.writeAsBytes(imageBytes);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Screenshot saved to ${file.path}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Screenshot error: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ SCENE CAPTURE BUTTON - Hold to Capture, Release to Save
+// ═══════════════════════════════════════════════════════
+
+class _SceneCaptureButton extends StatefulWidget {
+  final VideoPlayerState playerState;
+  final VoidCallback onInteraction;
+
+  const _SceneCaptureButton({
+    required this.playerState,
+    required this.onInteraction,
+  });
+
+  @override
+  State<_SceneCaptureButton> createState() => _SceneCaptureButtonState();
+}
+
+class _SceneCaptureButtonState extends State<_SceneCaptureButton> {
+  bool _isRecording = false;
+  Duration _startPos = Duration.zero;
+
+  void _startCapture() {
+    setState(() {
+      _isRecording = true;
+      _startPos = widget.playerState.position;
+    });
+    HapticFeedback.mediumImpact();
+  }
+
+  void _stopCapture() {
+    if (!_isRecording) return;
+    final endPos = widget.playerState.position;
+    setState(() => _isRecording = false);
+    HapticFeedback.mediumImpact();
+    _trimAndSave(widget.playerState.currentUrl, _startPos, endPos);
+  }
+
+  Future<void> _trimAndSave(
+    String inputUrl,
+    Duration start,
+    Duration end,
+  ) async {
+    if (!mounted) return;
+    final ctx = context;
+    if (start >= end) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(
+            content: Text('Clip too short — hold longer to capture'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final downloadDir = await DownloadLocationHelper.configuredDirectory();
+    if (downloadDir == null) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(
+            content: Text('No download path set. Please set one in Settings.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    final clipsDir = Directory('${downloadDir.path}/clips');
+    if (!await clipsDir.exists()) {
+      await clipsDir.create(recursive: true);
+    }
+
+    final now = DateTime.now();
+    final ts =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_'
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    final outputPath = '${clipsDir.path}/clip_$ts.mp4';
+
+    final startStr = _fmtDur(start);
+    final dur = end - start;
+    final durStr = _fmtDur(dur);
+
+    final bool isLocal = !inputUrl.startsWith('http');
+    final String command = isLocal
+        ? '-y -ss $startStr -i "$inputUrl" -t $durStr -c copy -avoid_negative_ts make_zero "$outputPath"'
+        : '-y -ss $startStr -i "$inputUrl" -t $durStr -c:v libx264 -c:a aac -movflags +faststart "$outputPath"';
+
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text('Capturing ${durStr}s clip...'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    try {
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (returnCode != null && returnCode.isValueSuccess()) {
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            SnackBar(
+              content: Text('Clip saved: ${p.basename(outputPath)}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        final log = await session.getAllLogsAsString();
+        final logSnippet = log != null ? log.substring(0, log.length.clamp(0, 500)) : 'no logs';
+        debugPrint('❌ Scene capture failed: $logSnippet');
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to capture clip'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        try {
+          final f = File(outputPath);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('❌ Scene capture error: $e');
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('Capture error: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  String _fmtDur(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60);
+    final ms = d.inMilliseconds.remainder(1000);
+    if (h > 0) {
+      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPressStart: (_) {
+        widget.onInteraction();
+        _startCapture();
+      },
+      onLongPressEnd: (_) => _stopCapture(),
+      onLongPressCancel: () {
+        if (_isRecording) {
+          setState(() => _isRecording = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Capture cancelled'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          highlightColor: Colors.white10,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              _isRecording ? Icons.fiber_manual_record : Icons.movie_creation_outlined,
+              color: _isRecording ? Colors.redAccent : Colors.white,
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

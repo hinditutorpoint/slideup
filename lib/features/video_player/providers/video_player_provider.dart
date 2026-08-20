@@ -805,6 +805,15 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
       debugPrint('❌ Update settings error: $e');
     }
   }
+
+  Future<void> toggleLoopPlaylist() async {
+    if (isDisposed) return;
+    try {
+      await service.toggleLoopPlaylist();
+    } catch (e) {
+      debugPrint('❌ Toggle loop playlist error: $e');
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════

@@ -1856,20 +1856,10 @@ class _MainScreenState extends ConsumerState<MainScreen>
     Navigator.pop(context); // Close drawer if open
 
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.video,
-        allowMultiple: false,
-      );
-
-      if (!mounted || result == null || result.files.isEmpty) return;
-
-      final videoPath = result.files.single.path;
-      if (videoPath == null) return;
-
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => VideoEditorScreen(videoPath: videoPath),
+          builder: (context) => const VideoEditorScreen(),
         ),
       );
     } catch (e) {

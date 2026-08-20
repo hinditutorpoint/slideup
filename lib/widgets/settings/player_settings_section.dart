@@ -156,6 +156,41 @@ class _PlayerSettingsSectionState extends ConsumerState<PlayerSettingsSection> {
         SwitchListTile(
           dense: true,
           visualDensity: VisualDensity.compact,
+          title: const Text('Double-tap to Seek'),
+          subtitle: const Text('Double-tap left/right sides to seek forward/backward'),
+          value: settings.enableDoubleTapSeek,
+          activeColor: primary,
+          onChanged: (value) {
+            ref.read(settingsProvider.notifier).setEnableDoubleTapSeek(value);
+          },
+        ),
+        SwitchListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          title: const Text('Seek Preview'),
+          subtitle: const Text('Show thumbnail preview when seeking'),
+          value: settings.enableSeekPreview,
+          activeColor: primary,
+          onChanged: (value) {
+            ref.read(settingsProvider.notifier).setEnableSeekPreview(value);
+          },
+        ),
+        SwitchListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          title: const Text('Accumulate Double-tap Seek'),
+          subtitle: const Text('Second double-tap adds more seek time (like YouTube)'),
+          value: settings.enableDoubleTapAccumulator,
+          activeColor: primary,
+          onChanged: (value) {
+            ref
+                .read(settingsProvider.notifier)
+                .setEnableDoubleTapAccumulator(value);
+          },
+        ),
+        SwitchListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
           title: const Text('Error Debugging'),
           subtitle: const Text('Show detailed error information'),
           value: settings.errorDebuggingEnabled ?? false,

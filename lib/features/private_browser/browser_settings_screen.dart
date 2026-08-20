@@ -21,6 +21,7 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   late bool _javaScriptEnabled;
   late bool _blockPopups;
   late bool _pullToRefresh;
+  late bool _allowAutoPlay;
   int _adHostCount = 0;
   DateTime? _adLastUpdated;
   bool _adUpdating = false;
@@ -43,6 +44,7 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
       _javaScriptEnabled = BrowserSettings.instance.javaScriptEnabled;
       _blockPopups = BrowserSettings.instance.blockPopups;
       _pullToRefresh = BrowserSettings.instance.pullToRefresh;
+      _allowAutoPlay = BrowserSettings.instance.allowAutoPlay;
       _adHostCount = localHosts.length;
       _adLastUpdated = lastUpdated;
       _loaded = true;
@@ -107,6 +109,11 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   void _setPullToRefresh(bool value) {
     setState(() => _pullToRefresh = value);
     BrowserSettings.instance.setPullToRefresh(value);
+  }
+
+  void _setAllowAutoPlay(bool value) {
+    setState(() => _allowAutoPlay = value);
+    BrowserSettings.instance.setAllowAutoPlay(value);
   }
 
   Future<void> _checkAdGuardUpdate() async {
@@ -343,6 +350,16 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
                   value: _pullToRefresh,
                   activeColor: Colors.teal,
                   onChanged: _setPullToRefresh,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.play_circle_outline, size: 22),
+                  title: const Text('Allow auto-play'),
+                  subtitle: const Text(
+                    'Let videos play automatically (helps detect media on pages)',
+                  ),
+                  value: _allowAutoPlay,
+                  activeColor: Colors.teal,
+                  onChanged: _setAllowAutoPlay,
                 ),
                 const Divider(height: 24),
                 _buildAdGuardSection(theme),
