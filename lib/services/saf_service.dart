@@ -64,4 +64,36 @@ class SafService {
       return null;
     }
   }
+
+  /// Writes [bytes] to [filePath] through SAF (removable) or direct I/O (emulated).
+  ///
+  /// Returns one of:
+  /// - `'ok'` — written successfully
+  /// - `'needs_tree'` — removable volume but no persisted grant; call [pickTree] first
+  /// - `'error'` — write failed
+  Future<String> writeFile(String filePath, Uint8List bytes) async {
+    if (!_isAndroid) return 'error';
+    try {
+      final result = await _channel.invokeMethod<String>('writeFile', {
+        'path': filePath,
+        'bytes': bytes,
+      });
+      return result ?? 'error';
+    } catch (e) {
+      debugPrint('❌ SAF writeFile error: $e');
+      return 'error';
+    }
+  }
+
+  /// Opens the system "All files access" settings page directly.
+  /// Useful when the normal `Permission.manageExternalStorage.request()`
+  /// is blocked by OEM restrictions (Xiaomi, Huawei, etc.).
+  Future<void> openManageStorageSettings() async {
+    if (!_isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('openManageStorageSettings');
+    } catch (e) {
+      debugPrint('❌ SAF openManageStorageSettings error: $e');
+    }
+  }
 }

@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart'
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as path;
 import '../models/storage_info.dart';
+import 'saf_service.dart';
 
 class PermissionService {
   static final PermissionService instance = PermissionService._();
@@ -256,18 +257,33 @@ class PermissionService {
       if (status.isGranted) {
         debugPrint('✅ MANAGE_EXTERNAL_STORAGE granted');
         return true;
-      } else if (status.isPermanentlyDenied) {
+      }
+
+      // On OEM-restricted devices (Xiaomi, Huawei, etc.) the normal request
+      // may silently fail. Open the system settings page directly so the
+      // user can toggle "All files access" manually.
+      debugPrint('⚠️ MANAGE_EXTERNAL_STORAGE not granted ($status), opening settings page');
+      await SafService.instance.openManageStorageSettings();
+
+      // Give the user time to toggle; then re-check
+      await Future.delayed(const Duration(seconds: 2));
+      final recheck = await Permission.manageExternalStorage.status;
+      if (recheck.isGranted) {
+        debugPrint('✅ MANAGE_EXTERNAL_STORAGE granted after settings redirect');
+        return true;
+      }
+
+      if (status.isPermanentlyDenied) {
         debugPrint('❌ MANAGE_EXTERNAL_STORAGE permanently denied');
         return false;
-      } else {
-        debugPrint('⚠️ MANAGE_EXTERNAL_STORAGE denied, trying fallback');
-        // Fallback to regular storage permission
-        final fallbackStatus = await Permission.storage.request();
-        return fallbackStatus.isGranted;
       }
+
+      // Last fallback: regular storage permission
+      debugPrint('⚠️ Trying fallback Permission.storage');
+      final fallbackStatus = await Permission.storage.request();
+      return fallbackStatus.isGranted;
     } catch (e) {
       debugPrint('❌ Error requesting MANAGE_EXTERNAL_STORAGE: $e');
-      // Fallback to regular storage permission
       try {
         final fallbackStatus = await Permission.storage.request();
         return fallbackStatus.isGranted;
@@ -460,6 +476,17 @@ class PermissionService {
       debugPrint('Error checking permissions: $e');
       return false;
     }
+  }
+
+  /// Public method: requests MANAGE_EXTERNAL_STORAGE with settings-redirect
+  /// fallback. Can be called from settings UI or before write operations.
+  Future<bool> requestStorageWritePermission() async {
+    return _requestManageExternalStorage();
+  }
+
+  /// Opens the Android "All files access" settings page directly.
+  Future<void> openStorageSettings() async {
+    await SafService.instance.openManageStorageSettings();
   }
 
   /// Open app settings for the user to manually grant permissions

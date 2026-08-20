@@ -368,6 +368,76 @@ class MainActivity : AudioServiceActivity() {
                         result.error("STORE_ERROR", e.message, null)
                     }
                 }
+                // Writes bytes to a file through SAF (removable) or direct I/O (emulated).
+                // Returns "ok" | "needs_tree" | "error".
+                "writeFile" -> {
+                    val filePath = call.argument<String>("path")
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (filePath == null || bytes == null) {
+                        result.error("INVALID_ARGS", "Path or bytes is null", null)
+                        return@setMethodCallHandler
+                    }
+                    val rootId = removableRootIdForPath(filePath)
+                    if (rootId != null) {
+                        // Removable volume — must use SAF
+                        val treeUriStr = safPrefs.getString("tree_$rootId", null)
+                        if (treeUriStr == null) {
+                            result.success("needs_tree")
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val treeUri = Uri.parse(treeUriStr)
+                            val docUri = DocumentsContract.buildDocumentUri(
+                                treeUri.authority,
+                                documentIdForPath(filePath, rootId)
+                            )
+                            contentResolver.openOutputStream(docUri, "w")?.use { stream ->
+                                stream.write(bytes)
+                            }
+                            Log.d(TAG, "📝 SAF write $filePath (${bytes.size} bytes)")
+                            result.success("ok")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "SAF write failed for $filePath", e)
+                            result.error("SAF_ERROR", e.message, null)
+                        }
+                    } else {
+                        // Emulated / internal — direct File I/O
+                        try {
+                            val file = File(filePath)
+                            file.parentFile?.mkdirs()
+                            file.writeBytes(bytes)
+                            Log.d(TAG, "📝 Direct write $filePath (${bytes.size} bytes)")
+                            result.success("ok")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Direct write failed for $filePath", e)
+                            result.error("WRITE_ERROR", e.message, null)
+                        }
+                    }
+                }
+                // Opens the system "All files access" settings page directly.
+                // Returns "granted" | "denied".
+                "openManageStorageSettings" -> {
+                    try {
+                        val intent = Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                        result.success("ok")
+                    } catch (e: Exception) {
+                        // Fallback: open generic storage settings
+                        try {
+                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success("ok")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to open storage settings", e2)
+                            result.error("SETTINGS_ERROR", e2.message, null)
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
