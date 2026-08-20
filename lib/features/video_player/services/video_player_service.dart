@@ -13,7 +13,6 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import '../video_player_init.dart';
 
-import '../../../navigation_service.dart';
 import '../models/video_player_state.dart';
 import '../models/player_settings.dart';
 import 'settings_storage_service.dart';
@@ -597,6 +596,7 @@ class VideoPlayerService {
       }
 
       // Restore position if enabled
+      var resumeCandidate = false;
       if (_settings.rememberPosition && fileId != null) {
         try {
           var savedPosition =
@@ -611,19 +611,24 @@ class VideoPlayerService {
             );
           }
           if (savedPosition != null && savedPosition.inSeconds > 5) {
+            resumeCandidate = true;
             debugPrint(
               '🎬 Saved position found: ${savedPosition.inSeconds}s '
               '(duration=${_state.duration.inSeconds}s)',
             );
-            if (await _confirmResumeFromLastPosition()) {
+            if (await _confirmResumeFromLastPosition(savedPosition, fileId)) {
               await _resumeFromPosition(savedPosition);
-            } else {
-              await SettingsStorageService.clearPlaybackPosition(fileId);
             }
           }
         } catch (e) {
           debugPrint('⚠️ Failed to restore position: $e');
         }
+      }
+
+      // Only skip the intro when the video is starting from the very
+      // beginning (no resume candidate existed).
+      if (!resumeCandidate) {
+        await _maybeApplySkipIntro();
       }
 
       // Add to recent files
@@ -722,9 +727,13 @@ class VideoPlayerService {
     debugPrint('⚠️ Timed out waiting for stream to be ready');
   }
 
-  /// When "Ask to Resume Last Position" is enabled, prompt the user before
-  /// restoring a saved playback position. Otherwise resume automatically.
-  Future<bool> _confirmResumeFromLastPosition() async {
+  /// When "Ask to Resume Last Position" is enabled, surface an in-player
+  /// prompt (resume | cancel) instead of auto-resuming. Otherwise resume
+  /// automatically.
+  Future<bool> _confirmResumeFromLastPosition(
+    Duration savedPosition,
+    String fileId,
+  ) async {
     try {
       final ask = Hive.box('settings').get(
             'askResumeLastPosition',
@@ -732,32 +741,76 @@ class VideoPlayerService {
           ) as bool;
       if (!ask) return true;
 
-      final context = rootNavigatorKey.currentContext;
-      if (context == null || !context.mounted) return true;
-
-      final result = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Resume Playback'),
-          content: const Text('Play from last saved position?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Start Over'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Resume'),
-            ),
-          ],
+      // Surface the prompt inside the player UI (transparent dialog when
+      // controls are visible, top-left banner otherwise). The notifier's
+      // resumeFromPrompt/cancelResumePrompt handle the user's choice.
+      _updateState(
+        _state.copyWith(
+          showResumePrompt: true,
+          resumePosition: savedPosition,
+          resumeFileId: fileId,
         ),
       );
-      return result ?? true;
+      return false;
     } catch (e) {
       debugPrint('⚠️ Failed to ask resume position: $e');
       return true;
     }
+  }
+
+  /// Public wrapper used by the notifier's resumeFromPrompt().
+  Future<void> resumeFromPosition(Duration position) async {
+    await _resumeFromPosition(position);
+  }
+
+  /// Clear the saved position for a file id (used on cancel).
+  Future<void> clearResumePosition(String? fileId) async {
+    if (fileId == null) return;
+    try {
+      await SettingsStorageService.clearPlaybackPosition(fileId);
+    } catch (e) {
+      debugPrint('⚠️ Failed to clear resume position: $e');
+    }
+  }
+
+  /// Skip the video intro when the toggle is on and the video is starting
+  /// from the beginning. If interaction is required, surface an in-player
+  /// Skip | Cancel prompt; otherwise seek past the intro automatically.
+  Future<void> _maybeApplySkipIntro() async {
+    if (_isDisposed || _player == null) return;
+    try {
+      final enabled =
+          Hive.box('settings').get('skipIntroVideo', defaultValue: false)
+              as bool;
+      if (!enabled) return;
+      final interactionRequired =
+          Hive.box('settings').get(
+                'skipIntroInteractionRequired',
+                defaultValue: false,
+              ) as bool;
+      final leadSeconds =
+          Hive.box('settings').get('skipIntroLeadSeconds', defaultValue: 30)
+              as int;
+      final skipTarget = Duration(seconds: leadSeconds);
+
+      if (interactionRequired) {
+        _updateState(
+          _state.copyWith(
+            showSkipIntroPrompt: true,
+            skipIntroPosition: skipTarget,
+          ),
+        );
+      } else {
+        await _resumeFromPosition(skipTarget);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to apply skip intro: $e');
+    }
+  }
+
+  /// Public wrapper used by the notifier's skipIntroFromPrompt().
+  Future<void> skipIntroSeek(Duration position) async {
+    await _resumeFromPosition(position);
   }
 
   Future<void> playOrPause() async {

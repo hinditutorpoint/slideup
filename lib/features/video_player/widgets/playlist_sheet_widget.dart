@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../providers/media_provider.dart';
 import '../models/player_media.dart';
 import '../providers/video_player_provider.dart';
 
@@ -19,6 +21,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _isGridView = false;
+  Map<String, DateTime> _lastPlayedById = {};
 
   @override
   void dispose() {
@@ -31,124 +34,153 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
     final playerState = ref.watch(videoPlayerProvider);
     final currentIndex = playerState.currentIndex;
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
-      decoration: BoxDecoration(
-        color: Colors.grey[900],
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: SafeArea(
-        child: Column(
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white38,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+    final recentFiles = ref.watch(recentFilesProvider).value ?? const [];
+    _lastPlayedById = <String, DateTime>{
+      for (final f in recentFiles)
+        if (f.id.isNotEmpty) f.id: f.dateModified,
+      for (final f in recentFiles)
+        if (f.path.isNotEmpty) f.path: f.dateModified,
+    };
 
-            // Header
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Text(
-                    'Playlist',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: const BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: SafeArea(
+            child: Column(
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white38,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${widget.playlist.length} videos',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
+                ),
+
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Playlist',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${widget.playlist.length} videos',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      // Toggle view button
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: Icon(
+                          _isGridView ? Icons.list : Icons.grid_view,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isGridView = !_isGridView;
+                          });
+                        },
+                      ),
+                    ],
                   ),
-                  const Spacer(),
-                  // Toggle view button
-                  IconButton(
-                    icon: Icon(
-                      _isGridView ? Icons.list : Icons.grid_view,
-                      color: Colors.white,
+                ),
+
+                // Search bar
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: TextField(
+                    controller: _searchController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search playlist...',
+                      hintStyle: TextStyle(
+                        color: Colors.grey[500],
+                        fontSize: 13,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Colors.white54,
+                        size: 20,
+                      ),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(
+                                Icons.clear,
+                                color: Colors.white54,
+                                size: 20,
+                              ),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.08),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      isDense: true,
                     ),
-                    onPressed: () {
+                    onChanged: (value) {
                       setState(() {
-                        _isGridView = !_isGridView;
+                        _searchQuery = value.toLowerCase();
                       });
                     },
                   ),
-                ],
-              ),
-            ),
-
-            // Search bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _searchController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Search playlist...',
-                  hintStyle: TextStyle(color: Colors.grey[500]),
-                  prefixIcon: const Icon(Icons.search, color: Colors.white54),
-                  suffixIcon: _searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.white54),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {
-                              _searchQuery = '';
-                            });
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: Colors.white.withValues(alpha: 0.1),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
                 ),
-                onChanged: (value) {
-                  setState(() {
-                    _searchQuery = value.toLowerCase();
-                  });
-                },
-              ),
-            ),
 
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white12, height: 1),
+                const SizedBox(height: 10),
+                const Divider(color: Colors.white12, height: 1),
 
-            // Playlist content
-            Expanded(
-              child: _isGridView
-                  ? _buildGridView(currentIndex)
-                  : _buildListView(currentIndex),
+                // Playlist content
+                Expanded(
+                  child: _isGridView
+                      ? _buildGridView(currentIndex)
+                      : _buildListView(currentIndex),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -172,6 +204,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
           media: item.media,
           index: originalIndex,
           isPlaying: originalIndex == currentIndex,
+          metaLine: _buildMetaLine(item.media, _lastPlayedById),
           onTap: () => _jumpToIndex(originalIndex),
         );
       },
@@ -186,12 +219,12 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 16 / 12,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
       ),
       itemCount: filteredItems.length,
       itemBuilder: (context, index) {
@@ -202,6 +235,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
           media: item.media,
           index: originalIndex,
           isPlaying: originalIndex == currentIndex,
+          metaLine: _buildMetaLine(item.media, _lastPlayedById),
           onTap: () => _jumpToIndex(originalIndex),
         );
       },
@@ -247,6 +281,27 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
       debugPrint('⚠️ Jump to index error: $e');
     }
   }
+
+  /// Builds a compact meta line: resolution • file size • last played.
+  String? _buildMetaLine(PlayerMedia media, Map<String, DateTime> lastPlayed) {
+    final parts = <String>[
+      if (media.resolutionText != null) media.resolutionText!,
+      if (media.fileSizeText != null) media.fileSizeText!,
+      if (lastPlayed[media.id] != null || lastPlayed[media.url] != null)
+        'Played ${_timeAgo(lastPlayed[media.id] ?? lastPlayed[media.url]!)}',
+    ];
+    if (parts.isEmpty) return null;
+    return parts.join('  •  ');
+  }
+
+  String _timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${time.day}/${time.month}/${time.year}';
+  }
 }
 
 class _FilteredItem {
@@ -263,12 +318,14 @@ class _PlaylistListItem extends StatelessWidget {
   final PlayerMedia media;
   final int index;
   final bool isPlaying;
+  final String? metaLine;
   final VoidCallback onTap;
 
   const _PlaylistListItem({
     required this.media,
     required this.index,
     required this.isPlaying,
+    this.metaLine,
     required this.onTap,
   });
 
@@ -276,6 +333,9 @@ class _PlaylistListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       onTap: onTap,
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: Stack(
         children: [
           // Thumbnail
@@ -334,15 +394,34 @@ class _PlaylistListItem extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: media.artist != null
-          ? Text(
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (media.artist != null)
+            Text(
               media.artist!,
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              style: TextStyle(color: Colors.grey[400], fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             )
-          : Text(
+          else
+            Text(
               'Video ${index + 1}',
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              style: TextStyle(color: Colors.grey[400], fontSize: 12),
             ),
+          if (metaLine != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(
+                metaLine!,
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
       trailing: isPlaying
           ? const _PlayingIndicator()
           : Text('${index + 1}', style: TextStyle(color: Colors.grey[600])),
@@ -385,12 +464,14 @@ class _PlaylistGridItem extends StatelessWidget {
   final PlayerMedia media;
   final int index;
   final bool isPlaying;
+  final String? metaLine;
   final VoidCallback onTap;
 
   const _PlaylistGridItem({
     required this.media,
     required this.index,
     required this.isPlaying,
+    this.metaLine,
     required this.onTap,
   });
 
@@ -400,7 +481,7 @@ class _PlaylistGridItem extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.grey[800],
+          color: Colors.black.withValues(alpha: 0.35),
           borderRadius: BorderRadius.circular(8),
           border: isPlaying ? Border.all(color: Colors.red, width: 2) : null,
         ),
@@ -485,16 +566,35 @@ class _PlaylistGridItem extends StatelessWidget {
             ),
             // Title
             Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                media.title ?? 'Unknown',
-                style: TextStyle(
-                  color: isPlaying ? Colors.red : Colors.white,
-                  fontSize: 12,
-                  fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    media.title ?? 'Unknown',
+                    style: TextStyle(
+                      color: isPlaying ? Colors.red : Colors.white,
+                      fontSize: 12,
+                      fontWeight:
+                          isPlaying ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (metaLine != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        metaLine!,
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
             ),
           ],

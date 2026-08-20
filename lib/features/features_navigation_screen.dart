@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:slideup/features/documents/utils/reader_utils.dart';
 import 'package:slideup/features/txt_reader/utils/reader_utils.dart'
     as txt_reader_utils;
+import 'dart:io';
 import '../screens/main_screen.dart';
 
 import '../features/txt_reader/screens/text_downloads_screen.dart';
@@ -12,6 +13,7 @@ import '../features/documents/screens/pdf_search_screen.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
 import '../features/documents/widgets/reading_history_widget.dart'
     show ReadingHistoryScreen;
+import '../helpers/m3u_playlist_helper.dart';
 
 class FeaturesNavigationScreen extends ConsumerStatefulWidget {
   const FeaturesNavigationScreen({super.key});
@@ -149,11 +151,11 @@ class _FeaturesNavigationScreenState
 }
 
 /// Home Tab with Quick Access
-class HomeTab extends StatelessWidget {
+class HomeTab extends ConsumerWidget {
   const HomeTab({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Library'),
@@ -179,7 +181,7 @@ class HomeTab extends StatelessWidget {
               // Quick Actions
               _buildSectionTitle(context, 'Quick Actions'),
               const SizedBox(height: 12),
-              _buildQuickActions(context),
+              _buildQuickActions(context, ref),
               const SizedBox(height: 24),
 
               // Recent Activity
@@ -268,7 +270,7 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _buildQuickActions(BuildContext context) {
+  Widget _buildQuickActions(BuildContext context, WidgetRef ref) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 400;
@@ -290,7 +292,7 @@ class HomeTab extends StatelessWidget {
               icon: Icons.folder_open_rounded,
               label: 'Open File',
               color: Colors.orange,
-              onTap: () => _pickFile(context),
+              onTap: () => _pickFile(context, ref),
               width: isWide
                   ? (constraints.maxWidth - 12) / 2
                   : constraints.maxWidth,
@@ -383,18 +385,46 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  void _pickFile(BuildContext context) async {
+  void _pickFile(BuildContext context, WidgetRef ref) async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['epub', 'pdf', 'txt'],
+        allowedExtensions: [
+          'epub',
+          'pdf',
+          'txt',
+          'm3u',
+          'm3u8',
+          'm3u_plus',
+          'm3u8_plus',
+        ],
         allowMultiple: false,
       );
       if (result != null) {
         final file = result.files.first;
         final extension = file.extension;
         final fileName = file.name;
-        if (extension == 'epub') {
+        if (['m3u', 'm3u8', 'm3u_plus', 'm3u8_plus'].contains(extension)) {
+          final filePath = file.path;
+          if (filePath == null) return;
+          final content = await File(filePath).readAsString();
+          if (!context.mounted) return;
+          await openLocalM3uPlaylist(
+            context: context,
+            ref: ref,
+            file: File(filePath),
+            content: content,
+            onSnack: (message) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(message),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          );
+        } else if (extension == 'epub') {
           if (!context.mounted) {
             return;
           }

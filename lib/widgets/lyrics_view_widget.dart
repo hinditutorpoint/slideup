@@ -11,6 +11,7 @@ class LyricsViewWidget extends ConsumerStatefulWidget {
   final String? artist;
   final Duration? duration;
   final VoidCallback? onClose;
+  final VoidCallback? onMinimize;
   final AudioData? audioData;
 
   const LyricsViewWidget({
@@ -19,6 +20,7 @@ class LyricsViewWidget extends ConsumerStatefulWidget {
     this.artist,
     this.duration,
     this.onClose,
+    this.onMinimize,
     this.audioData,
   });
 
@@ -30,6 +32,7 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
   final ScrollController _scrollController = ScrollController();
   int _lastActiveIndex = -1;
   bool _userIsScrolling = false;
+  bool _isMinimized = false;
 
   String get _effectiveTitle => widget.audioData?.title ?? widget.songTitle;
   String? get _effectiveArtist => widget.audioData?.artist ?? widget.artist;
@@ -74,7 +77,9 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
 
     // Approximate height per line ~ 48px
     const itemHeight = 48.0;
-    final targetOffset = (index * itemHeight) - 100.0;
+    final viewport = _scrollController.position.viewportDimension;
+    final targetOffset =
+        (index * itemHeight) - (viewport / 2) + (itemHeight / 2);
     final maxScroll = _scrollController.position.maxScrollExtent;
     final clampedOffset = targetOffset.clamp(0.0, maxScroll);
 
@@ -168,20 +173,20 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
           children: [
             // Header Bar
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+              padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
               child: Row(
                 children: [
                   Icon(
                     Icons.lyrics_outlined,
-                    size: 20,
+                    size: 18,
                     color: theme.colorScheme.primary,
                   ),
                   const SizedBox(width: 8),
                   Text(
                     'Lyrics',
                     style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onSurface,
                     ),
                   ),
@@ -189,7 +194,7 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                         decoration: BoxDecoration(
                           color: theme.colorScheme.primary.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
@@ -198,7 +203,7 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
                           lyricsState.data!.source!,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9,
                             fontWeight: FontWeight.w600,
                             color: theme.colorScheme.primary,
                           ),
@@ -208,19 +213,38 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
                   ],
                   const Spacer(),
                   IconButton(
+                    icon: const Icon(Icons.unfold_more, size: 20),
+                    tooltip: 'Minimize to current line',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () {
+                      if (widget.onMinimize != null) {
+                        widget.onMinimize!();
+                      } else {
+                        setState(() => _isMinimized = true);
+                      }
+                    },
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.search, size: 20),
                     tooltip: 'Manual Search',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                     onPressed: _showManualSearchDialog,
                   ),
                   IconButton(
                     icon: const Icon(Icons.refresh, size: 20),
                     tooltip: 'Reload',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                     onPressed: () => _loadLyrics(force: true),
                   ),
                   if (widget.onClose != null)
                     IconButton(
                       icon: const Icon(Icons.close, size: 20),
                       tooltip: 'Close Lyrics',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                       onPressed: widget.onClose,
                     ),
                 ],
@@ -228,13 +252,62 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
             ),
             const Divider(height: 1),
 
-            // Content Area — use Flexible so it fills remaining SizedBox height
+            // Content Area — minimize shows only the current line
             Flexible(
-              child: _buildLyricsBody(lyricsState, audioHandler, theme),
+              child: _isMinimized
+                  ? _buildMinimizedBar(lyricsState, audioHandler, theme)
+                  : _buildLyricsBody(lyricsState, audioHandler, theme),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMinimizedBar(
+    LyricsState state,
+    dynamic audioHandler,
+    ThemeData theme,
+  ) {
+    final lyrics = state.data;
+    if (lyrics == null || lyrics.lines.isEmpty) {
+      return _buildEmptyMinimizedBar(state, theme);
+    }
+
+    if (lyrics.isSynced) {
+      return StreamBuilder<Duration>(
+        stream: audioHandler.positionStream,
+        builder: (context, snapshot) {
+          final currentPos = snapshot.data ?? Duration.zero;
+          final activeIndex = _findActiveLineIndex(currentPos, lyrics.lines);
+          final line = lyrics.lines[activeIndex.clamp(0, lyrics.lines.length - 1)];
+          return _MinimizedLine(
+            text: line.text,
+            onMaximize: () => setState(() => _isMinimized = false),
+            theme: theme,
+          );
+        },
+      );
+    }
+
+    final topIndex = _scrollController.hasClients
+        ? (_scrollController.offset / 48).round().clamp(
+              0,
+              lyrics.lines.length - 1,
+            )
+        : 0;
+    return _MinimizedLine(
+      text: lyrics.lines[topIndex].text,
+      onMaximize: () => setState(() => _isMinimized = false),
+      theme: theme,
+    );
+  }
+
+  Widget _buildEmptyMinimizedBar(LyricsState state, ThemeData theme) {
+    return _MinimizedLine(
+      text: state.error ?? 'No lyrics',
+      onMaximize: () => setState(() => _isMinimized = false),
+      theme: theme,
     );
   }
 
@@ -395,6 +468,50 @@ class _LyricsViewWidgetState extends ConsumerState<LyricsViewWidget> {
           ),
         );
       },
+    );
+  }
+}
+
+class _MinimizedLine extends StatelessWidget {
+  final String text;
+  final VoidCallback onMaximize;
+  final ThemeData theme;
+
+  const _MinimizedLine({
+    required this.text,
+    required this.onMaximize,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.unfold_less, size: 20),
+            tooltip: 'Maximize lyrics',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color: theme.colorScheme.onSurface,
+            onPressed: onMaximize,
+          ),
+        ],
+      ),
     );
   }
 }

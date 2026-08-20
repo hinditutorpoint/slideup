@@ -309,6 +309,8 @@ class _CenterPlayButton extends ConsumerWidget {
           ],
           _PlayPauseButton(
             icon: _getMainIcon(isCompleted),
+            showLoading: !isCompleted &&
+                (playerState.isBuffering || playerState.isLoading),
             onTap: () {
               onInteraction();
               _handleMainButton(ref, isCompleted);
@@ -399,9 +401,14 @@ class _CenterPlayButton extends ConsumerWidget {
 
 class _PlayPauseButton extends StatelessWidget {
   final IconData icon;
+  final bool showLoading;
   final VoidCallback onTap;
 
-  const _PlayPauseButton({required this.icon, required this.onTap});
+  const _PlayPauseButton({
+    required this.icon,
+    this.showLoading = false,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -419,7 +426,20 @@ class _PlayPauseButton extends StatelessWidget {
             shape: BoxShape.circle,
             color: Colors.black.withValues(alpha: 0.3),
           ),
-          child: Icon(icon, color: Colors.white, size: 48),
+          child: showLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: Colors.white,
+                      backgroundColor: Colors.white24,
+                    ),
+                  ),
+                )
+              : Icon(icon, color: Colors.white, size: 48),
         ),
       ),
     );

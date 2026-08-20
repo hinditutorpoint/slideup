@@ -129,12 +129,6 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
   /// Works for any source (media files, playlists, network URLs).
   Future<void> _addCurrentToRecent() async {
     try {
-      final enabled = Hive.box('settings').get(
-        'recentHistoryEnabled',
-        defaultValue: true,
-      ) as bool;
-      if (!enabled) return;
-
       final url = state.currentUrl;
       if (url.isEmpty) return;
 
@@ -159,6 +153,19 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
             ? state.position.inMilliseconds
             : null,
       );
+
+      // Always record position/access (independent of Recent History setting)
+      // so "Ask to Resume" keeps working even when history is disabled.
+      await ref.read(mediaProvider.notifier).recordPlayback(
+        file,
+        position: state.position,
+      );
+
+      final enabled = Hive.box('settings').get(
+        'recentHistoryEnabled',
+        defaultValue: true,
+      ) as bool;
+      if (!enabled) return;
 
       await ref.read(mediaProvider.notifier).addToRecent(file);
     } catch (e) {
@@ -233,6 +240,27 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
       if (fileId != null && position.inSeconds > 0) {
         await SettingsStorageService.savePlaybackPosition(fileId, position);
         debugPrint('✅ Position saved: ${position.inSeconds}s');
+      }
+
+      // Mirror the position into the always-on playback record too, so resume
+      // survives when the "Recent History" setting is off.
+      final url = state.currentUrl;
+      if (url.isNotEmpty) {
+        final current = currentMedia;
+        final file = MediaFile(
+          id: fileId ?? url,
+          name: current?.title ?? state.currentTitle,
+          path: url,
+          type: MediaType.video,
+          size: current?.metadata?['size'] as int? ?? 0,
+          dateModified: DateTime.now(),
+          duration: current?.duration?.inMilliseconds,
+          lastPosition: position.inMilliseconds,
+        );
+        await ref.read(mediaProvider.notifier).recordPlayback(
+          file,
+          position: position,
+        );
       }
     } catch (e) {
       debugPrint('❌ Save position error: $e');
@@ -405,6 +433,51 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
     } catch (e) {
       debugPrint('❌ Seek relative error: $e');
     }
+  }
+
+  /// Resume from the saved position shown in the in-player prompt.
+  Future<void> resumeFromPrompt() async {
+    if (isDisposed) return;
+    final position = state.resumePosition;
+    state = state.copyWith(clearResumePrompt: true);
+    if (position == null) return;
+    try {
+      await service.resumeFromPosition(position);
+    } catch (e) {
+      debugPrint('❌ Resume from prompt error: $e');
+    }
+  }
+
+  /// Cancel the resume prompt and forget the saved position.
+  Future<void> cancelResumePrompt() async {
+    if (isDisposed) return;
+    final fileId = state.resumeFileId;
+    state = state.copyWith(clearResumePrompt: true);
+    if (fileId == null) return;
+    try {
+      await service.clearResumePosition(fileId);
+    } catch (e) {
+      debugPrint('❌ Cancel resume prompt error: $e');
+    }
+  }
+
+  /// Skip the intro from the in-player prompt (seeks to the lead time).
+  Future<void> skipIntroFromPrompt() async {
+    if (isDisposed) return;
+    final position = state.skipIntroPosition;
+    state = state.copyWith(clearSkipIntroPrompt: true);
+    if (position == null) return;
+    try {
+      await service.skipIntroSeek(position);
+    } catch (e) {
+      debugPrint('❌ Skip intro error: $e');
+    }
+  }
+
+  /// Cancel the skip-intro prompt without seeking.
+  Future<void> cancelSkipIntroPrompt() async {
+    if (isDisposed) return;
+    state = state.copyWith(clearSkipIntroPrompt: true);
   }
 
   // ═══════════════════════════════════════════════════════

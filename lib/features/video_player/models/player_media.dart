@@ -12,6 +12,9 @@ class PlayerMedia {
   final String? artist;
   final String? album;
   final Map<String, dynamic>? metadata;
+  final int? width;
+  final int? height;
+  final int? lastPosition;
 
   const PlayerMedia({
     required this.id,
@@ -22,6 +25,9 @@ class PlayerMedia {
     this.artist,
     this.album,
     this.metadata,
+    this.width,
+    this.height,
+    this.lastPosition,
   });
 
   /// Create from MediaFile
@@ -36,6 +42,9 @@ class PlayerMedia {
           : null,
       artist: file.artist,
       album: file.album,
+      width: file.width,
+      height: file.height,
+      lastPosition: file.lastPosition,
       metadata: {
         'size': file.size,
         'mimeType': file.mimeType,
@@ -103,6 +112,9 @@ class PlayerMedia {
     String? artist,
     String? album,
     Map<String, dynamic>? metadata,
+    int? width,
+    int? height,
+    int? lastPosition,
   }) {
     return PlayerMedia(
       id: id ?? this.id,
@@ -113,7 +125,40 @@ class PlayerMedia {
       artist: artist ?? this.artist,
       album: album ?? this.album,
       metadata: metadata ?? this.metadata,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      lastPosition: lastPosition ?? this.lastPosition,
     );
+  }
+
+  /// Resolution text like "1920x1080" when width & height are known.
+  String? get resolutionText {
+    if (width == null || height == null) return null;
+    return '${width}x$height';
+  }
+
+  /// File size in bytes when available (stored in metadata for MediaFiles).
+  int? get fileSize => metadata?['size'] as int?;
+
+  /// Human-readable file size, e.g. "25.4 MB".
+  String? get fileSizeText {
+    final size = fileSize;
+    if (size == null || size <= 0) return null;
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) {
+      return '${(size / 1024).toStringAsFixed(1)} KB';
+    }
+    if (size < 1024 * 1024 * 1024) {
+      return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  /// Last played date stored in metadata as an ISO string, if any.
+  DateTime? get lastPlayedAt {
+    final raw = metadata?['lastPlayed'] as String?;
+    if (raw == null) return null;
+    return DateTime.tryParse(raw);
   }
 
   /// Get formatted duration

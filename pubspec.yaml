@@ -93,8 +93,8 @@ dependencies:
   flutter_foreground_task: ^9.2.2
   saf: ^2.1.0
 
-  # yt-dlp based video/audio extraction (Android only, GPL-3.0)
-  extractor: ^1.0.0
+  # App info
+  package_info_plus: ^9.0.0
 
 dev_dependencies:
   flutter_test:

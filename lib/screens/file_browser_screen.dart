@@ -20,6 +20,7 @@ import 'image_viewer_screen.dart';
 import '../features/video_player/video_player_launcher.dart';
 import '../features/video_editor/video_editor_screen.dart';
 import '../helpers/audio_playback_helper.dart';
+import '../helpers/m3u_playlist_helper.dart';
 import '../services/security_service.dart';
 import 'auth_screen.dart';
 import 'package:open_filex/open_filex.dart';
@@ -1507,6 +1508,23 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
           MaterialPageRoute(
             builder: (context) => TextViewerWidget(filePath: targetFile.path),
           ),
+        );
+      }
+      // M3U playlists (music playlist vs IPTV auto-detected)
+      else if ([
+        '.m3u',
+        '.m3u8',
+        '.m3u_plus',
+        '.m3u8_plus',
+      ].contains(extension)) {
+        final content = await targetFile.readAsString();
+        if (!mounted) return;
+        await openLocalM3uPlaylist(
+          context: context,
+          ref: ref,
+          file: targetFile,
+          content: content,
+          onSnack: _showSnackBar,
         );
       }
       // Other files - try to open with external app

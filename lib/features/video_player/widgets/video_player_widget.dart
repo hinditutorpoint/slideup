@@ -18,6 +18,8 @@ import 'seek_indicator_widget.dart';
 import 'speed_indicator_widget.dart';
 import 'thumbnail_preview_widget.dart';
 import 'network_clock_overlay_widget.dart';
+import 'resume_prompt_overlay_widget.dart';
+import 'skip_intro_prompt_overlay_widget.dart';
 
 class VideoPlayerWidget extends ConsumerStatefulWidget {
   final PlayerPlaylist playlist;
@@ -334,6 +336,20 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
                 onBack: _handleBack,
                 showPiPButton: widget.showPiPButton,
               ),
+
+            // Resume-from-last-position prompt: translucent dialog when the
+            // controls are visible, top-left banner when they are hidden.
+            if (isReady &&
+                playerState.showResumePrompt &&
+                !pipState.isNativeActive)
+              ResumePromptOverlay(playerState: playerState),
+
+            // Skip-intro prompt: translucent dialog when the controls are
+            // visible, top-left banner when they are hidden.
+            if (isReady &&
+                playerState.showSkipIntroPrompt &&
+                !pipState.isNativeActive)
+              SkipIntroPromptOverlay(playerState: playerState),
 
             // Layer 6: Locked overlay
             if (playerState.isLocked) const LockedOverlayWidget(),

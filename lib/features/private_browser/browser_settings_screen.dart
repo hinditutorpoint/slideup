@@ -20,6 +20,7 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   late TrackerBlockMode _trackerMode;
   late bool _javaScriptEnabled;
   late bool _blockPopups;
+  late bool _pullToRefresh;
   int _adHostCount = 0;
   DateTime? _adLastUpdated;
   bool _adUpdating = false;
@@ -41,6 +42,7 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
       _trackerMode = BrowserSettings.instance.trackerMode;
       _javaScriptEnabled = BrowserSettings.instance.javaScriptEnabled;
       _blockPopups = BrowserSettings.instance.blockPopups;
+      _pullToRefresh = BrowserSettings.instance.pullToRefresh;
       _adHostCount = localHosts.length;
       _adLastUpdated = lastUpdated;
       _loaded = true;
@@ -100,6 +102,11 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
   void _setBlockPopups(bool value) {
     setState(() => _blockPopups = value);
     BrowserSettings.instance.setBlockPopups(value);
+  }
+
+  void _setPullToRefresh(bool value) {
+    setState(() => _pullToRefresh = value);
+    BrowserSettings.instance.setPullToRefresh(value);
   }
 
   Future<void> _checkAdGuardUpdate() async {
@@ -326,6 +333,16 @@ class _BrowserSettingsScreenState extends State<BrowserSettingsScreen> {
                   value: _blockPopups,
                   activeColor: Colors.teal,
                   onChanged: _setBlockPopups,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.sync_alt_rounded, size: 22),
+                  title: const Text('Swipe to refresh'),
+                  subtitle: const Text(
+                    'Pull down on a page to reload it',
+                  ),
+                  value: _pullToRefresh,
+                  activeColor: Colors.teal,
+                  onChanged: _setPullToRefresh,
                 ),
                 const Divider(height: 24),
                 _buildAdGuardSection(theme),

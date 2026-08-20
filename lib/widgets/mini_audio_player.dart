@@ -30,6 +30,7 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
   static const double playerWidth = 340;
   static const double playerHeight = 80;
   static const double closeZoneHeight = 120;
+  static const double tinySize = 64;
 
   @override
   void initState() {
@@ -107,11 +108,12 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
   Widget build(BuildContext context) {
     final audioHandler = ref.watch(audioHandlerProvider);
     final screenSize = MediaQuery.of(context).size;
+    final isTiny = ref.watch(miniPlayerProvider).isTiny;
 
     return Stack(
       children: [
         if (_isDragging) _buildCloseZone(screenSize),
-        _buildMiniPlayer(audioHandler, screenSize),
+        _buildMiniPlayer(audioHandler, screenSize, isTiny),
       ],
     );
   }
@@ -166,7 +168,10 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
     );
   }
 
-  Widget _buildMiniPlayer(dynamic audioHandler, Size screenSize) {
+  Widget _buildMiniPlayer(dynamic audioHandler, Size screenSize, bool isTiny) {
+    final width = isTiny ? tinySize : playerWidth;
+    final height = isTiny ? tinySize : playerHeight;
+
     return AnimatedPositioned(
       duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
       curve: Curves.easeOut,
@@ -179,16 +184,19 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           dragStartBehavior: DragStartBehavior.down,
+          onTap: isTiny
+              ? () => ref.read(miniPlayerProvider.notifier).restoreMini()
+              : null,
           onPanStart: (_) {
             setState(() => _isDragging = true);
           },
           onPanUpdate: (details) {
             setState(() {
               final newX = (_position.dx + details.delta.dx)
-                  .clamp(0, screenSize.width - playerWidth)
+                  .clamp(0, screenSize.width - width)
                   .toDouble();
               final newY = (_position.dy + details.delta.dy)
-                  .clamp(0, screenSize.height - playerHeight)
+                  .clamp(0, screenSize.height - height)
                   .toDouble();
 
               _position = Offset(newX, newY);
@@ -206,9 +214,9 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
                 // Snap to horizontal edges if close
                 if (_position.dx < 20) {
                   _position = Offset(20, _position.dy);
-                } else if (_position.dx > screenSize.width - playerWidth - 20) {
+                } else if (_position.dx > screenSize.width - width - 20) {
                   _position = Offset(
-                    screenSize.width - playerWidth - 20,
+                    screenSize.width - width - 20,
                     _position.dy,
                   );
                 }
@@ -225,13 +233,13 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
               duration: const Duration(milliseconds: 200),
               child: Material(
                 elevation: _isDragging ? 12 : 8,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(isTiny ? 32 : 16),
                 clipBehavior: Clip.antiAlias,
                 child: Container(
-                  width: playerWidth,
-                  height: playerHeight,
+                  width: width,
+                  height: height,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(isTiny ? 32 : 16),
                     gradient: LinearGradient(
                       colors: [
                         _isOverCloseZone
@@ -250,68 +258,139 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer>
                         ? Border.all(color: Colors.red, width: 2)
                         : null,
                   ),
-                  child: Stack(
-                    children: [
-                      // Progress bar
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: _buildProgressIndicator(audioHandler),
-                      ),
-
-                      // Main content
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Row(
+                  child: isTiny
+                      ? _buildTinyPlayer(audioHandler)
+                      : Stack(
                           children: [
-                            // Left area: tap to open full player
-                            Expanded(
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent,
-                                onTap: _openFullPlayer,
-                                child: Row(
-                                  children: [
-                                    _buildAlbumArt(audioHandler),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: _buildTrackInfo(audioHandler),
+                            // Progress bar
+                            Positioned(
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              child: _buildProgressIndicator(audioHandler),
+                            ),
+
+                            // Main content
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Row(
+                                children: [
+                                  // Left area: tap to open full player
+                                  Expanded(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.translucent,
+                                      onTap: _openFullPlayer,
+                                      child: Row(
+                                        children: [
+                                          _buildAlbumArt(audioHandler),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: _buildTrackInfo(audioHandler),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ],
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Shrink to tiny mode
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.minimize_rounded,
+                                      color: Colors.white70,
+                                      size: 20,
+                                    ),
+                                    tooltip: 'Tiny player',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: () => ref
+                                        .read(miniPlayerProvider.notifier)
+                                        .setTiny(true),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Right: playback controls
+                                  _buildControls(audioHandler),
+                                ],
+                              ),
+                            ),
+
+                            // Drag indicator
+                            Positioned(
+                              top: 6,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: Container(
+                                  width: 40,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            // Right: playback controls
-                            _buildControls(audioHandler),
                           ],
                         ),
-                      ),
-
-                      // Drag indicator
-                      Positioned(
-                        top: 6,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: Container(
-                            width: 40,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.4),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTinyPlayer(dynamic audioHandler) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Rounded progress ring
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: StreamBuilder<Duration>(
+            stream: audioHandler.positionStream,
+            builder: (context, posSnap) {
+              return StreamBuilder<Duration?>(
+                stream: audioHandler.durationStream,
+                builder: (context, durSnap) {
+                  final position = posSnap.data ?? Duration.zero;
+                  final duration = durSnap.data ?? Duration.zero;
+                  final progress = duration.inMilliseconds > 0
+                      ? position.inMilliseconds / duration.inMilliseconds
+                      : 0.0;
+                  return CircularProgressIndicator(
+                    value: progress.clamp(0.0, 1.0),
+                    strokeWidth: 3,
+                    strokeCap: StrokeCap.round,
+                    backgroundColor: Colors.white24,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        // Center play/pause
+        Center(
+          child: StreamBuilder<PlaybackState>(
+            stream: audioHandler.playbackState,
+            builder: (context, snapshot) {
+              final playing = snapshot.data?.playing ?? false;
+              return IconButton(
+                icon: Icon(
+                  playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 30,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () => AudioPlaybackHelper.togglePlayPause(ref),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

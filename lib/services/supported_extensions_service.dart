@@ -60,6 +60,10 @@ class SupportedExtensionsService {
           '.3gp',
           '.mpeg',
           '.m4v',
+          '.m3u',
+          '.m3u8',
+          '.m3u_plus',
+          '.m3u8_plus',
         ],
         ExtensionCategory.audio: [
           '.mp3',

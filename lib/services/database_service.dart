@@ -4,6 +4,7 @@ import 'package:path/path.dart';
 import '../models/media_file.dart';
 import '../models/playlist.dart';
 import '../models/recent_file.dart';
+import '../models/playback_record.dart';
 import '../models/url_history.dart';
 import 'package:flutter/foundation.dart';
 
@@ -32,7 +33,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       singleInstance: true,
@@ -135,6 +136,8 @@ class DatabaseService {
       )
     ''');
 
+    await _createPlaybackRecordsTable(db);
+
     // Create indexes
     await db.execute('CREATE INDEX idx_media_type ON media_files(type)');
     await db.execute('CREATE INDEX idx_media_path ON media_files(path)');
@@ -147,6 +150,38 @@ class DatabaseService {
 
     await _createConverterTables(db);
     await _createIptvTables(db);
+  }
+
+  /// Always-on playback/access records (version 7). Unlike recent_files these
+  /// are written even when the Recent History setting is off, so resume keeps
+  /// working. Keyed by a content fingerprint so a rename/move still matches.
+  Future<void> _createPlaybackRecordsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS playback_records (
+        id TEXT PRIMARY KEY,
+        mediaKey TEXT NOT NULL,
+        mediaId TEXT,
+        path TEXT NOT NULL,
+        title TEXT,
+        mediaType INTEGER NOT NULL,
+        lastPlayedAt TEXT NOT NULL,
+        lastPosition INTEGER,
+        duration INTEGER,
+        playCount INTEGER NOT NULL,
+        fileHash TEXT,
+        fileSize INTEGER,
+        dateModified TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_playback_key ON playback_records(mediaKey)
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_playback_hash ON playback_records(fileHash)
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_playback_played ON playback_records(lastPlayedAt DESC)
+    ''');
   }
 
   /// IPTV feature tables (version 5).
@@ -283,6 +318,9 @@ class DatabaseService {
           'ALTER TABLE iptv_playlists ADD COLUMN language TEXT',
         );
       }
+    }
+    if (oldVersion < 7) {
+      await _createPlaybackRecordsTable(db);
     }
   }
 
@@ -567,6 +605,97 @@ class DatabaseService {
   Future<void> clearRecentFiles() async {
     final db = await database;
     await db.delete('recent_files');
+  }
+
+  // Playback Records Operations (always-on, independent of Recent History)
+  Future<void> upsertPlaybackRecord(PlaybackRecord record) async {
+    final db = await database;
+    final existing = await db.query(
+      'playback_records',
+      where: 'mediaKey = ?',
+      whereArgs: [record.mediaKey],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      final current = PlaybackRecord.fromJson(existing.first);
+      final merged = current.copyWith(
+        mediaId: record.mediaId ?? current.mediaId,
+        path: record.path,
+        title: record.title ?? current.title,
+        mediaType: record.mediaType,
+        lastPlayedAt: record.lastPlayedAt,
+        lastPosition: record.lastPosition ?? current.lastPosition,
+        duration: record.duration ?? current.duration,
+        playCount: current.playCount + 1,
+        fileHash: record.fileHash ?? current.fileHash,
+        fileSize: record.fileSize ?? current.fileSize,
+        dateModified: record.dateModified ?? current.dateModified,
+      );
+      await db.update(
+        'playback_records',
+        merged.toJson(),
+        where: 'id = ?',
+        whereArgs: [merged.id],
+      );
+    } else {
+      await db.insert(
+        'playback_records',
+        record.toJson(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  }
+
+  Future<PlaybackRecord?> getPlaybackRecordByKey(String mediaKey) async {
+    final db = await database;
+    final result = await db.query(
+      'playback_records',
+      where: 'mediaKey = ?',
+      whereArgs: [mediaKey],
+      limit: 1,
+    );
+    if (result.isEmpty) return null;
+    return PlaybackRecord.fromJson(result.first);
+  }
+
+  Future<PlaybackRecord?> getPlaybackRecordByPath(String path) async {
+    final db = await database;
+    final result = await db.query(
+      'playback_records',
+      where: 'path = ?',
+      whereArgs: [path],
+      limit: 1,
+    );
+    if (result.isEmpty) return null;
+    return PlaybackRecord.fromJson(result.first);
+  }
+
+  Future<PlaybackRecord?> getPlaybackRecordByHash(String fileHash) async {
+    final db = await database;
+    final result = await db.query(
+      'playback_records',
+      where: 'fileHash = ?',
+      whereArgs: [fileHash],
+      limit: 1,
+    );
+    if (result.isEmpty) return null;
+    return PlaybackRecord.fromJson(result.first);
+  }
+
+  Future<List<PlaybackRecord>> getAllPlaybackRecords({int limit = 100}) async {
+    final db = await database;
+    final result = await db.query(
+      'playback_records',
+      orderBy: 'lastPlayedAt DESC',
+      limit: limit,
+    );
+    return result.map((json) => PlaybackRecord.fromJson(json)).toList();
+  }
+
+  Future<void> clearPlaybackRecords() async {
+    final db = await database;
+    await db.delete('playback_records');
   }
 
   // URL History Methods

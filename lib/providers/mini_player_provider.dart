@@ -8,6 +8,7 @@ import '../services/audio_service.dart';
 class MiniPlayerState {
   final bool isVisible;
   final bool isExpanded;
+  final bool isTiny;
   final MediaFile? currentMedia;
   final List<MediaFile> playlist;
   final Offset position;
@@ -16,6 +17,7 @@ class MiniPlayerState {
   MiniPlayerState({
     this.isVisible = false,
     this.isExpanded = false,
+    this.isTiny = false,
     this.currentMedia,
     this.playlist = const [],
     this.position = const Offset(20, 100),
@@ -25,6 +27,7 @@ class MiniPlayerState {
   MiniPlayerState copyWith({
     bool? isVisible,
     bool? isExpanded,
+    bool? isTiny,
     MediaFile? currentMedia,
     List<MediaFile>? playlist,
     Offset? position,
@@ -33,6 +36,7 @@ class MiniPlayerState {
     return MiniPlayerState(
       isVisible: isVisible ?? this.isVisible,
       isExpanded: isExpanded ?? this.isExpanded,
+      isTiny: isTiny ?? this.isTiny,
       currentMedia: currentMedia ?? this.currentMedia,
       playlist: playlist ?? this.playlist,
       position: position ?? this.position,
@@ -82,6 +86,18 @@ class MiniPlayerNotifier extends Notifier<MiniPlayerState> {
           debugPrint('🎵 Playback completed, hiding mini player');
           Future.delayed(const Duration(milliseconds: 500), () {
             hide();
+          });
+        }
+      } else if (playbackState.processingState ==
+              AudioProcessingState.ready &&
+          !playbackState.playing) {
+        // Paused — don't keep the mini player visible
+        if (state.isVisible && state.isAppInForeground) {
+          debugPrint('🎵 Paused, hiding mini player');
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (state.isVisible) {
+              hide();
+            }
           });
         }
       }
@@ -140,6 +156,7 @@ class MiniPlayerNotifier extends Notifier<MiniPlayerState> {
       currentMedia: media,
       playlist: playlist,
       isExpanded: false,
+      isTiny: false,
     );
     debugPrint(
       '🎵 Mini player state updated - isVisible: ${state.isVisible}, currentMedia: ${state.currentMedia?.name}',
@@ -148,8 +165,35 @@ class MiniPlayerNotifier extends Notifier<MiniPlayerState> {
 
   void hide() {
     debugPrint('🎵 MiniPlayerNotifier.hide() called');
-    state = state.copyWith(isVisible: false, isExpanded: false);
+    state = state.copyWith(
+      isVisible: false,
+      isExpanded: false,
+      isTiny: false,
+    );
     debugPrint('🎵 Mini player hidden - isVisible: ${state.isVisible}');
+  }
+
+  /// Shrink the mini player into the tiny circular mode (play/pause + ring).
+  void setTiny(bool value) {
+    debugPrint('🎵 MiniPlayerNotifier.setTiny() called: $value');
+    if (state.isVisible && !state.isExpanded) {
+      state = state.copyWith(isTiny: value);
+    }
+  }
+
+  /// Restore the tiny player back to the full mini player bar.
+  void restoreMini() {
+    debugPrint('🎵 MiniPlayerNotifier.restoreMini() called');
+    if (state.isVisible) {
+      state = state.copyWith(isTiny: false);
+    }
+  }
+
+  void toggleTiny() {
+    debugPrint('🎵 MiniPlayerNotifier.toggleTiny() called');
+    if (state.isVisible && !state.isExpanded) {
+      state = state.copyWith(isTiny: !state.isTiny);
+    }
   }
 
   void expand() {

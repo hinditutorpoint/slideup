@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +16,9 @@ import 'browser_downloads_screen.dart';
 import 'browser_settings.dart';
 import 'browser_settings_screen.dart';
 import 'media_intercept_helper.dart';
+import 'media_scan_service.dart';
+import 'models/scanned_media.dart' hide MediaType;
+import 'widgets/media_list_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PLATFORM LIMITATIONS (read before modifying):
@@ -78,18 +80,6 @@ class _HistoryEntry {
   final String url;
   String? title;
   _HistoryEntry(this.url);
-}
-
-/// A media element (video/audio) found on the current page by the scanner.
-class _ScannedMedia {
-  final String url;
-  final String title;
-  final bool isVideo;
-  _ScannedMedia({
-    required this.url,
-    required this.title,
-    required this.isVideo,
-  });
 }
 
 // ─── Tracker / ad-network hostname lists ─────────────────────────────────────
@@ -253,8 +243,9 @@ const _kNsfwAndPopunderHosts = <String>{
   'minr.pw',
 };
 
-final RegExp _kAdHostnamePattern =
-    RegExp(r'^[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)+$');
+final RegExp _kAdHostnamePattern = RegExp(
+  r'^[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)+$',
+);
 final RegExp _kAdSuffixPattern = RegExp(r'^\.[a-z0-9\-]+$');
 
 /// Hostname-only entries extracted from [AdDomains.blockedDomains]
@@ -444,98 +435,10 @@ const _kAdBlockUserScript = '''
 })();
 ''';
 
-/// Script injected at document end that detects media elements (video/audio
-/// sources, HLS/DASH manifests, and direct media file links) in real time.
-///
-/// Reports the found media to Flutter via the `mediaDetected` JavaScript
-/// handler. Uses a MutationObserver so media added after page load (SPA /
-/// dynamic players) is also captured.
-const _kMediaDetectorUserScript = '''
-(function() {
-  'use strict';
-  if (window.__slideupMediaDetector) return;
-  window.__slideupMediaDetector = true;
-
-  function report() {
-    var found = [];
-    var seen = {};
-    function push(abs, type, title) {
-      if (!abs) return;
-      if (/^(blob:|data:)/.test(abs)) return;
-      if (seen[abs]) return;
-      seen[abs] = true;
-      found.push({type: type, url: abs, title: title || document.title || ''});
-    }
-    function collect(node, type) {
-      var title = node.getAttribute('title') || '';
-      if (node.currentSrc) push(new URL(node.currentSrc, location.href).href, type, title);
-      var src = node.getAttribute('src');
-      if (src) push(new URL(src, location.href).href, type, title);
-      var sources = node.querySelectorAll('source');
-      for (var i = 0; i < sources.length; i++) {
-        var s = sources[i];
-        var ssrc = s.getAttribute('src');
-        if (ssrc) push(new URL(ssrc, location.href).href, type, s.getAttribute('title') || title);
-      }
-    }
-    var videos = document.querySelectorAll('video');
-    for (var v = 0; v < videos.length; v++) collect(videos[v], 'video');
-    var audios = document.querySelectorAll('audio');
-    for (var a = 0; a < audios.length; a++) collect(audios[a], 'audio');
-    // HLS / DASH manifests
-    var links = document.querySelectorAll('link[rel="alternate"]');
-    for (var l = 0; l < links.length; l++) {
-      var href = links[l].getAttribute('href');
-      if (!href) continue;
-      var lt = (links[l].getAttribute('type') || '').toLowerCase();
-      if (lt.indexOf('hls') !== -1 || lt.indexOf('mpegurl') !== -1 || lt.indexOf('dash') !== -1) {
-        push(new URL(href, location.href).href, 'video', document.title);
-      }
-    }
-    // Direct media file links (IDM-style detection)
-    var anchors = document.querySelectorAll('a[href]');
-    for (var i2 = 0; i2 < anchors.length; i2++) {
-      var h = anchors[i2].href;
-      if (!h) continue;
-      var lower = h.split('#')[0].split('?')[0].toLowerCase();
-      if (!/\\.(mp4|m4v|mkv|webm|avi|mov|flv|ts|m3u8|mpd|mp3|wav|flac|aac|m4a|ogg|opus|pdf|epub|doc|docx|txt|rtf|fb2|mobi)\$/.test(lower)) continue;
-      var isAudio = /\\.(mp3|wav|flac|aac|m4a|ogg|opus|wma)\$/.test(lower);
-      push(h, isAudio ? 'audio' : 'video', anchors[i2].getAttribute('title') || anchors[i2].textContent || '');
-    }
-    if (found.length > 0 && window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
-      window.flutter_inappwebview.callHandler('mediaDetected', found);
-    }
-  }
-
-  function start() {
-    report();
-    if (window.__slideupMediaObserver) return;
-    var timer = null;
-    window.__slideupMediaObserver = new MutationObserver(function() {
-      if (timer) return;
-      timer = setTimeout(function() { timer = null; report(); }, 800);
-    });
-    if (document.body) {
-      window.__slideupMediaObserver.observe(document.body, { childList: true, subtree: true });
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
-  }
-  window.addEventListener('load', function() {
-    setTimeout(report, 600);
-    setTimeout(report, 2000);
-  });
-})();
-''';
-
 // ─── State ────────────────────────────────────────────────────────────────────
 
 class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   // Controllers / keys
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocus = FocusNode();
@@ -592,9 +495,24 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   // UI state
   bool _incognito = true;
 
-  /// Media detected in real time on the current page by the injected
-  /// detector script. Cleared on each navigation; drives the download FAB.
-  final List<_ScannedMedia> _detectedMedia = [];
+  /// Live media detected on the current page by [MediaScanService] (drives
+  /// the download FAB). Cleared on each navigation.
+  List<ScannedMedia> get _detectedMedia => MediaScanService.instance.items;
+  StreamSubscription<List<ScannedMedia>>? _mediaSub;
+
+  /// True while the media scanner is actively working (pulses the lightning
+  /// bolt in the URL bar). Auto-settles after a quiet window.
+  bool _isScanning = false;
+  Timer? _scanIdleTimer;
+
+  /// Pulsing animation for the scanning lightning-bolt indicator.
+  late final AnimationController _scanPulse;
+  late final Animation<double> _scanPulseAnim;
+
+  /// Breathing rounded-border ring around the URL field while the page loads.
+  late final AnimationController _loadRing;
+  late final Animation<Color?> _loadRingColor;
+  late final Animation<double> _loadRingWidth;
 
   /// True once [_cleanupAndPop] has started, preventing duplicate calls.
   bool _exitInProgress = false;
@@ -617,6 +535,28 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
 
     _loadSettings();
     unawaited(_loadAdBlockHosts());
+    _scanPulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    );
+    _scanPulseAnim = Tween<double>(begin: 0.75, end: 1.25).animate(
+      CurvedAnimation(parent: _scanPulse, curve: Curves.easeInOut),
+    );
+    _loadRing = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _loadRingColor = ColorTween(
+      begin: Colors.teal.withValues(alpha: 0.0),
+      end: Colors.teal,
+    ).animate(CurvedAnimation(parent: _loadRing, curve: Curves.easeInOut));
+    _loadRingWidth = Tween<double>(begin: 1.0, end: 2.4).animate(
+      CurvedAnimation(parent: _loadRing, curve: Curves.easeInOut),
+    );
+    _mediaSub = MediaScanService.instance.mediaStream.listen((_) {
+      if (mounted) setState(() {});
+      _kickScanIndicator();
+    });
   }
 
   @override
@@ -626,6 +566,11 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     _urlFocus.dispose();
     _homeFocus.dispose();
     _pullToRefreshController?.dispose();
+    _mediaSub?.cancel();
+    _scanIdleTimer?.cancel();
+    _scanPulse.dispose();
+    _loadRing.dispose();
+    MediaScanService.instance.detach();
     // No async work here. In incognito mode, the platform WebView handles
     // session cleanup when the widget is destroyed by the Flutter engine.
     // Explicit user-triggered cleanup lives in _clearSessionNow() and
@@ -662,6 +607,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _blockPopups = BrowserSettings.instance.blockPopups;
       _settingsReady = true;
     });
+    unawaited(
+      _pullToRefreshController
+          ?.setEnabled(BrowserSettings.instance.pullToRefresh),
+    );
   }
 
   /// Applies updated settings AND reloads. Required when content-blocker
@@ -714,9 +663,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _canGoForward = false;
       _isLoading = false;
       _webViewKey = UniqueKey(); // ← triggers WebView recreation
-      _detectedMedia.clear();
+      MediaScanService.instance.clear();
       _initPullToRefreshController();
     });
+    _stopLoadRing();
 
     _showSnack(
       _incognito
@@ -860,7 +810,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
     setState(() {
       _history.clear();
       _controller = null;
-      _detectedMedia.clear();
+      MediaScanService.instance.clear();
     });
 
     if (mounted) Navigator.of(context).pop();
@@ -894,7 +844,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
       _canGoForward = false;
       _isLoading = false;
       _loadingProgress = 0;
-      _detectedMedia.clear();
+      MediaScanService.instance.clear();
     });
 
     _navigate('about:blank');
@@ -1130,141 +1080,65 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
 
   // ── Scan Media ────────────────────────────────────────────────────────────────
 
-  /// Handles media pushed in real time from the injected
-  /// [_kMediaDetectorUserScript] via the `mediaDetected` JS handler. Merges the
-  /// results into [_detectedMedia] (deduped by URL) and shows the FAB.
-  void _onMediaDetected(List<dynamic> args) {
-    if (!mounted || args.isEmpty) return;
-
-    final newMedia = <_ScannedMedia>[];
-    final raw = args.first;
-    if (raw is List) {
-      for (final item in raw) {
-        if (item is Map) {
-          newMedia.add(
-            _ScannedMedia(
-              url: (item['url'] ?? '').toString(),
-              title: (item['title'] ?? '').toString(),
-              isVideo: (item['type'] ?? '').toString() == 'video',
-            ),
-          );
-        }
-      }
-    } else if (raw is String && raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is List) {
-          for (final item in decoded) {
-            if (item is Map) {
-              newMedia.add(
-                _ScannedMedia(
-                  url: (item['url'] ?? '').toString(),
-                  title: (item['title'] ?? '').toString(),
-                  isVideo: (item['type'] ?? '').toString() == 'video',
-                ),
-              );
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[PrivateBrowser] mediaDetected decode: $e');
-      }
-    }
-
-    if (newMedia.isEmpty) return;
-    setState(() {
-      final existing = {for (final m in _detectedMedia) m.url};
-      for (final m in newMedia) {
-        if (existing.add(m.url)) _detectedMedia.add(m);
-      }
+  /// Turns on the pulsing lightning-bolt indicator and keeps it alive while
+  /// scan reports keep arriving; settles to idle after [_scanIdleSettle] of
+  /// quiet.
+  void _kickScanIndicator() {
+    _scanIdleTimer?.cancel();
+    _scanIdleTimer = Timer(_scanIdleSettle, () {
+      if (mounted) _stopScanIndicator();
     });
+    if (!_isScanning) _startScanIndicator();
   }
 
-  /// Scans the current page for `<video>` / `<audio>` elements and their
-  /// source URLs, then shows a sheet with the found media.
-  ///
-  /// Uses `evaluateJavascript` to inspect the DOM. Blob/data URLs are skipped
-  /// (they are not directly playable by external players).
+  void _startScanIndicator() {
+    if (!mounted) return;
+    setState(() => _isScanning = true);
+    _scanPulse.repeat(reverse: true);
+  }
+
+  void _stopScanIndicator() {
+    _scanPulse.stop();
+    _scanPulse.reset();
+    if (!mounted) return;
+    setState(() => _isScanning = false);
+  }
+
+  /// Starts the breathing rounded-border ring while the page loads.
+  void _startLoadRing() {
+    if (_isLoading && _loadRing.isAnimating) return;
+    _loadRing.repeat(reverse: true);
+  }
+
+  void _stopLoadRing() {
+    if (_loadRing.isAnimating) {
+      _loadRing.stop();
+      _loadRing.reset();
+    }
+  }
+
+  /// How long the lightning indicator stays lit after the last scan report.
+  static const Duration _scanIdleSettle = Duration(milliseconds: 1400);
+
+  /// Scans the current page with the enhanced IDM/Vidmate-style detector
+  /// ([MediaScanService]), then shows a sheet with the found media.
   Future<void> _scanPageMedia() async {
-    final ctrl = _controller;
-    if (ctrl == null) {
+    if (_controller == null) {
       _showSnack('No active page to scan');
       return;
     }
-
-    const script = '''
-(function() {
-  const found = [];
-  const seen = new Set();
-  function collect(node, type) {
-    const sources = [];
-    if (node.currentSrc) sources.push(node.currentSrc);
-    if (node.getAttribute('src')) sources.push(node.getAttribute('src'));
-    node.querySelectorAll('source').forEach(function(s) {
-      if (s.getAttribute('src')) sources.push(s.getAttribute('src'));
-    });
-    sources.forEach(function(raw) {
-      var abs = new URL(raw, location.href).href;
-      if (/^(blob:|data:)/.test(abs)) return;
-      if (seen.has(abs)) return;
-      seen.add(abs);
-      found.push({type: type, url: abs, title: node.getAttribute('title') || document.title || ''});
-    });
-  }
-  document.querySelectorAll('video').forEach(function(v) { collect(v, 'video'); });
-  document.querySelectorAll('audio').forEach(function(a) { collect(a, 'audio'); });
-  // Also look for playlist manifests referenced in source list.
-  document.querySelectorAll('link[rel="alternate"][type*="hls"]').forEach(function(l) {
-    var abs = new URL(l.getAttribute('href'), location.href).href;
-    if (seen.has(abs)) return;
-    seen.add(abs);
-    found.push({type: 'video', url: abs, title: document.title || ''});
-  });
-  return JSON.stringify(found);
-})();
-''';
-
-    String? result;
-    try {
-      final value = await ctrl.evaluateJavascript(source: script);
-      result = value is String ? value : null;
-    } catch (e) {
-      debugPrint('[PrivateBrowser] scanMedia: $e');
-    }
-
+    final media = await MediaScanService.instance.scanNow();
     if (!mounted) return;
-
-    final media = <_ScannedMedia>[];
-    if (result != null && result.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(result);
-        if (decoded is List) {
-          for (final item in decoded) {
-            if (item is Map) {
-              media.add(
-                _ScannedMedia(
-                  url: (item['url'] ?? '').toString(),
-                  title: (item['title'] ?? '').toString(),
-                  isVideo: (item['type'] ?? '').toString() == 'video',
-                ),
-              );
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[PrivateBrowser] scanMedia decode: $e');
-      }
-    }
-
     if (media.isEmpty) {
       _showSnack('No media found on this page');
       return;
     }
-
     _showScannedMediaSheet(media);
   }
 
-  void _showScannedMediaSheet(List<_ScannedMedia> media) {
+  void _showScannedMediaSheet(List<ScannedMedia> media) {
+    // Lazily resolve HLS/DASH quality variants while the sheet is open.
+    unawaited(MediaScanService.instance.ensurePlaylists());
     final videoCount = media.where((m) => m.isVideo).length;
     final audioCount = media.length - videoCount;
     showModalBottomSheet<void>(
@@ -1280,108 +1154,69 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.video_library_outlined,
-                    size: 20,
-                    color: Colors.teal,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Media on this page',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.video_library_outlined,
+                      size: 20,
+                      color: Colors.teal,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Media on this page',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
                       ),
                     ),
-                  ),
-                  Text(
-                    '$videoCount video · $audioCount audio',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    Text(
+                      '$videoCount video · $audioCount audio',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: media.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final m = media[index];
-                  final uri = Uri.tryParse(m.url);
-                  return ListTile(
-                    dense: true,
-                    leading: Icon(
-                      m.isVideo
-                          ? Icons.videocam_outlined
-                          : Icons.audiotrack_outlined,
-                      size: 18,
-                      color: m.isVideo ? Colors.teal : Colors.orange,
-                    ),
-                    title: Text(
-                      m.title.isEmpty ? m.url : m.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      m.url,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Download',
-                          icon: const Icon(Icons.download_rounded, size: 20),
-                          color: Colors.teal,
-                          onPressed: () {
-                            Navigator.of(sheetContext).pop();
-                            _startDownloadFromBrowser(
-                              url: m.url,
-                              title: m.title.isNotEmpty ? m.title : 'Media File',
-                              mediaType: m.isVideo ? 'video' : 'audio',
-                            );
-                          },
-                        ),
-                        IconButton(
-                          tooltip: 'Play',
-                          icon: const Icon(Icons.play_circle_outline, size: 22),
-                          color: Colors.teal,
-                          onPressed: () {
-                            Navigator.of(sheetContext).pop();
-                            _playScannedMedia(m.url, isVideo: m.isVideo);
-                          },
-                        ),
-                      ],
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      if (uri != null) {
-                        _showInterceptChoiceModal(
-                          uri,
-                          customTitle: m.title.isNotEmpty ? m.title : null,
-                        );
-                      } else {
-                        _playScannedMedia(m.url, isVideo: m.isVideo);
-                      }
-                    },
-                  );
-                },
+              Flexible(
+                child: MediaListSheet(
+                  items: media,
+                  onDownload: (m, {variant}) async {
+                    Navigator.of(sheetContext).pop();
+                    await _startDownloadFromBrowser(
+                      url: variant?.url ?? m.url,
+                      title: variant != null
+                          ? '${m.title.isNotEmpty ? m.title : 'Media File'} - '
+                              '${variant.displayName}'
+                          : (m.title.isNotEmpty ? m.title : 'Media File'),
+                      mediaType: m.isVideo ? 'video' : 'audio',
+                    );
+                  },
+                  onPlay: (m) {
+                    Navigator.of(sheetContext).pop();
+                    _playScannedMedia(m.url, isVideo: m.isVideo);
+                  },
+                  onOpen: (m) {
+                    Navigator.of(sheetContext).pop();
+                    final uri = Uri.tryParse(m.url);
+                    if (uri != null) {
+                      _showInterceptChoiceModal(
+                        uri,
+                        customTitle: m.title.isNotEmpty ? m.title : null,
+                      );
+                    } else {
+                      _playScannedMedia(m.url, isVideo: m.isVideo);
+                    }
+                  },
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-          ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -1429,9 +1264,9 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
   }
 
   void _openDownloads() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const BrowserDownloadsScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const BrowserDownloadsScreen()));
   }
 
   Future<void> _playScannedMedia(String url, {bool isVideo = true}) async {
@@ -1547,23 +1382,30 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
             onPressed: _goHome,
           ),
           Expanded(
-            child: Container(
-              height: 38,
-              decoration: BoxDecoration(
-                color: dark ? const Color(0xFF2B2B2B) : const Color(0xFFF1F3F4),
-                borderRadius: BorderRadius.circular(19),
-              ),
-              child: TextField(
-                controller: _urlController,
-                focusNode: _urlFocus,
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.go,
-                onSubmitted: (_) => _submitAddress(),
-                style: const TextStyle(fontSize: 13),
-                textAlignVertical: TextAlignVertical.center,
-                decoration: InputDecoration(
-                  hintText: 'Search or enter URL',
-                  isDense: true,
+            child: AnimatedBuilder(
+              animation: _loadRing,
+              builder: (context, _) => Container(
+                height: 38,
+                decoration: BoxDecoration(
+                  color:
+                      dark ? const Color(0xFF2B2B2B) : const Color(0xFFF1F3F4),
+                  borderRadius: BorderRadius.circular(19),
+                  border: Border.all(
+                    color: _loadRingColor.value ?? Colors.transparent,
+                    width: _loadRingWidth.value,
+                  ),
+                ),
+                child: TextField(
+                  controller: _urlController,
+                  focusNode: _urlFocus,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.go,
+                  onSubmitted: (_) => _submitAddress(),
+                  style: const TextStyle(fontSize: 13),
+                  textAlignVertical: TextAlignVertical.center,
+                  decoration: InputDecoration(
+                    hintText: 'Search or enter URL',
+                    isDense: true,
                   filled: false,
                   isCollapsed: false,
                   contentPadding: const EdgeInsets.symmetric(
@@ -1595,9 +1437,35 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
               ),
             ),
           ),
+          ),
+          _buildScanIndicator(dark),
           _buildDownloadsButton(),
           _buildMoreMenu(),
         ],
+      ),
+    );
+  }
+
+  /// Pulsing lightning-bolt icon shown in the URL bar while the media scanner
+  /// is active. Hidden (zero-width) when idle.
+  Widget _buildScanIndicator(bool dark) {
+    if (!_isScanning) return const SizedBox.shrink();
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: ScaleTransition(
+        key: ValueKey('scanning'),
+        scale: _scanPulseAnim,
+        child: Tooltip(
+          message: 'Scanning for media…',
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(
+              Icons.bolt_rounded,
+              size: 20,
+              color: dark ? Colors.amberAccent : Colors.orange,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1843,19 +1711,13 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),
         UserScript(
-          source: _kMediaDetectorUserScript,
-          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_END,
+          source: MediaScanService.scriptSource,
+          injectionTime: MediaScanService.injectionTime,
         ),
       ]),
       onWebViewCreated: (controller) {
         _controller = controller;
-        controller.addJavaScriptHandler(
-          handlerName: 'mediaDetected',
-          callback: (args) {
-            _onMediaDetected(args);
-            return null;
-          },
-        );
+        MediaScanService.instance.attach(controller);
         // Consume the pending navigation, if any.
         final pending = _pendingNavigationUrl;
         if (pending != null && pending != 'about:blank') {
@@ -1875,12 +1737,13 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
         setState(() {
           _isLoading = true;
           _loadingProgress = 0;
-          _detectedMedia.clear();
+          MediaScanService.instance.clear();
           if (urlStr.isNotEmpty) {
             _currentUrl = urlStr;
             _urlController.text = urlStr;
           }
         });
+        _startLoadRing();
       },
       onProgressChanged: (controller, progress) {
         if (!mounted) return;
@@ -1896,6 +1759,10 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           _canGoBack = canBack;
           _canGoForward = canFwd;
         });
+        _stopLoadRing();
+        // Page fully loaded → run a scan pass and light up the lightning bolt.
+        _kickScanIndicator();
+        unawaited(MediaScanService.instance.scanNow());
         _pullToRefreshController?.endRefreshing();
       },
       onTitleChanged: (controller, title) {
@@ -2002,6 +1869,7 @@ class _PrivateBrowserScreenState extends ConsumerState<PrivateBrowserScreen>
           _isLoading = false;
           _loadingProgress = 0;
         });
+        _stopLoadRing();
 
         // Generic message — do not expose raw error.description to users.
         _showSnack('Page could not be loaded. Check your connection.');

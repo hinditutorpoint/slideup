@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:path/path.dart' as path;
@@ -24,6 +25,7 @@ import '../widgets/play_url_dialog.dart';
 import '../widgets/theme_selector_widget.dart';
 import '../features/video_player/video_player_launcher.dart';
 import '../helpers/audio_playback_helper.dart';
+import '../helpers/m3u_playlist_helper.dart';
 import '../models/media_file.dart';
 import '../models/disk_info.dart';
 import '../features/features_navigation_screen.dart';
@@ -1712,6 +1714,29 @@ class _MainScreenState extends ConsumerState<MainScreen>
       final firstPath = selectedFiles.first.path;
       if (firstPath == null) return;
 
+      // M3U playlists (music vs IPTV auto-detected) handled directly.
+      final firstFile = File(firstPath);
+      final firstExt = path.extension(firstFile.path).toLowerCase();
+      if (['.m3u', '.m3u8', '.m3u_plus', '.m3u8_plus'].contains(firstExt)) {
+        final content = await firstFile.readAsString();
+        if (!mounted) return;
+        await openLocalM3uPlaylist(
+          context: context,
+          ref: ref,
+          file: firstFile,
+          content: content,
+          onSnack: (message) {
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(message),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
+        );
+        return;
+      }
+
       final directory = Directory(path.dirname(firstPath));
       if (!await directory.exists()) return;
 
@@ -1862,11 +1887,22 @@ class _MainScreenState extends ConsumerState<MainScreen>
 
   void _showAboutDialog() {
     Navigator.pop(context); // Close drawer
+    unawaited(_showAboutDialogAsync());
+  }
 
+  Future<void> _showAboutDialogAsync() async {
+    var appVersion = '1.0.0';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      appVersion = '${info.version}+${info.buildNumber}';
+    } catch (e) {
+      debugPrint('Version load error: $e');
+    }
+    if (!mounted) return;
     showAboutDialog(
       context: context,
       applicationName: 'Slideup Media Player',
-      applicationVersion: '1.0.0',
+      applicationVersion: appVersion,
       applicationIcon: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(

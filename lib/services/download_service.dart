@@ -38,10 +38,6 @@ class DownloadService {
   final Map<String, DateTime> _lastNotificationUpdate = {};
   static const _notificationThrottleDuration = Duration(milliseconds: 500);
 
-  // aria2-style segmented (parallel range) download settings
-  static const int _maxSegments = 8;
-  static const int _minFileSizeForSegments = 16 * 1024 * 1024; // 16 MB
-
   DownloadService._internal({
     required DatabaseHelper dbHelper,
     required NotificationService notificationService,
@@ -183,7 +179,7 @@ class DownloadService {
         maxProgress: 100,
       );
 
-      updatedTask = await _downloadFile(
+      updatedTask = await _downloadSingle(
         task: task,
         filePath: filePath,
         cancelToken: cancelToken,
@@ -232,67 +228,7 @@ class DownloadService {
     }
   }
 
-  /// Dispatches a download to either a single-stream or an aria2-style
-  /// segmented (parallel range) downloader based on server capabilities.
-  Future<DownloadTask> _downloadFile({
-    required DownloadTask task,
-    required String filePath,
-    required CancelToken cancelToken,
-    required int downloadedBytes,
-    required int notificationId,
-    required DownloadTask updatedTask,
-  }) async {
-    int? contentLength;
-    var supportsRange = false;
-
-    try {
-      final head = await _dio.head(
-        task.url,
-        cancelToken: cancelToken,
-        options: Options(receiveTimeout: const Duration(seconds: 15)),
-      );
-      final lengthHeader = head.headers.value(Headers.contentLengthHeader);
-      contentLength = lengthHeader != null ? int.tryParse(lengthHeader) : null;
-      final rangesHeader = head.headers.value('accept-ranges');
-      supportsRange =
-          rangesHeader?.toLowerCase() == 'bytes' && contentLength != null;
-    } catch (_) {
-      // HEAD failed (some servers reject it) -> fall back to single-stream.
-      return _downloadSingle(
-        task: task,
-        filePath: filePath,
-        cancelToken: cancelToken,
-        downloadedBytes: downloadedBytes,
-        notificationId: notificationId,
-        updatedTask: updatedTask,
-      );
-    }
-
-    if (supportsRange &&
-        contentLength >= _minFileSizeForSegments &&
-        _maxSegments >= 2) {
-      return _downloadSegmented(
-        task: task,
-        filePath: filePath,
-        cancelToken: cancelToken,
-        notificationId: notificationId,
-        updatedTask: updatedTask,
-        totalSize: contentLength,
-      );
-    }
-
-    return _downloadSingle(
-      task: task,
-      filePath: filePath,
-      cancelToken: cancelToken,
-      downloadedBytes: downloadedBytes,
-      notificationId: notificationId,
-      updatedTask: updatedTask,
-    );
-  }
-
-  /// Original single-stream downloader (used when the server does not
-  /// support byte ranges or the file is too small to split).
+  /// Original single-stream downloader.
   Future<DownloadTask> _downloadSingle({
     required DownloadTask task,
     required String filePath,
@@ -333,116 +269,6 @@ class DownloadService {
           );
         }
       },
-    );
-    return updatedTask;
-  }
-
-  /// aria2-style segmented downloader: splits the file into byte-range
-  /// segments fetched in parallel (up to [_maxSegments] connections), then
-  /// merges the part files in order. Part files survive cancel/pause so the
-  /// download resumes without re-fetching completed ranges.
-  Future<DownloadTask> _downloadSegmented({
-    required DownloadTask task,
-    required String filePath,
-    required CancelToken cancelToken,
-    required int notificationId,
-    required DownloadTask updatedTask,
-    required int totalSize,
-  }) async {
-    final segmentSize = (totalSize / _maxSegments).ceil();
-    final parts = <({int start, int end, String path})>[];
-    var cursor = 0;
-    while (cursor < totalSize) {
-      final end = cursor + segmentSize - 1;
-      parts.add((
-        start: cursor,
-        end: end >= totalSize ? totalSize - 1 : end,
-        path: '$filePath.part${parts.length}',
-      ));
-      cursor = end + 1;
-    }
-
-    updatedTask = updatedTask.copyWith(totalBytes: totalSize);
-    var totalReceived = 0;
-
-    Future<void> downloadPart(int start, int end, String path) async {
-      final partFile = File(path);
-      var partDone = 0;
-      if (await partFile.exists()) {
-        partDone = await partFile.length();
-        totalReceived += partDone;
-      }
-      if (partDone >= end - start + 1) return;
-
-      final raf = await partFile.open(mode: FileMode.append);
-      try {
-        final response = await _dio.get<ResponseBody>(
-          task.url,
-          options: Options(
-            responseType: ResponseType.stream,
-            headers: {'Range': 'bytes=${start + partDone}-$end'},
-            receiveTimeout: const Duration(minutes: 30),
-            sendTimeout: const Duration(seconds: 30),
-          ),
-          cancelToken: cancelToken,
-        );
-        if (response.statusCode != 206) {
-          throw DioException(
-            requestOptions: response.requestOptions,
-            type: DioExceptionType.badResponse,
-            message:
-                'Server did not honor range request (HTTP ${response.statusCode})',
-          );
-        }
-        await response.data!.stream.listen((chunk) async {
-          await raf.writeFrom(chunk);
-          totalReceived += chunk.length;
-          updatedTask = updatedTask.copyWith(
-            downloadedBytes: totalReceived,
-            totalBytes: totalSize,
-          );
-          _notifyProgress(updatedTask);
-          _updateProgressNotification(
-            taskId: task.id,
-            notificationId: notificationId,
-            title: task.title,
-            progress: totalReceived,
-            maxProgress: totalSize,
-          );
-        }).asFuture();
-      } finally {
-        await raf.close();
-      }
-    }
-
-    try {
-      await Future.wait([
-        for (final part in parts)
-          downloadPart(part.start, part.end, part.path),
-      ]);
-    } catch (e) {
-      // Stop sibling segments on a genuine failure (not a user cancel).
-      if (!cancelToken.isCancelled) {
-        cancelToken.cancel('Segment failed: $e');
-      }
-      rethrow;
-    }
-
-    // Merge all parts into the final file in order.
-    final outRaf = await File(filePath).open(mode: FileMode.write);
-    try {
-      for (final part in parts) {
-        final partFile = File(part.path);
-        await outRaf.writeFrom(await partFile.readAsBytes());
-        await partFile.delete();
-      }
-    } finally {
-      await outRaf.close();
-    }
-
-    updatedTask = updatedTask.copyWith(
-      downloadedBytes: totalSize,
-      totalBytes: totalSize,
     );
     return updatedTask;
   }

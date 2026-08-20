@@ -81,6 +81,13 @@ class VideoPlayerState {
 
   final bool isCompleted;
 
+  final bool showResumePrompt;
+  final Duration? resumePosition;
+  final String? resumeFileId;
+
+  final bool showSkipIntroPrompt;
+  final Duration? skipIntroPosition;
+
   final VideoFit videoFit;
   final bool isFlippedHorizontally;
   final bool isFlippedVertically;
@@ -128,6 +135,13 @@ class VideoPlayerState {
     this.accumulatedSeekSeconds = 0,
     this.isSeekingHorizontally = false,
     this.isCompleted = false,
+
+    this.showResumePrompt = false,
+    this.resumePosition,
+    this.resumeFileId,
+
+    this.showSkipIntroPrompt = false,
+    this.skipIntroPosition,
 
     this.videoFit = VideoFit.contain,
     this.isFlippedHorizontally = false,
@@ -183,6 +197,15 @@ class VideoPlayerState {
     int? accumulatedSeekSeconds,
     bool? isSeekingHorizontally,
     bool? isCompleted,
+
+    bool? showResumePrompt,
+    Duration? resumePosition,
+    String? resumeFileId,
+    bool clearResumePrompt = false,
+
+    bool? showSkipIntroPrompt,
+    Duration? skipIntroPosition,
+    bool clearSkipIntroPrompt = false,
 
     VideoFit? videoFit,
     bool? isFlippedHorizontally,
@@ -246,6 +269,23 @@ class VideoPlayerState {
       isSeekingHorizontally:
           isSeekingHorizontally ?? this.isSeekingHorizontally,
       isCompleted: isCompleted ?? this.isCompleted,
+
+      showResumePrompt: clearResumePrompt
+          ? false
+          : (showResumePrompt ?? this.showResumePrompt),
+      resumePosition: clearResumePrompt
+          ? null
+          : (resumePosition ?? this.resumePosition),
+      resumeFileId: clearResumePrompt
+          ? null
+          : (resumeFileId ?? this.resumeFileId),
+
+      showSkipIntroPrompt: clearSkipIntroPrompt
+          ? false
+          : (showSkipIntroPrompt ?? this.showSkipIntroPrompt),
+      skipIntroPosition: clearSkipIntroPrompt
+          ? null
+          : (skipIntroPosition ?? this.skipIntroPosition),
 
       videoFit: videoFit ?? this.videoFit,
       isFlippedHorizontally:

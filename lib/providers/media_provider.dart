@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/media_file.dart';
@@ -9,6 +10,7 @@ import '../services/file_scanner_service.dart';
 import '../services/permission_service.dart';
 import '../services/security_service.dart';
 import 'package:uuid/uuid.dart';
+import '../models/playback_record.dart';
 
 // Media Provider
 final mediaProvider = NotifierProvider<MediaNotifier, AsyncValue<void>>(() {
@@ -71,7 +73,6 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
   }
 
   Future<void> addToRecent(MediaFile file, {Duration? lastPosition}) async {
-    if (!_isRecentHistoryEnabled()) return;
     if (file.isLocked ||
         file.path.toLowerCase().endsWith('.slock') ||
         file.id.toLowerCase().endsWith('.slock')) {
@@ -81,6 +82,12 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
     final isLockedInService =
         await SecurityService.instance.isFileLocked(file.path);
     if (isLockedInService) return;
+
+    // Keep an access/position record for "Ask to Resume Last Position"
+    // (gated by that setting, independent of Recent History).
+    await recordPlayback(file, position: lastPosition);
+
+    if (!_isRecentHistoryEnabled()) return;
 
     final recent = RecentFile(
       id: _uuid.v4(),
@@ -92,12 +99,69 @@ class MediaNotifier extends Notifier<AsyncValue<void>> {
     await _db.insertOrUpdateRecentFile(recent);
   }
 
+  /// Persist an always-on playback record keyed by a content fingerprint
+  /// (local files) or the URL (network), so the entry survives a rename/move.
+  Future<void> recordPlayback(
+    MediaFile file, {
+    Duration? position,
+  }) {
+    return recordPlaybackFor(file, position: position);
+  }
+
+  /// Static entry so non-widget services (e.g. the audio handler) can write a
+  /// playback record without a [WidgetRef]. Gated by the Ask to Resume setting.
+  static Future<void> recordPlaybackFor(
+    MediaFile file, {
+    Duration? position,
+  }) async {
+    if (!_isAskResumeEnabled()) return;
+    try {
+      final db = DatabaseService.instance;
+      final isNetwork = file.path.startsWith('http://') ||
+          file.path.startsWith('https://');
+      final fileHash = isNetwork
+          ? null
+          : await PlaybackRecord.computeFileFingerprint(File(file.path));
+      final mediaKey = isNetwork
+          ? 'url:${file.path}'
+          : 'fp:$fileHash';
+      final existing = await db.getPlaybackRecordByKey(mediaKey);
+      final record = PlaybackRecord(
+        id: existing?.id ?? const Uuid().v4(),
+        mediaKey: mediaKey,
+        mediaId: file.id,
+        path: file.path,
+        title: file.name,
+        mediaType: file.type.index,
+        lastPlayedAt: DateTime.now(),
+        lastPosition: position?.inMilliseconds ?? file.lastPosition,
+        duration: file.duration,
+        playCount: existing?.playCount ?? 1,
+        fileHash: fileHash,
+        fileSize: file.size,
+        dateModified: file.dateModified,
+      );
+      await db.upsertPlaybackRecord(record);
+    } catch (e) {
+      debugPrint('⚠️ Failed to record playback: $e');
+    }
+  }
+
   bool _isRecentHistoryEnabled() {
     try {
       final box = Hive.box('settings');
       return box.get('recentHistoryEnabled', defaultValue: true) as bool;
     } catch (e) {
       return true;
+    }
+  }
+
+  static bool _isAskResumeEnabled() {
+    try {
+      final box = Hive.box('settings');
+      return box.get('askResumeLastPosition', defaultValue: false) as bool;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -170,6 +234,32 @@ Future<MediaFile?> _resolveRecentMediaFile(
     return recent.lastPosition != null && recent.lastPosition! > 0
         ? file.copyWith(lastPosition: recent.lastPosition)
         : file;
+  }
+
+  // Rename/move detection: the stored path no longer resolves. Match the
+  // current file by its content fingerprint so the record follows the file.
+  final localPath = recent.mediaId;
+  if (!localPath.startsWith('http://') && !localPath.startsWith('https://')) {
+    try {
+      final f = File(localPath);
+      if (await f.exists()) {
+        final fp = await PlaybackRecord.computeFileFingerprint(f);
+        final byHash = await db.getPlaybackRecordByHash(fp);
+        if (byHash != null) {
+          final fromFile = MediaFile.fromFile(f);
+          if (fromFile != null) {
+            // Re-key history under the new path so future lookups hit directly.
+            await db.upsertPlaybackRecord(byHash.copyWith(path: f.path));
+            final pos = byHash.lastPosition;
+            return pos != null && pos > 0
+                ? fromFile.copyWith(lastPosition: pos)
+                : fromFile;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Fingerprint lookup failed: $e');
+    }
   }
 
   final mediaId = recent.mediaId;

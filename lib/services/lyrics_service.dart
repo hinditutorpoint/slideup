@@ -7,6 +7,8 @@ class LyricsService {
   LyricsService._();
   static final LyricsService instance = LyricsService._();
 
+  static const String _userAgent = 'SlideUpMusicPlayer/1.0.0 (https://github.com)';
+
   // In-memory cache: "title|artist" -> LyricsData
   final Map<String, LyricsData> _cache = {};
 
@@ -119,7 +121,6 @@ class LyricsService {
     String? artist,
     Duration? duration,
   }) async {
-    const userAgent = 'SlideUpMusicPlayer/1.0.0 (https://github.com)';
     const timeout = Duration(seconds: 6);
 
     try {
@@ -132,7 +133,7 @@ class LyricsService {
 
       debugPrint('🎤 LRCLIB request: $searchUri');
       final searchResponse = await http.get(searchUri, headers: {
-        'User-Agent': userAgent,
+        'User-Agent': _userAgent,
       }).timeout(timeout);
       debugPrint(
         '🎤 LRCLIB response: status=${searchResponse.statusCode} '
@@ -142,25 +143,12 @@ class LyricsService {
       if (searchResponse.statusCode == 200) {
         final List results = jsonDecode(searchResponse.body) as List;
         if (results.isNotEmpty) {
-          // Find first result with synced lyrics or plain lyrics.
-          // Prefer one whose duration matches (within ±2s) when provided.
-          List<dynamic> ordered = results;
-          if (duration != null && duration.inSeconds > 0) {
-            ordered = results.toList()
-              ..sort((a, b) {
-                final aDur = ((a as Map<String, dynamic>)['duration'] ?? 0) as int;
-                final bDur = ((b as Map<String, dynamic>)['duration'] ?? 0) as int;
-                final aDiff = (aDur - duration.inSeconds).abs();
-                final bDiff = (bDur - duration.inSeconds).abs();
-                return aDiff.compareTo(bDiff);
-              });
-          }
-          for (final item in ordered) {
-            final parsed = _parseLrcLibResponse(item as Map<String, dynamic>);
-            if (parsed != null && parsed.isNotEmpty) {
-              return parsed;
-            }
-          }
+          // LRCLIB returns an array of lyric records (id, name/trackName,
+          // artistName, albumName, duration, instrumental, plainLyrics,
+          // syncedLyrics, lyricsfile). Every record is guaranteed to carry a
+          // lyricsfile, so the first match is the one we use.
+          final first = results.first as Map<String, dynamic>;
+          return _parseLrcLibResponse(first);
         }
       } else if (searchResponse.statusCode == 429) {
         // Honoring Retry-After as required by the LRCLIB docs.
@@ -176,10 +164,13 @@ class LyricsService {
     return null;
   }
 
-  LyricsData? _parseLrcLibResponse(Map<String, dynamic> data) {
+  Future<LyricsData?> _parseLrcLibResponse(
+    Map<String, dynamic> data,
+  ) async {
     final syncedLyrics = data['syncedLyrics'] as String?;
     final plainLyrics = data['plainLyrics'] as String?;
-    final trackName = data['trackName'] as String?;
+    final trackName = (data['trackName'] as String?) ??
+        (data['name'] as String?); // name is an alias of trackName
     final artistName = data['artistName'] as String?;
 
     if (syncedLyrics != null && syncedLyrics.trim().isNotEmpty) {
@@ -206,6 +197,47 @@ class LyricsService {
         trackName: trackName,
         artistName: artistName,
       );
+    }
+
+    // Every LRCLIB record is guaranteed to carry a lyricsfile — fall back to
+    // it when the inline lyrics are missing.
+    final lyricsFile = data['lyricsfile'] as String?;
+    if (lyricsFile != null && lyricsFile.trim().isNotEmpty) {
+      try {
+        final response = await http
+            .get(
+              Uri.parse(lyricsFile),
+              headers: {'User-Agent': _userAgent},
+            )
+            .timeout(const Duration(seconds: 6));
+        if (response.statusCode == 200) {
+          final content = response.body;
+          final syncedLines = parseLrc(content);
+          if (syncedLines.isNotEmpty) {
+            return LyricsData(
+              isSynced: true,
+              lines: syncedLines,
+              plainLyrics: null,
+              source: 'LRCLIB (Synced)',
+              trackName: trackName,
+              artistName: artistName,
+            );
+          }
+          final plainLines = _plainTextToLines(content);
+          if (plainLines.isNotEmpty) {
+            return LyricsData(
+              isSynced: false,
+              lines: plainLines,
+              plainLyrics: content,
+              source: 'LRCLIB (Plain)',
+              trackName: trackName,
+              artistName: artistName,
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('LRCLIB lyricsfile fetch error: $e');
+      }
     }
 
     return null;

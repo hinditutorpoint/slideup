@@ -8,8 +8,10 @@ import 'package:share_plus/share_plus.dart';
 import '../models/media_file.dart';
 import '../models/playlist.dart';
 import '../models/audio_data.dart';
+import '../models/lyric_line.dart';
 import '../providers/audio_handler_provider.dart';
 import '../providers/favorites_provider.dart';
+import '../providers/lyrics_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/download_providers.dart';
 import '../helpers/audio_playback_helper.dart';
@@ -43,6 +45,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
   bool _isFavorite = false;
   String? _currentMediaId;
   bool _showLyrics = false;
+  bool _lyricsMinimized = false;
   String? _trackInfoPath;
   Future<AudioData?>? _trackInfoFuture;
   String? _savedPlaylistId;
@@ -246,6 +249,10 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                                     audioData: audioSnapshot.data,
                                     onClose: () =>
                                         setState(() => _showLyrics = false),
+                                    onMinimize: () => setState(() {
+                                      _lyricsMinimized = true;
+                                      _showLyrics = false;
+                                    }),
                                   );
                                 },
                               ),
@@ -278,6 +285,7 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                   ),
 
                   const SizedBox(height: 16),
+                  _buildLyricsMiniBar(audioHandler),
                   _buildTrackInfo(mediaItem),
                   const SizedBox(height: 24),
                   _buildProgressBar(audioHandler),
@@ -337,6 +345,102 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
         color: Theme.of(context).primaryColor,
       ),
     );
+  }
+
+  Widget _buildLyricsMiniBar(dynamic audioHandler) {
+    if (_showLyrics && !_lyricsMinimized) return const SizedBox.shrink();
+    final lyricsState = ref.watch(lyricsProvider);
+    final data = lyricsState.data;
+    if (data == null || data.lines.isEmpty) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => setState(() {
+            _lyricsMinimized = false;
+            _showLyrics = true;
+          }),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.primary.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.lyrics_outlined,
+                  size: 16,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: StreamBuilder<Duration>(
+                    stream: audioHandler.positionStream,
+                    builder: (context, snap) {
+                      final pos = snap.data ?? Duration.zero;
+                      final activeIndex = _findMiniActiveLine(
+                        pos,
+                        data.lines,
+                        data.isSynced,
+                      );
+                      final line = activeIndex >= 0 &&
+                              activeIndex < data.lines.length
+                          ? data.lines[activeIndex].text
+                          : '';
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 400),
+                        transitionBuilder: (child, animation) =>
+                            FadeTransition(opacity: animation, child: child),
+                        child: Text(
+                          line,
+                          key: ValueKey(line),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.unfold_more,
+                  size: 16,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  int _findMiniActiveLine(
+    Duration position,
+    List<LyricLine> lines,
+    bool isSynced,
+  ) {
+    if (lines.isEmpty) return -1;
+    if (!isSynced) return lines.length - 1;
+    for (int i = lines.length - 1; i >= 0; i--) {
+      if (position >= lines[i].time) {
+        return i;
+      }
+    }
+    return 0;
   }
 
   Widget _buildTrackInfo(MediaItem? mediaItem) {
@@ -464,6 +568,11 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
       builder: (context, snapshot) {
         final playbackState = snapshot.data;
         final playing = playbackState?.playing ?? false;
+        final processingState =
+            playbackState?.processingState ?? AudioProcessingState.idle;
+        final buffering =
+            processingState == AudioProcessingState.loading ||
+            processingState == AudioProcessingState.buffering;
 
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -495,16 +604,37 @@ class _FullAudioPlayerScreenState extends ConsumerState<FullAudioPlayerScreen>
                   ),
                 ],
               ),
-              child: IconButton(
-                icon: Icon(playing ? Icons.pause : Icons.play_arrow, size: 40),
-                color: Colors.white,
-                onPressed: () {
-                  if (playing) {
-                    audioHandler.pause();
-                  } else {
-                    audioHandler.play();
-                  }
-                },
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: buffering
+                    ? const Padding(
+                        padding: EdgeInsets.all(20),
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: CircularProgressIndicator(
+                            key: ValueKey('buffering'),
+                            strokeWidth: 3,
+                            color: Colors.white,
+                            backgroundColor: Colors.white24,
+                          ),
+                        ),
+                      )
+                    : IconButton(
+                        key: const ValueKey('playpause'),
+                        icon: Icon(
+                          playing ? Icons.pause : Icons.play_arrow,
+                          size: 40,
+                        ),
+                        color: Colors.white,
+                        onPressed: () {
+                          if (playing) {
+                            audioHandler.pause();
+                          } else {
+                            audioHandler.play();
+                          }
+                        },
+                      ),
               ),
             ),
             const SizedBox(width: 20),

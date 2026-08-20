@@ -10,6 +10,9 @@ class AppSettings {
   final bool recentHistoryEnabled;
   final bool showUpNextButton;
   final int upNextLeadSeconds;
+  final bool skipIntroVideo;
+  final int skipIntroLeadSeconds;
+  final bool skipIntroInteractionRequired;
   final bool swipeToSwitchEnabled;
   final String defaultVideoQuality;
   final String downloadLocation;
@@ -25,6 +28,9 @@ class AppSettings {
     this.recentHistoryEnabled = true,
     this.showUpNextButton = true,
     this.upNextLeadSeconds = 15,
+    this.skipIntroVideo = false,
+    this.skipIntroLeadSeconds = 30,
+    this.skipIntroInteractionRequired = false,
     this.swipeToSwitchEnabled = true,
     this.defaultVideoQuality = 'Auto',
     this.downloadLocation = '/storage/emulated/0/Download',
@@ -41,6 +47,9 @@ class AppSettings {
     bool? recentHistoryEnabled,
     bool? showUpNextButton,
     int? upNextLeadSeconds,
+    bool? skipIntroVideo,
+    int? skipIntroLeadSeconds,
+    bool? skipIntroInteractionRequired,
     bool? swipeToSwitchEnabled,
     String? defaultVideoQuality,
     String? downloadLocation,
@@ -58,6 +67,11 @@ class AppSettings {
       recentHistoryEnabled: recentHistoryEnabled ?? this.recentHistoryEnabled,
       showUpNextButton: showUpNextButton ?? this.showUpNextButton,
       upNextLeadSeconds: upNextLeadSeconds ?? this.upNextLeadSeconds,
+      skipIntroVideo: skipIntroVideo ?? this.skipIntroVideo,
+      skipIntroLeadSeconds:
+          skipIntroLeadSeconds ?? this.skipIntroLeadSeconds,
+      skipIntroInteractionRequired:
+          skipIntroInteractionRequired ?? this.skipIntroInteractionRequired,
       swipeToSwitchEnabled:
           swipeToSwitchEnabled ?? this.swipeToSwitchEnabled,
       defaultVideoQuality: defaultVideoQuality ?? this.defaultVideoQuality,
@@ -111,6 +125,18 @@ class SettingsNotifier extends Notifier<AppSettings> {
         upNextLeadSeconds: _settingsBox.get(
           'upNextLeadSeconds',
           defaultValue: 15,
+        ),
+        skipIntroVideo: _settingsBox.get(
+          'skipIntroVideo',
+          defaultValue: false,
+        ),
+        skipIntroLeadSeconds: _settingsBox.get(
+          'skipIntroLeadSeconds',
+          defaultValue: 30,
+        ),
+        skipIntroInteractionRequired: _settingsBox.get(
+          'skipIntroInteractionRequired',
+          defaultValue: false,
         ),
         swipeToSwitchEnabled: _settingsBox.get(
           'swipeToSwitchEnabled',
@@ -187,6 +213,24 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await _ensureInitialized();
     await _settingsBox.put('upNextLeadSeconds', seconds);
     state = state.copyWith(upNextLeadSeconds: seconds);
+  }
+
+  Future<void> setSkipIntroVideo(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('skipIntroVideo', enabled);
+    state = state.copyWith(skipIntroVideo: enabled);
+  }
+
+  Future<void> setSkipIntroLeadSeconds(int seconds) async {
+    await _ensureInitialized();
+    await _settingsBox.put('skipIntroLeadSeconds', seconds);
+    state = state.copyWith(skipIntroLeadSeconds: seconds);
+  }
+
+  Future<void> setSkipIntroInteractionRequired(bool enabled) async {
+    await _ensureInitialized();
+    await _settingsBox.put('skipIntroInteractionRequired', enabled);
+    state = state.copyWith(skipIntroInteractionRequired: enabled);
   }
 
   Future<void> setSwipeToSwitchEnabled(bool enabled) async {

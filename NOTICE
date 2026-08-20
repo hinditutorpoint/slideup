@@ -3,22 +3,27 @@ NOTICE
 
 Copyright (c) 2026 SlideUp Project (hinditutorpoint)
 
-This project is licensed under the GNU General Public License v3.0
-(see LICENSE).
-
-Third-Party Notice
-------------------
-The "extractor" plugin (https://pub.dev/packages/extractor) embeds
-youtubedl-android and yt-dlp components that are licensed under
-GPL-3.0. Their licenses are reproduced in the LICENSE file and the
-plugin's own LICENSE/acknowledgments.
+This project is distributed under the SlideUp Source-Access License
+(see LICENSE). It is provided for learning and reference purposes only.
+It may not be sold, redistributed, or published in any form without the
+prior written permission of the copyright holder.
 
 Trademarks
 ----------
 The names "SlideUp" and "Slideup Media Player", the SlideUp logo, icon
-artwork, screenshots, and visual branding assets are proprietary trademarks
-of SlideUp Project (hinditutorpoint). The GNU General Public License does
-not grant any rights to use these names or branding assets in any
-derivative work, product, or publication. Any use of the SlideUp
-trademarks requires the prior written permission of SlideUp Project
-(hinditutorpoint).
+artwork, screenshots, and visual branding assets are proprietary
+trademarks of SlideUp Project (hinditutorpoint). This license grants no
+rights to use these names or branding assets in any derivative work,
+product, or publication. Any use requires the prior written permission
+of SlideUp Project (hinditutorpoint).
+
+Third-Party Components
+----------------------
+The Project builds on third-party packages, each distributed under its
+own license (see the package documentation and pub.dev listings).
+Notably:
+- media_kit / media_kit_libs_android_video: GNU Lesser General Public
+  License v3.0 (LGPL-3.0)
+- ffmpeg_kit_flutter_new: GNU Lesser General Public License v3.0
+  (LGPL-3.0)
+- Other packages: MIT, BSD, Apache-2.0, or their respective licenses.

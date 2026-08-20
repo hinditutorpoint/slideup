@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/media_file.dart';
 import '../models/audio_data.dart';
 import '../navigation_service.dart';
+import '../providers/media_provider.dart';
 
 class AudioPlayerHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
@@ -12,6 +14,8 @@ class AudioPlayerHandler extends BaseAudioHandler
 
   bool _initialized = false;
   final Set<String> _enrichedIds = {};
+  String? _lastRecordedItemId;
+  DateTime? _lastRecordedAt;
 
   AudioPlayerHandler() {
     _init();
@@ -52,6 +56,7 @@ class AudioPlayerHandler extends BaseAudioHandler
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed &&
           playbackState.value.repeatMode == AudioServiceRepeatMode.none) {
+        _recordCurrentPlayback();
         stop();
       }
     });
@@ -112,6 +117,44 @@ class AudioPlayerHandler extends BaseAudioHandler
           ? AudioServiceShuffleMode.all
           : AudioServiceShuffleMode.none,
     );
+  }
+
+  // ================= PLAYBACK RECORD =================
+
+  void _recordCurrentPlayback() {
+    final item = mediaItem.value;
+    if (item == null) return;
+    final path = item.extras?['path'] as String?;
+    if (path == null || path.isEmpty) return;
+
+    final now = DateTime.now();
+    if (item.id == _lastRecordedItemId &&
+        _lastRecordedAt != null &&
+        now.difference(_lastRecordedAt!) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastRecordedItemId = item.id;
+    _lastRecordedAt = now;
+
+    final position = _player.position;
+    final file = MediaFile(
+      id: item.id,
+      name: item.title,
+      path: path,
+      displayPath: item.extras?['displayPath'] as String?,
+      type: MediaType.audio,
+      size: (item.extras?['size'] as int?) ?? 0,
+      dateModified: DateTime.fromMillisecondsSinceEpoch(
+        (item.extras?['dateModified'] as int?) ?? 0,
+      ),
+      mimeType: item.extras?['mimeType'] as String?,
+      duration: item.duration?.inMilliseconds,
+      artist: item.artist,
+      album: item.album,
+      genre: item.genre,
+      year: item.extras?['year'] as int?,
+    );
+    unawaited(MediaNotifier.recordPlaybackFor(file, position: position));
   }
 
   // ================= PLAYLIST =================
@@ -275,26 +318,37 @@ class AudioPlayerHandler extends BaseAudioHandler
   Future<void> play() => _player.play();
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() {
+    _recordCurrentPlayback();
+    return _player.pause();
+  }
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
-  Future<void> skipToNext() => _player.seekToNext();
+  Future<void> skipToNext() {
+    _recordCurrentPlayback();
+    return _player.seekToNext();
+  }
 
   @override
-  Future<void> skipToPrevious() => _player.seekToPrevious();
+  Future<void> skipToPrevious() {
+    _recordCurrentPlayback();
+    return _player.seekToPrevious();
+  }
 
   @override
   Future<void> skipToQueueItem(int index) async {
     if (index < 0 || index >= queue.value.length) return;
+    _recordCurrentPlayback();
     await _player.seek(Duration.zero, index: index);
   }
 
   @override
   Future<void> stop() async {
     try {
+      _recordCurrentPlayback();
       await _player.stop();
       await super.stop();
       queue.add([]);
