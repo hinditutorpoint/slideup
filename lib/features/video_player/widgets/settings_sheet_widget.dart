@@ -6,7 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../models/video_player_state.dart';
 import '../providers/video_player_provider.dart';
-import '../../video_editor/video_editor_screen.dart';
+import '../../reel_editor/ui/reel_editor_screen.dart';
 
 class SettingsSheetWidget extends ConsumerWidget {
   const SettingsSheetWidget({super.key});
@@ -117,7 +117,7 @@ class SettingsSheetWidget extends ConsumerWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => VideoEditorScreen(videoPath: videoPath),
+        builder: (context) => ReelEditorScreen(mode: EditorMode.video, videoPath: videoPath),
       ),
     );
   }

@@ -18,7 +18,7 @@ import '../models/storage_info.dart';
 import 'pdf_viewer_screen.dart';
 import 'image_viewer_screen.dart';
 import '../features/video_player/video_player_launcher.dart';
-import '../features/video_editor/video_editor_screen.dart';
+import '../features/reel_editor/ui/reel_editor_screen.dart';
 import '../helpers/audio_playback_helper.dart';
 import '../helpers/m3u_playlist_helper.dart';
 import '../services/security_service.dart';
@@ -1839,7 +1839,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
       if (!context.mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => VideoEditorScreen(videoPath: entity.path),
+          builder: (context) => ReelEditorScreen(mode: EditorMode.video, videoPath: entity.path),
         ),
       );
     }

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 import '../core/validation/numeric_guard.dart';
 
 /// Lightweight preview engine md:325-347
 /// No FFmpeg per frame — uses Flutter transforms, stays responsive
-class PreviewEngine {
+/// ChangeNotifier so PreviewCanvas reacts to load completion
+class PreviewEngine extends ChangeNotifier {
   VideoPlayerController? _controller;
   Duration _duration = Duration.zero;
   bool _disposed = false;
@@ -33,6 +35,7 @@ class PreviewEngine {
     _duration = c.value.duration;
     if (!NumericGuard.isValidDuration(_duration)) _duration = Duration.zero;
     await c.setLooping(false);
+    notifyListeners();
   }
 
   Future<void> seekTo(Duration pos) async {
@@ -67,9 +70,11 @@ class PreviewEngine {
     }
   }
 
+  @override
   Future<void> dispose() async {
     _disposed = true;
     _opId++;
     await _disposeController();
+    super.dispose();
   }
 }

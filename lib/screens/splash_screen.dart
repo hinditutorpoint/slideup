@@ -8,6 +8,12 @@ import '../providers/media_provider.dart';
 import 'main_screen.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
+  /// Set to `true` after the first successful navigation to [MainScreen].
+  /// Prevents the splash from re-appearing when [MaterialApp] rebuilds
+  /// (e.g. on provider/theme change while the app is in the foreground or
+  /// resumed from background).
+  static bool splashCompleted = false;
+
   const SplashScreen({super.key});
 
   @override
@@ -47,6 +53,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   }
 
   Future<void> _initialize() async {
+    // If splash already completed in this process (e.g. app resumed from
+    // background and MaterialApp rebuilt), skip straight to MainScreen.
+    if (SplashScreen.splashCompleted) {
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const MainScreen()),
+            );
+          }
+        });
+      }
+      return;
+    }
+
     final startTime = DateTime.now();
     const minSplashDuration = Duration(milliseconds: 2200);
 
@@ -119,6 +140,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
             ),
           );
 
+          // Mark splash as completed so it never re-appears in this process.
+          SplashScreen.splashCompleted = true;
+
           // Start the scan after MainScreen has been given a frame to render.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             Future.delayed(const Duration(milliseconds: 800), () {
@@ -132,6 +156,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     } catch (e) {
       debugPrint('Splash error: $e');
       if (mounted) {
+        SplashScreen.splashCompleted = true;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const MainScreen()),

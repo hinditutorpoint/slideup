@@ -21,6 +21,31 @@ class _PreviewCanvasState extends ConsumerState<PreviewCanvas> {
   final Offset _offset = Offset.zero;
 
   @override
+  void initState() {
+    super.initState();
+    widget.engine.addListener(_onEngineChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant PreviewCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.engine != widget.engine) {
+      oldWidget.engine.removeListener(_onEngineChanged);
+      widget.engine.addListener(_onEngineChanged);
+    }
+  }
+
+  void _onEngineChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.engine.removeListener(_onEngineChanged);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final canvasState = ref.watch(canvasProvider);
     final preset = canvasState.config.preset;
