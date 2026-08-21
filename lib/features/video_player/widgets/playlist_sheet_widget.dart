@@ -32,8 +32,9 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final playerState = ref.watch(videoPlayerProvider);
-    final currentIndex = playerState.currentIndex;
+    final currentIndex = ref.watch(
+      videoPlayerProvider.select((s) => s.currentIndex),
+    );
 
     final recentFiles = ref.watch(recentFilesProvider).value ?? const [];
     _lastPlayedById = <String, DateTime>{
@@ -202,6 +203,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
         final originalIndex = widget.playlist.items.indexOf(item.media);
 
         return _PlaylistListItem(
+          key: ValueKey(item.media.url),
           media: item.media,
           index: originalIndex,
           isPlaying: originalIndex == currentIndex,
@@ -235,6 +237,7 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
         final originalIndex = widget.playlist.items.indexOf(item.media);
 
         return _PlaylistGridItem(
+          key: ValueKey(item.media.url),
           media: item.media,
           index: originalIndex,
           isPlaying: originalIndex == currentIndex,
@@ -361,6 +364,7 @@ class _PlaylistListItem extends StatelessWidget {
   final VoidCallback onTap;
 
   const _PlaylistListItem({
+    super.key,
     required this.media,
     required this.index,
     required this.isPlaying,
@@ -486,7 +490,10 @@ class _PlaylistListItem extends StatelessWidget {
   }
 
   Widget _buildThumbnail() {
-    return _MediaThumbnail(media: media);
+    return _MediaThumbnail(
+      key: ValueKey('thumb_${media.url}_${media.thumbnailPath}'),
+      media: media,
+    );
   }
 }
 
@@ -502,6 +509,7 @@ class _PlaylistGridItem extends StatelessWidget {
   final VoidCallback onTap;
 
   const _PlaylistGridItem({
+    super.key,
     required this.media,
     required this.index,
     required this.isPlaying,
@@ -638,7 +646,11 @@ class _PlaylistGridItem extends StatelessWidget {
   }
 
   Widget _buildThumbnail() {
-    return _MediaThumbnail(media: media, iconSize: 32);
+    return _MediaThumbnail(
+      key: ValueKey('thumb_${media.url}_${media.thumbnailPath}'),
+      media: media,
+      iconSize: 32,
+    );
   }
 }
 
@@ -650,48 +662,117 @@ class _PlaylistGridItem extends StatelessWidget {
 /// cached thumbnail via ThumbnailService for local files. Covers the case
 /// where playback starts from sources (e.g. file browser) whose MediaFile
 /// models don't carry a stored thumbnailPath.
-class _MediaThumbnail extends StatelessWidget {
+class _MediaThumbnail extends StatefulWidget {
   final PlayerMedia media;
   final double iconSize;
 
   const _MediaThumbnail({
+    super.key,
     required this.media,
     this.iconSize = 24,
   });
 
   @override
+  State<_MediaThumbnail> createState() => _MediaThumbnailState();
+}
+
+class _MediaThumbnailState extends State<_MediaThumbnail>
+    with AutomaticKeepAliveClientMixin {
+  Future<String?>? _future;
+  String? _cachedUrl;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeInitFuture();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MediaThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.media.url != widget.media.url ||
+        oldWidget.media.thumbnailPath != widget.media.thumbnailPath) {
+      _maybeInitFuture();
+    }
+  }
+
+  void _maybeInitFuture() {
+    final tp = widget.media.thumbnailPath;
+    if (tp != null && tp.isNotEmpty) {
+      _future = null;
+      _cachedUrl = null;
+      return;
+    }
+    final url = widget.media.url;
+    if (!url.startsWith('http')) {
+      if (_cachedUrl != url || _future == null) {
+        _cachedUrl = url;
+        _future = ThumbnailService.instance.getThumbnail(url);
+      }
+    } else {
+      _future = null;
+      _cachedUrl = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final tp = media.thumbnailPath;
+    super.build(context);
+    final tp = widget.media.thumbnailPath;
     if (tp != null && tp.isNotEmpty) {
       if (tp.startsWith('http')) {
-        return Image.network(
-          tp,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
+        return RepaintBoundary(
+          child: Image.network(
+            tp,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => _placeholder(),
+          ),
         );
       }
-      return Image.file(
-        File(tp),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _placeholder(),
+      return RepaintBoundary(
+        child: Image.file(
+          File(tp),
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => _placeholder(),
+        ),
       );
     }
 
-    final url = media.url;
+    final url = widget.media.url;
     if (!url.startsWith('http')) {
-      return FutureBuilder<String?>(
-        future: ThumbnailService.instance.getThumbnail(url),
-        builder: (context, snap) {
-          final p = snap.data;
-          if (snap.connectionState == ConnectionState.done && p != null) {
-            return Image.file(
-              File(p),
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _placeholder(),
-            );
-          }
-          return _placeholder();
-        },
+      return RepaintBoundary(
+        child: FutureBuilder<String?>(
+          future: _future,
+          builder: (context, snap) {
+            final p = snap.data;
+            if (snap.connectionState == ConnectionState.done && p != null) {
+              return Image.file(
+                File(p),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => _placeholder(),
+              );
+            }
+            if (snap.connectionState == ConnectionState.waiting &&
+                p == null) {
+              return _placeholder();
+            }
+            if (p != null) {
+              return Image.file(
+                File(p),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => _placeholder(),
+              );
+            }
+            return _placeholder();
+          },
+        ),
       );
     }
 
@@ -701,7 +782,7 @@ class _MediaThumbnail extends StatelessWidget {
   Widget _placeholder() {
     return Container(
       color: Colors.grey[800],
-      child: Icon(Icons.movie, color: Colors.white38, size: iconSize),
+      child: Icon(Icons.movie, color: Colors.white38, size: widget.iconSize),
     );
   }
 }

@@ -5,11 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
-import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import '../../../core/utils/download_location_helper.dart';
 
 import '../models/video_player_state.dart';
+import '../../scene_cut/models/scene_settings.dart';
+import '../../scene_cut/services/scene_cut_service.dart';
+import '../../scene_cut/services/scene_settings_service.dart';
 import '../models/player_media.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/pip_provider.dart';
@@ -967,7 +968,6 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
   AnimationController? _pulse;
   Duration _startPos = Duration.zero;
   String? _armedUrl;
-  FFmpegSession? _session;
   bool _cancelRequested = false;
 
   @override
@@ -993,10 +993,9 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
   void dispose() {
     widget.capture.onToggleRequested = null;
     _pulse?.dispose();
-    final s = _session;
-    if (s != null) {
+    if (widget.capture.phase == _CapturePhase.cutting) {
       try {
-        FFmpegKit.cancel(s.getSessionId());
+        FFmpegKit.cancel();
       } catch (_) {}
     }
     super.dispose();
@@ -1029,80 +1028,37 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
       return;
     }
 
-    final downloadDir = await DownloadLocationHelper.configuredDirectory();
-    if (downloadDir == null) {
-      widget.capture.setPhase(_CapturePhase.off);
-      _showSnack('No download path set');
-      return;
-    }
-
-    final clipsDir = Directory('${downloadDir.path}/clips');
-    if (!await clipsDir.exists()) {
-      await clipsDir.create(recursive: true);
-    }
-
-    final now = DateTime.now();
-    final ts =
-        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_'
-        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final outputPath = '${clipsDir.path}/clip_$ts.mp4';
-
-    final startStr = _fmtDur(_startPos);
-    final dur = endPos - _startPos;
-    final durStr = _fmtDur(dur);
-
-    final bool isLocal = !url.startsWith('http');
-    final String command = isLocal
-        ? '-y -ss $startStr -i "$url" -t $durStr -c copy -avoid_negative_ts make_zero "$outputPath"'
-        : '-y -ss $startStr -i "$url" -t $durStr -c:v libx264 -c:a aac -movflags +faststart "$outputPath"';
-
+    final sceneSettings = SceneSettingsService.instance.load();
     _cancelRequested = false;
     widget.capture.setPhase(_CapturePhase.cutting);
-
     try {
-      final session = await FFmpegKit.executeAsync(
-        command,
-        (s) => _onComplete(s, outputPath),
-        null,
-        (Statistics stats) {
-          final t = stats.getTime();
-          if (t > 0) widget.capture.setProgress(t / dur.inMilliseconds);
-        },
+      final outputPath = await SceneCutService.instance.cutScene(
+        inputPath: url,
+        start: _startPos,
+        end: endPos,
+        settings: sceneSettings,
+        onProgress: (p) => widget.capture.setProgress(p),
       );
-      _session = session;
+      if (!mounted) return;
+      if (_cancelRequested || outputPath == null) {
+        if (!_cancelRequested) _showSnack('Failed to capture clip');
+        widget.capture.setPhase(_CapturePhase.off);
+        return;
+      }
+      // Gallery copy (when saveDestination is galleryOnly/both) is now handled
+      // inside SceneCutService — no duplicate SaverGallery call here.
+      widget.capture.setProgress(1);
+      widget.capture.setPhase(_CapturePhase.done);
+      final isGalleryOnly = sceneSettings.saveDestination == SceneSaveDestination.galleryOnly;
+      _showSnack(isGalleryOnly ? 'Clip saved to gallery' : 'Clip saved');
+      await Future.delayed(_doneFlash);
+      if (mounted && widget.capture.phase == _CapturePhase.done) {
+        widget.capture.setPhase(_CapturePhase.off);
+      }
     } catch (e) {
       debugPrint('❌ Scene capture error: $e');
-      widget.capture.setPhase(_CapturePhase.off);
+      if (mounted) widget.capture.setPhase(_CapturePhase.off);
       _showSnack('Capture error');
-    }
-  }
-
-  Future<void> _onComplete(FFmpegSession session, String outputPath) async {
-    _session = null;
-    if (!mounted) return;
-
-    final rc = await session.getReturnCode();
-    final success = rc != null && rc.isValueSuccess();
-
-    if (!success) {
-      try {
-        final f = File(outputPath);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
-    }
-
-    if (_cancelRequested || !success) {
-      if (!_cancelRequested) _showSnack('Failed to capture clip');
-      widget.capture.setPhase(_CapturePhase.off);
-      return;
-    }
-
-    widget.capture.setProgress(1);
-    widget.capture.setPhase(_CapturePhase.done);
-    _showSnack('Clip saved');
-    await Future.delayed(_doneFlash);
-    if (mounted && widget.capture.phase == _CapturePhase.done) {
-      widget.capture.setPhase(_CapturePhase.off);
     }
   }
 
@@ -1111,20 +1067,16 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
     _cancelRequested = true;
     HapticFeedback.selectionClick();
     try {
-      final s = _session;
-      if (s != null) await FFmpegKit.cancel(s.getSessionId());
+      await FFmpegKit.cancel();
     } catch (_) {}
   }
 
   void _reset({required bool cancelCut}) {
     if (cancelCut && widget.capture.phase == _CapturePhase.cutting) {
       _cancelRequested = true;
-      final s = _session;
-      if (s != null) {
-        try {
-          FFmpegKit.cancel(s.getSessionId());
-        } catch (_) {}
-      }
+      try {
+        FFmpegKit.cancel();
+      } catch (_) {}
     }
     _armedUrl = null;
     widget.capture.setPhase(_CapturePhase.off);
@@ -1135,17 +1087,6 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
-  }
-
-  String _fmtDur(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes.remainder(60);
-    final s = d.inSeconds.remainder(60);
-    final ms = d.inMilliseconds.remainder(1000);
-    if (h > 0) {
-      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
-    }
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
   }
 
   @override

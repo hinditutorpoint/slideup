@@ -6,6 +6,7 @@ import '../widgets/settings/player_settings_section.dart';
 import '../widgets/settings/storage_settings_section.dart';
 import '../widgets/settings/files_settings_section.dart';
 import '../widgets/settings/about_settings_section.dart';
+import '../features/scene_cut/widgets/scene_settings_section.dart';
 
 // Import enums from settings service
 export '../services/settings_service.dart' show SortBy, SortOrder;
@@ -27,7 +28,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
 
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Settings'),
@@ -43,6 +44,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Tab(text: 'Player', icon: Icon(Icons.play_circle_outline, size: 16)),
               Tab(text: 'Storage', icon: Icon(Icons.storage_outlined, size: 16)),
               Tab(text: 'Files', icon: Icon(Icons.folder_open_outlined, size: 16)),
+              Tab(text: 'Scenes', icon: Icon(Icons.movie_filter_outlined, size: 16)),
               Tab(text: 'About', icon: Icon(Icons.info_outline, size: 16)),
             ],
           ),
@@ -53,6 +55,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             PlayerSettingsSection(),
             StorageSettingsSection(),
             FilesSettingsSection(),
+            SceneSettingsSection(),
             AboutSettingsSection(),
           ],
         ),

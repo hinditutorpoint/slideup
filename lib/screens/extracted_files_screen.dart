@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:open_filex/open_filex.dart';
 import 'package:uuid/uuid.dart';
+import 'package:intl/intl.dart';
 import '../widgets/empty_state_widget.dart';
 import '../widgets/text_viewer_widget.dart';
 import '../core/utils/download_location_helper.dart';
 import '../models/media_file.dart';
+import '../services/file_operations_service.dart';
+import '../services/thumbnail_service.dart';
 import '../features/video_player/video_player_launcher.dart';
 import '../helpers/audio_playback_helper.dart';
 import '../helpers/m3u_playlist_helper.dart';
@@ -428,56 +432,11 @@ class _ExtractedFilesScreenState extends ConsumerState<ExtractedFilesScreen> {
                 }
 
                 return ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                   itemCount: files.length,
                   itemBuilder: (context, index) {
                     final file = files[index] as File;
-                    final fileName = path.basename(file.path);
-                    final fileSize = _formatFileSize(file.lengthSync());
-                    final category = _getCategory(file.path);
-
-                    return ListTile(
-                      leading: _getFileIcon(file),
-                      title: Text(
-                        fileName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(fileSize, style: const TextStyle(fontSize: 12)),
-                          Text(
-                            category,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                      trailing: PopupMenuButton(
-                        itemBuilder: (context) => [
-                          PopupMenuItem(
-                            child: const Text('Open'),
-                            onTap: () {
-                              Future.delayed(
-                                Duration.zero,
-                                () => _openFile(file),
-                              );
-                            },
-                          ),
-                          PopupMenuItem(
-                            child: const Text('Delete'),
-                            onTap: () {
-                              Future.delayed(
-                                Duration.zero,
-                                () => _deleteFile(file),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    );
+                    return _buildPremiumFileTile(file);
                   },
                 );
               },
@@ -501,24 +460,549 @@ class _ExtractedFilesScreenState extends ConsumerState<ExtractedFilesScreen> {
     );
   }
 
-  Widget _getFileIcon(File file) {
-    final extension = path.extension(file.path).toLowerCase();
+  // ═══════════════════════════════════════════════════════
+  // ✅ PREMIUM FILE TILE
+  // ═══════════════════════════════════════════════════════
 
-    if ([
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.bmp',
-      '.webp',
-    ].contains(extension)) {
-      return const Icon(Icons.image);
-    } else if (['.mp3', '.aac', '.wav', '.flac', '.m4a'].contains(extension)) {
-      return const Icon(Icons.audiotrack);
-    } else if (['.mp4', '.avi', '.mkv', '.mov'].contains(extension)) {
-      return const Icon(Icons.videocam);
+  ({IconData icon, Color color, String label}) _typeInfo(File file) {
+    final ext = path.extension(file.path).toLowerCase();
+    if (['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+        .contains(ext)) {
+      return (
+        icon: Icons.image_outlined,
+        color: const Color(0xFF42A5F5),
+        label: 'Image',
+      );
+    }
+    if (['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
+          '.ts', '.3gp'
+        ].contains(ext)) {
+      return (
+        icon: Icons.movie_outlined,
+        color: const Color(0xFFAB47BC),
+        label: 'Video',
+      );
+    }
+    if (['.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg'].contains(ext)) {
+      return (
+        icon: Icons.graphic_eq_rounded,
+        color: const Color(0xFF26A69A),
+        label: 'Audio',
+      );
+    }
+    if (ext == '.pdf') {
+      return (
+        icon: Icons.picture_as_pdf_outlined,
+        color: const Color(0xFFEF5350),
+        label: 'PDF',
+      );
+    }
+    if (['.txt', '.html', '.htm', '.xml', '.json', '.css', '.js']
+        .contains(ext)) {
+      return (
+        icon: Icons.description_outlined,
+        color: const Color(0xFFFFB74D),
+        label: 'Text',
+      );
+    }
+    return (
+      icon: Icons.insert_drive_file_outlined,
+      color: Colors.grey,
+      label: 'File',
+    );
+  }
+
+  Widget _buildPremiumFileTile(File file) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final fileName = path.basename(file.path);
+    final info = _typeInfo(file);
+    DateTime modified;
+    try {
+      modified = file.lastModifiedSync();
+    } catch (_) {
+      modified = DateTime.now();
+    }
+    final dateStr = DateFormat('d MMM yyyy • h:mm a').format(modified);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Material(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        elevation: 0,
+        child: InkWell(
+          onTap: () => _openFile(file),
+          onLongPress: () => _showActionsSheet(file),
+          borderRadius: BorderRadius.circular(18),
+          splashColor: info.color.withValues(alpha: 0.08),
+          highlightColor: info.color.withValues(alpha: 0.05),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: cs.outlineVariant.withValues(alpha: 0.35),
+              ),
+            ),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                _FileThumb(file: file, info: info),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          Text(
+                            _formatFileSize(file.lengthSync()),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(Icons.circle, size: 3, color: cs.outline),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              dateStr,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: info.color.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _getCategory(file.path).toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                      color: info.color,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.more_vert_rounded,
+                      size: 20, color: cs.onSurfaceVariant),
+                  onPressed: () => _showActionsSheet(file),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ ACTIONS SHEET
+  // ═══════════════════════════════════════════════════════
+
+  void _showActionsSheet(File file) {
+    final info = _typeInfo(file);
+    final cs = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: cs.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: info.color.withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(info.icon, color: info.color, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      path.basename(file.path),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            _sheetAction(sheetCtx, Icons.open_in_new_rounded, 'Open',
+                () => _openFile(file)),
+            _sheetAction(sheetCtx, Icons.share_outlined, 'Share',
+                () => _shareFile(file)),
+            _sheetAction(sheetCtx, Icons.drive_file_rename_outline_rounded,
+                'Rename', () => _renameDialog(file)),
+            _sheetAction(sheetCtx, Icons.copy_all_rounded, 'Copy path',
+                () => _copyPath(file)),
+            _sheetAction(sheetCtx, Icons.info_outline_rounded, 'Details',
+                () => _showDetails(file)),
+            _sheetAction(sheetCtx, Icons.delete_outline_rounded, 'Delete',
+              () => _confirmDelete(file),
+              color: Colors.redAccent,
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetAction(
+    BuildContext sheetCtx,
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        icon,
+        size: 21,
+        color: color ?? Theme.of(sheetCtx).colorScheme.onSurfaceVariant,
+      ),
+      title: Text(
+        label,
+        style:
+            TextStyle(color: color ?? Theme.of(sheetCtx).colorScheme.onSurface, fontSize: 14),
+      ),
+      onTap: () {
+        Navigator.pop(sheetCtx);
+        onTap();
+      },
+    );
+  }
+
+  Future<void> _shareFile(File file) async {
+    try {
+      final result =
+          await FileOperationsService.instance.shareFiles([file]);
+      if (!result.success) _showError('Failed to share file');
+    } catch (e) {
+      _showError('Share failed: $e');
+    }
+  }
+
+  Future<void> _copyPath(File file) async {
+    await Clipboard.setData(ClipboardData(text: file.path));
+    if (!mounted) return;
+    _showMessage('Path copied');
+  }
+
+  Future<void> _renameDialog(File file) async {
+    final ctrl = TextEditingController(text: path.basename(file.path));
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'File name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == path.basename(file.path)) {
+      return;
+    }
+    final result = await FileOperationsService.instance.renameFile(file, newName);
+    if (!mounted) return;
+    if (result.success) {
+      setState(() {});
+      _showMessage('Renamed');
+    } else {
+      _showError(result.error ?? 'Rename failed');
+    }
+  }
+
+  void _showDetails(File file) {
+    final info = _typeInfo(file);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(info.icon, color: info.color, size: 22),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('File details')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailRow('Name', path.basename(file.path)),
+            _detailRow('Type', '${info.label} (${path.extension(file.path)})'),
+            _detailRow('Size', _formatFileSize(file.lengthSync())),
+            _detailRow('Category', _getCategory(file.path)),
+            _detailRow(
+              'Modified',
+              DateFormat('d MMM yyyy, h:mm a').format(_safeModified(file)),
+            ),
+            _detailRow('Path', file.parent.path),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 78,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  DateTime _safeModified(File file) {
+    try {
+      return file.lastModifiedSync();
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
+
+  Future<void> _confirmDelete(File file) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete file?'),
+        content: Text(
+          '"${path.basename(file.path)}" will be deleted permanently.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _deleteFile(file);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ FILE THUMBNAIL (image preview / video frame / icon)
+// ═══════════════════════════════════════════════════════
+
+class _FileThumb extends StatelessWidget {
+  final File file;
+  final ({IconData icon, Color color, String label}) info;
+
+  const _FileThumb({required this.file, required this.info});
+
+  @override
+  Widget build(BuildContext context) {
+    final isImage = info.label == 'Image';
+    final isVideo = info.label == 'Video';
+
+    Widget content;
+    if (isImage) {
+      content = Image.file(
+        file,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => Icon(info.icon, color: info.color),
+      );
+    } else if (isVideo) {
+      content = _VideoThumb(file: file, info: info);
+    } else {
+      content = Icon(info.icon, color: info.color, size: 24);
     }
 
-    return const Icon(Icons.file_present);
+    return Container(
+      width: 52,
+      height: 52,
+      decoration: BoxDecoration(
+        color: (isImage || isVideo)
+            ? Theme.of(context).colorScheme.surfaceContainerHighest
+            : info.color.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      clipBehavior: Clip.antiAlias,
+      alignment: Alignment.center,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          content,
+          if (isVideo)
+            Center(
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lazily generates + caches a video frame thumbnail via FFmpeg.
+class _VideoThumb extends StatefulWidget {
+  final File file;
+  final ({IconData icon, Color color, String label}) info;
+
+  const _VideoThumb({required this.file, required this.info});
+
+  @override
+  State<_VideoThumb> createState() => _VideoThumbState();
+}
+
+class _VideoThumbState extends State<_VideoThumb> {
+  late Future<String?> _thumbFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _thumbFuture = ThumbnailService.instance.generateVideoThumbnail(
+      widget.file.path,
+      width: 128,
+      height: 128,
+      quality: 70,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file.path != widget.file.path) {
+      _thumbFuture = ThumbnailService.instance.generateVideoThumbnail(
+        widget.file.path,
+        width: 128,
+        height: 128,
+        quality: 70,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: _thumbFuture,
+      builder: (context, snapshot) {
+        final thumbPath = snapshot.data;
+        if (snapshot.connectionState == ConnectionState.done &&
+            thumbPath != null) {
+          final thumbFile = File(thumbPath);
+          if (thumbFile.existsSync()) {
+            return Image.file(
+              thumbFile,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              gaplessPlayback: true,
+              errorBuilder: (_, __, ___) =>
+                  Icon(widget.info.icon, color: widget.info.color),
+            );
+          }
+        }
+        return Icon(widget.info.icon, color: widget.info.color, size: 24);
+      },
+    );
   }
 }

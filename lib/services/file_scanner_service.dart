@@ -338,17 +338,23 @@ class FileScannerService {
       // its stored metadata (title, artist, duration, thumbnail) instead of
       // re-running FFprobe/FFmpeg. This avoids spawning heavy native processes
       // for every file on every app launch, which can stall the main thread.
-      // Exception: audio files whose metadata extraction previously FAILED are
-      // re-probed so "Unknown Artist/Album" gets healed. A failed probe leaves
-      // duration null too, while a genuinely tag-less file still reports
-      // duration from ffprobe format info — so only files that were never
-      // successfully probed (or came from non-scanner creation paths) re-probe,
-      // and tag-less files are reused like any other.
-      final needsMetadataProbe = mediaType == MediaType.audio &&
-          existing != null &&
-          existing.artist == null &&
-          existing.album == null &&
-          existing.duration == null;
+      // Exception: files whose metadata fields are still null are re-probed so
+      // previously cached "Unknown Artist/Album" (audio) or missing
+      // width/height/duration (video) gets healed. This heals rows created
+      // before case-insensitive Vorbis/FLAC tag lookup or before
+      // width/height/duration were persisted, while genuinely tag-less files
+      // (which still yield duration/format info) will be re-probed once and
+      // then stay null — acceptable correctness-over-perf trade-off until a
+      // probe-version flag is added.
+      final needsMetadataProbe =
+          (mediaType == MediaType.audio &&
+              existing != null &&
+              (existing.artist == null || existing.album == null)) ||
+          (mediaType == MediaType.video &&
+              existing != null &&
+              (existing.width == null ||
+                  existing.height == null ||
+                  existing.duration == null));
       if (!needsMetadataProbe &&
           existing != null &&
           existing.type == mediaType &&
@@ -364,6 +370,8 @@ class FileScannerService {
       String? album;
       String? genre;
       int? year;
+      int? width;
+      int? height;
 
       // Generate thumbnail for videos (except streaming formats)
       if (mediaType == MediaType.video &&
@@ -371,7 +379,7 @@ class FileScannerService {
         thumbnailPath = await _generateVideoThumbnail(file.path);
       }
 
-      // Extract metadata (title, artist, album, duration) for audio/video files
+      // Extract metadata (title, artist, album, duration, resolution) for audio/video files
       if (mediaType == MediaType.audio || mediaType == MediaType.video) {
         try {
           final meta = await MediaMetadataService.getMediaMetadata(file.path);
@@ -381,6 +389,16 @@ class FileScannerService {
           genre = MediaMetadataService.getGenre(meta);
           year = MediaMetadataService.getYear(meta);
           duration = MediaMetadataService.getDuration(meta)?.inMilliseconds;
+          if (mediaType == MediaType.video) {
+            final res = MediaMetadataService.getResolution(meta);
+            if (res != null && res.contains('x')) {
+              final parts = res.split('x');
+              if (parts.length == 2) {
+                width = int.tryParse(parts[0]);
+                height = int.tryParse(parts[1]);
+              }
+            }
+          }
         } catch (e) {
           debugPrint('Error extracting metadata from ${file.path}: $e');
         }
@@ -413,6 +431,8 @@ class FileScannerService {
         album: album,
         genre: genre,
         year: year,
+        width: width,
+        height: height,
       );
     } catch (e) {
       debugPrint('Error processing file ${file.path}: $e');

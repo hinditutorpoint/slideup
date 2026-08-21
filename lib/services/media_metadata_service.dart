@@ -11,8 +11,12 @@ class MediaMetadataService {
   // -------------------------------
   static Future<Map<String, dynamic>> getMediaMetadata(String path) async {
     try {
+      // Escape the path for the shell command: ffprobe is invoked via a
+      // single string, so embedded double-quotes/backslashes would break
+      // the -show_format quoting and yield empty output (artist/album null).
+      final escapedPath = path.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
       final session = await FFprobeKit.execute(
-        '-v quiet -print_format json -show_format -show_streams "$path"',
+        '-v quiet -print_format json -show_format -show_streams "$escapedPath"',
       );
 
       final output = await session.getOutput();
