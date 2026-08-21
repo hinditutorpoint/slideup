@@ -9,6 +9,10 @@
     <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET"/>
     
+    <!-- Cast / mDNS device discovery -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    
     <!-- Storage - Legacy (Android 9 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
@@ -337,6 +341,19 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"/>
         </provider>
+
+        <!-- ════════════════════════════════════════════════════════════ -->
+        <!-- GOOGLE CAST FRAMEWORK -->
+        <!-- ════════════════════════════════════════════════════════════ -->
+
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.felnanuke.google_cast.GoogleCastOptionsProvider" />
+
+        <service
+            android:name="com.google.android.gms.cast.framework.media.MediaNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- ════════════════════════════════════════════════════════════ -->
         <!-- FLUTTER METADATA -->

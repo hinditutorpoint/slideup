@@ -19,6 +19,7 @@ dependencies:
   permission_handler: ^12.0.1
 
   # Network
+  flutter_chrome_cast: ^1.4.8
   path: ^1.9.1
   mime: ^2.0.0
   device_info_plus: ^11.0.0

@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 
 /// Chromecast device representation
 class ChromecastDevice {
@@ -33,12 +36,18 @@ class ChromecastDevice {
 enum CastState { idle, connecting, connected, disconnecting }
 
 /// Chromecast Service
-/// Note: Full Chromecast requires native implementation with cast_framework
-/// This provides the interface and mock implementation
+///
+/// Real implementation backed by the official Google Cast SDK through the
+/// `flutter_chrome_cast` plugin (native Android + iOS):
+/// - Discovery via the native Cast framework (mDNS)
+/// - Session management with automatic reconnection
+/// - Media playback through the Default Media Receiver app
 class ChromecastService {
   static final ChromecastService _instance = ChromecastService._internal();
   factory ChromecastService() => _instance;
   ChromecastService._internal();
+
+  static const Duration _connectTimeout = Duration(seconds: 20);
 
   final _stateController = StreamController<CastState>.broadcast();
   Stream<CastState> get stateStream => _stateController.stream;
@@ -59,55 +68,99 @@ class ChromecastService {
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
-  Timer? _scanTimer;
+  bool _initialized = false;
+  StreamSubscription<List<GoogleCastDevice>>? _discoverySub;
   bool _isDisposed = false;
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ INITIALIZATION
+  // ═══════════════════════════════════════════════════════
+
+  Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      throw UnsupportedError(
+        'Google Cast is only supported on Android and iOS',
+      );
+    }
+
+    const appId = GoogleCastDiscoveryCriteria.kDefaultApplicationId;
+    final GoogleCastOptions options;
+    if (Platform.isIOS) {
+      options = IOSGoogleCastOptions(
+        GoogleCastDiscoveryCriteriaInitialize.initWithApplicationID(appId),
+        stopCastingOnAppTerminated: true,
+      );
+    } else {
+      options = GoogleCastOptionsAndroid(
+        appId: appId,
+        stopCastingOnAppTerminated: true,
+      );
+    }
+
+    await GoogleCastContext.instance.setSharedInstanceWithOptions(options);
+    _initialized = true;
+    debugPrint('✅ Google Cast context initialized');
+  }
+
+  bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
   // ═══════════════════════════════════════════════════════
   // ✅ DEVICE DISCOVERY
   // ═══════════════════════════════════════════════════════
 
   Future<void> startDiscovery() async {
-    if (_isScanning || _isDisposed) return;
+    if (_isDisposed) return;
 
     try {
+      await _ensureInitialized();
+
+      await _discoverySub?.cancel();
+      _devices = [];
       _isScanning = true;
+      _emitDevices();
+
       debugPrint('🔍 Starting Chromecast discovery...');
 
-      // In production, this would use cast_framework or similar
-      // For now, we simulate discovery
-      _scanTimer?.cancel();
-      _scanTimer = Timer(const Duration(seconds: 3), () {
-        if (!_isDisposed) {
-          // Simulated devices - replace with actual discovery
-          _devices = [
-            const ChromecastDevice(
-              id: 'device_1',
-              name: 'Living Room TV',
-              modelName: 'Chromecast',
-            ),
-            const ChromecastDevice(
-              id: 'device_2',
-              name: 'Bedroom TV',
-              modelName: 'Chromecast Ultra',
-            ),
-          ];
-
-          if (!_devicesController.isClosed) {
-            _devicesController.add(_devices);
-          }
-          _isScanning = false;
-          debugPrint('✅ Found ${_devices.length} devices');
-        }
+      _discoverySub =
+          GoogleCastDiscoveryManager.instance.devicesStream.listen((found) {
+        if (_isDisposed) return;
+        _devices = found
+            .map(
+              (d) => ChromecastDevice(
+                id: d.uniqueID.isNotEmpty ? d.uniqueID : d.deviceID,
+                name: d.friendlyName,
+                modelName: d.modelName,
+              ),
+            )
+            .toList();
+        debugPrint('📡 Discovered ${_devices.length} cast device(s)');
+        _emitDevices();
       });
+
+      await GoogleCastDiscoveryManager.instance.startDiscovery();
     } catch (e) {
       debugPrint('❌ Discovery error: $e');
-      _isScanning = false;
+      if (!_isDisposed) {
+        _isScanning = false;
+        _emitDevices();
+      }
     }
   }
 
-  void stopDiscovery() {
-    _scanTimer?.cancel();
+  Future<void> stopDiscovery() async {
+    _discoverySub?.cancel();
+    _discoverySub = null;
     _isScanning = false;
+    if (!_isDisposed) _emitDevices();
+
+    try {
+      if (_initialized) {
+        await GoogleCastDiscoveryManager.instance.stopDiscovery();
+      }
+    } catch (e) {
+      debugPrint('❌ Stop discovery error: $e');
+    }
   }
 
   // ═══════════════════════════════════════════════════════
@@ -118,41 +171,71 @@ class ChromecastService {
     if (_isDisposed) return false;
 
     try {
+      await _ensureInitialized();
       _updateState(CastState.connecting);
       debugPrint('🔗 Connecting to ${device.name}...');
 
-      // Simulate connection delay
-      await Future.delayed(const Duration(seconds: 2));
+      final started = await GoogleCastSessionManager.instance
+          .startSessionWithDevice(
+        GoogleCastDevice(
+          deviceID: device.id,
+          friendlyName: device.name,
+          modelName: device.modelName,
+          statusText: null,
+          deviceVersion: '',
+          isOnLocalNetwork: true,
+          category: 'ab5f194b-aba3-4931-956c-63e60a8b3d27',
+          uniqueID: device.id,
+        ),
+      );
 
-      // In production, this would use cast_framework
+      if (!started) {
+        throw Exception('Could not start cast session');
+      }
+
+      // Wait until the native session reports a connected state
+      final deadline = DateTime.now().add(_connectTimeout);
+      while (DateTime.now().isBefore(deadline)) {
+        if (_isDisposed) return false;
+        final connectionState =
+            GoogleCastSessionManager.instance.connectionState;
+        if (connectionState == GoogleCastConnectState.connected) break;
+        if (connectionState == GoogleCastConnectState.disconnected &&
+            DateTime.now()
+                .isAfter(deadline.subtract(_connectTimeout ~/ 2))) {
+          throw Exception('Cast session disconnected while connecting');
+        }
+        await Future.delayed(const Duration(milliseconds: 250));
+      }
+
+      if (GoogleCastSessionManager.instance.connectionState !=
+          GoogleCastConnectState.connected) {
+        throw Exception('Timed out connecting to ${device.name}');
+      }
+
       _connectedDevice = device.copyWith(isConnected: true);
       _updateState(CastState.connected);
-
       debugPrint('✅ Connected to ${device.name}');
       return true;
     } catch (e) {
       debugPrint('❌ Connection error: $e');
-      _updateState(CastState.idle);
+      if (!_isDisposed) _updateState(CastState.idle);
       return false;
     }
   }
 
   Future<void> disconnect() async {
-    if (_connectedDevice == null || _isDisposed) return;
+    if (_connectedDevice == null && _state == CastState.idle) return;
 
     try {
       _updateState(CastState.disconnecting);
-      debugPrint('🔌 Disconnecting from ${_connectedDevice!.name}...');
-
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      _connectedDevice = null;
-      _updateState(CastState.idle);
-
+      debugPrint('🔌 Disconnecting from cast session...');
+      await GoogleCastSessionManager.instance.endSessionAndStopCasting();
       debugPrint('✅ Disconnected');
     } catch (e) {
       debugPrint('❌ Disconnect error: $e');
-      _updateState(CastState.idle);
+    } finally {
+      if (!_isDisposed) _updateState(CastState.idle);
     }
   }
 
@@ -166,16 +249,30 @@ class ChromecastService {
     String? thumbnailUrl,
     Duration? startPosition,
   }) async {
-    if (_connectedDevice == null || _state != CastState.connected) {
+    if (_state != CastState.connected) {
       debugPrint('⚠️ Not connected to any device');
       return false;
     }
 
     try {
-      debugPrint('📺 Loading media on ${_connectedDevice!.name}: $url');
+      debugPrint('📺 Loading media on cast device: $url');
 
-      // In production, this would use cast_framework RemoteMediaClient
-      await Future.delayed(const Duration(seconds: 1));
+      await GoogleCastRemoteMediaClient.instance.loadMedia(
+        GoogleCastMediaInformation(
+          contentId: url,
+          streamType: CastMediaStreamType.buffered,
+          contentType: _contentTypeFor(url),
+          contentUrl: Uri.parse(url),
+          metadata: GoogleCastGenericMediaMetadata(
+            title: title,
+            images: thumbnailUrl != null
+                ? [GoogleCastImage(url: Uri.parse(thumbnailUrl))]
+                : null,
+          ),
+        ),
+        autoPlay: true,
+        playPosition: startPosition ?? Duration.zero,
+      );
 
       debugPrint('✅ Media loaded');
       return true;
@@ -190,7 +287,7 @@ class ChromecastService {
 
     try {
       debugPrint('▶️ Cast: Play');
-      // Implementation would call RemoteMediaClient.play()
+      await GoogleCastRemoteMediaClient.instance.play();
     } catch (e) {
       debugPrint('❌ Cast play error: $e');
     }
@@ -201,7 +298,7 @@ class ChromecastService {
 
     try {
       debugPrint('⏸️ Cast: Pause');
-      // Implementation would call RemoteMediaClient.pause()
+      await GoogleCastRemoteMediaClient.instance.pause();
     } catch (e) {
       debugPrint('❌ Cast pause error: $e');
     }
@@ -212,7 +309,9 @@ class ChromecastService {
 
     try {
       debugPrint('⏩ Cast: Seek to ${position.inSeconds}s');
-      // Implementation would call RemoteMediaClient.seek()
+      await GoogleCastRemoteMediaClient.instance.seek(
+        GoogleCastMediaSeekOption(position: position),
+      );
     } catch (e) {
       debugPrint('❌ Cast seek error: $e');
     }
@@ -224,7 +323,7 @@ class ChromecastService {
     try {
       final clampedVolume = volume.clamp(0.0, 1.0);
       debugPrint('🔊 Cast: Volume ${(clampedVolume * 100).toInt()}%');
-      // Implementation would call CastSession.setVolume()
+      GoogleCastSessionManager.instance.setDeviceVolume(clampedVolume);
     } catch (e) {
       debugPrint('❌ Cast volume error: $e');
     }
@@ -235,21 +334,42 @@ class ChromecastService {
 
     try {
       debugPrint('⏹️ Cast: Stop');
-      // Implementation would call RemoteMediaClient.stop()
+      await GoogleCastRemoteMediaClient.instance.stop();
     } catch (e) {
       debugPrint('❌ Cast stop error: $e');
     }
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ STATE
+  // ✅ HELPERS
   // ═══════════════════════════════════════════════════════
+
+  String _contentTypeFor(String url) {
+    final path = url.toLowerCase().split('?').first;
+    if (path.endsWith('.m3u8')) return 'application/x-mpegurl';
+    if (path.endsWith('.mpd')) return 'application/dash+xml';
+    if (path.endsWith('.mkv')) return 'video/x-matroska';
+    if (path.endsWith('.webm')) return 'video/webm';
+    if (path.endsWith('.mov')) return 'video/quicktime';
+    if (path.endsWith('.avi')) return 'video/x-msvideo';
+    if (path.endsWith('.mp3')) return 'audio/mp3';
+    if (path.endsWith('.flac')) return 'audio/flac';
+    if (path.endsWith('.wav')) return 'audio/wav';
+    if (path.endsWith('.m4a') || path.endsWith('.aac')) return 'audio/mp4';
+    return 'video/mp4';
+  }
 
   void _updateState(CastState newState) {
     if (_isDisposed) return;
     _state = newState;
     if (!_stateController.isClosed) {
       _stateController.add(_state);
+    }
+  }
+
+  void _emitDevices() {
+    if (!_devicesController.isClosed) {
+      _devicesController.add(List.unmodifiable(_devices));
     }
   }
 
@@ -261,9 +381,7 @@ class ChromecastService {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    _scanTimer?.cancel();
-
-    disconnect();
+    stopDiscovery();
 
     if (!_stateController.isClosed) {
       _stateController.close();

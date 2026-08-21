@@ -29,6 +29,17 @@ class _ChromecastDialogWidgetState
   }
 
   @override
+  void dispose() {
+    // Stop discovery when dialog closes (saves battery)
+    try {
+      ref.read(chromecastServiceProvider).stopDiscovery();
+    } catch (e) {
+      debugPrint('❌ Stop discovery error: $e');
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final castState = ref.watch(chromecastStateProvider).asData?.value;
     final devicesAsync = ref.watch(chromecastDevicesProvider);
@@ -64,6 +75,41 @@ class _ChromecastDialogWidgetState
                     ),
                   ),
                   const Spacer(),
+                  // Refresh
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        try {
+                          service.startDiscovery();
+                        } catch (e) {
+                          debugPrint('❌ Refresh error: $e');
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: service.isScanning
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.lightBlueAccent,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.refresh,
+                                color: Colors.white54,
+                                size: 22,
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  // Close
                   Material(
                     color: Colors.transparent,
                     child: InkWell(

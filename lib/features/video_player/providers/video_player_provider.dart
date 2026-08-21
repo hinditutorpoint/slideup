@@ -412,6 +412,10 @@ class VideoPlayerNotifier extends Notifier<VideoPlayerState> {
     try {
       await _addCurrentToRecent();
       await service.stop();
+      // Playback has ended — drop the loaded-playlist reference so a later
+      // re-open of the same videos isn't mistaken for "already playing"
+      // (which would skip openPlaylist and never start playback).
+      _currentPlaylist = null;
     } catch (e) {
       debugPrint('❌ Stop error: $e');
     }

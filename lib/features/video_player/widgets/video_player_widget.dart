@@ -102,11 +102,20 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
       // and recreated on restore — a fresh initState would otherwise re-open
       // the playlist from its ORIGINAL start index at position 0, losing the
       // current item and playback position. Only open when no equivalent
-      // playlist is already loaded.
+      // playlist is ALREADY ACTIVELY LOADED. After a normal close the player
+      // was stopped(), so the stale playlist reference must NOT count as
+      // loaded — otherwise re-opening the same videos would never start
+      // playing until the app restarted.
       final existing = notifier.currentPlaylist;
+      final playerState = ref.read(videoPlayerProvider);
+      final stillActive = playerState.currentUrl.isNotEmpty &&
+          (playerState.isPlaying ||
+              playerState.isBuffering ||
+              playerState.position > Duration.zero);
       final alreadyLoaded =
           !notifier.isDisposed &&
           existing != null &&
+          stillActive &&
           _playlistMatches(existing, widget.playlist);
 
       if (!alreadyLoaded) {

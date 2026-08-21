@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:path/path.dart' as p;
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
+import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import '../../../core/utils/download_location_helper.dart';
 
 import '../models/video_player_state.dart';
@@ -38,8 +39,11 @@ class ControlsOverlayWidget extends ConsumerStatefulWidget {
 }
 
 class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
+  final _SceneCaptureController _capture = _SceneCaptureController();
+
   @override
   void dispose() {
+    _capture.dispose();
     try {
       widget.onDispose?.call();
     } catch (e) {
@@ -65,12 +69,20 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
           : widget.playlist.currentMedia?.title ?? 'Loading...';
       final currentTitle = title;
 
-      return AnimatedOpacity(
-        opacity: playerState.showControls ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 200),
-        child: IgnorePointer(
-          ignoring: !playerState.showControls,
-          child: Stack(
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          // Scene capture indicator — stays visible even when controls hide
+          _SceneCaptureOverlay(
+            playerState: playerState,
+            capture: _capture,
+          ),
+          AnimatedOpacity(
+            opacity: playerState.showControls ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !playerState.showControls,
+              child: Stack(
             fit: StackFit.expand,
             children: [
               // Non-interactive gradient background so gestures (double-tap
@@ -115,6 +127,7 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
                       playlist: widget.playlist,
                       playerState: playerState,
                       onInteraction: _keepControlsVisible,
+                      capture: _capture,
                     ),
                   ],
                 ),
@@ -122,6 +135,8 @@ class _ControlsOverlayWidgetState extends ConsumerState<ControlsOverlayWidget> {
             ],
           ),
         ),
+      ),
+        ],
       );
     } catch (e) {
       debugPrint('❌ ControlsOverlayWidget build error: $e');
@@ -493,11 +508,13 @@ class _BottomBar extends ConsumerWidget {
   final PlayerPlaylist playlist;
   final VideoPlayerState playerState;
   final VoidCallback onInteraction;
+  final _SceneCaptureController capture;
 
   const _BottomBar({
     required this.playlist,
     required this.playerState,
     required this.onInteraction,
+    required this.capture,
   });
 
   @override
@@ -567,9 +584,9 @@ class _BottomBar extends ConsumerWidget {
                                   onInteraction: onInteraction,
                                 ),
 
-                                // Scene Capture (hold to record)
+                                // Scene Capture (arm → cut → cancel)
                                 _SceneCaptureButton(
-                                  playerState: playerState,
+                                  capture: capture,
                                   onInteraction: onInteraction,
                                 ),
 
@@ -829,71 +846,193 @@ class _ScreenshotButton extends ConsumerWidget {
 }
 
 // ═══════════════════════════════════════════════════════
-// ✅ SCENE CAPTURE BUTTON - Hold to Capture, Release to Save
+// ✅ SCENE CAPTURE — arm → cut → cancel (icon-only, tiny)
 // ═══════════════════════════════════════════════════════
 
-class _SceneCaptureButton extends StatefulWidget {
-  final VideoPlayerState playerState;
+enum _CapturePhase { off, armed, cutting, done }
+
+/// Shared state between the controls-row toggle and the frame overlay.
+class _SceneCaptureController extends ChangeNotifier {
+  _CapturePhase phase = _CapturePhase.off;
+  double progress = 0;
+
+  VoidCallback? onToggleRequested;
+
+  void requestToggle() => onToggleRequested?.call();
+
+  void setPhase(_CapturePhase value) {
+    phase = value;
+    if (value != _CapturePhase.cutting) progress = 0;
+    notifyListeners();
+  }
+
+  void setProgress(double value) {
+    final v = value.clamp(0.0, 1.0);
+    if ((v - progress).abs() < 0.005) return;
+    progress = v;
+    notifyListeners();
+  }
+}
+
+/// Icon-only toggle living in the controls row.
+/// Disabled while a capture process is running; re-enabled when done.
+class _SceneCaptureButton extends StatelessWidget {
+  final _SceneCaptureController capture;
   final VoidCallback onInteraction;
 
   const _SceneCaptureButton({
-    required this.playerState,
+    required this.capture,
     required this.onInteraction,
   });
 
   @override
-  State<_SceneCaptureButton> createState() => _SceneCaptureButtonState();
-}
-
-class _SceneCaptureButtonState extends State<_SceneCaptureButton> {
-  bool _isRecording = false;
-  Duration _startPos = Duration.zero;
-
-  void _startCapture() {
-    setState(() {
-      _isRecording = true;
-      _startPos = widget.playerState.position;
-    });
-    HapticFeedback.mediumImpact();
-  }
-
-  void _stopCapture() {
-    if (!_isRecording) return;
-    final endPos = widget.playerState.position;
-    setState(() => _isRecording = false);
-    HapticFeedback.mediumImpact();
-    _trimAndSave(widget.playerState.currentUrl, _startPos, endPos);
-  }
-
-  Future<void> _trimAndSave(
-    String inputUrl,
-    Duration start,
-    Duration end,
-  ) async {
-    if (!mounted) return;
-    final ctx = context;
-    if (start >= end) {
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(
-            content: Text('Clip too short — hold longer to capture'),
-            duration: Duration(seconds: 2),
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: capture,
+      builder: (context, _) {
+        final phase = capture.phase;
+        final busy = phase != _CapturePhase.off;
+        final cutting = phase == _CapturePhase.cutting;
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            highlightColor: Colors.white10,
+            onTap: busy
+                ? null
+                : () {
+                    onInteraction();
+                    capture.requestToggle();
+                  },
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: Center(
+                  child: cutting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.redAccent),
+                          ),
+                        )
+                      : AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, anim) =>
+                              ScaleTransition(scale: anim, child: child),
+                          child: Icon(
+                            phase == _CapturePhase.armed
+                                ? Icons.fiber_manual_record
+                                : Icons.content_cut,
+                            key: ValueKey(phase),
+                            color: phase == _CapturePhase.armed
+                                ? Colors.redAccent
+                                : Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                ),
+              ),
+            ),
           ),
         );
-      }
+      },
+    );
+  }
+}
+
+/// Always-visible pill at the top-right of the video frame.
+/// Lives outside the fading controls so state is never hidden.
+class _SceneCaptureOverlay extends StatefulWidget {
+  final VideoPlayerState playerState;
+  final _SceneCaptureController capture;
+
+  const _SceneCaptureOverlay({
+    required this.playerState,
+    required this.capture,
+  });
+
+  @override
+  State<_SceneCaptureOverlay> createState() => _SceneCaptureOverlayState();
+}
+
+class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
+    with SingleTickerProviderStateMixin {
+  static const _doneFlash = Duration(milliseconds: 900);
+
+  AnimationController? _pulse;
+  Duration _startPos = Duration.zero;
+  String? _armedUrl;
+  FFmpegSession? _session;
+  bool _cancelRequested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    )..repeat(reverse: true);
+    widget.capture.onToggleRequested = _handleToggle;
+  }
+
+  @override
+  void didUpdateWidget(covariant _SceneCaptureOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.playerState.currentUrl != oldWidget.playerState.currentUrl &&
+        widget.capture.phase != _CapturePhase.off) {
+      _reset(cancelCut: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.capture.onToggleRequested = null;
+    _pulse?.dispose();
+    final s = _session;
+    if (s != null) {
+      try {
+        FFmpegKit.cancel(s.getSessionId());
+      } catch (_) {}
+    }
+    super.dispose();
+  }
+
+  void _handleToggle() {
+    final phase = widget.capture.phase;
+    if (phase == _CapturePhase.off) {
+      _arm();
+    } else if (phase == _CapturePhase.armed) {
+      _beginCut();
+    }
+  }
+
+  void _arm() {
+    _armedUrl = widget.playerState.currentUrl;
+    _startPos = widget.playerState.position;
+    HapticFeedback.selectionClick();
+    widget.capture.setPhase(_CapturePhase.armed);
+  }
+
+  Future<void> _beginCut() async {
+    final url = _armedUrl ?? widget.playerState.currentUrl;
+    final endPos = widget.playerState.position;
+    HapticFeedback.mediumImpact();
+
+    if (endPos - _startPos < const Duration(milliseconds: 300)) {
+      widget.capture.setPhase(_CapturePhase.off);
+      _showSnack('Clip too short');
       return;
     }
 
     final downloadDir = await DownloadLocationHelper.configuredDirectory();
     if (downloadDir == null) {
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(
-            content: Text('No download path set. Please set one in Settings.'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
+      widget.capture.setPhase(_CapturePhase.off);
+      _showSnack('No download path set');
       return;
     }
 
@@ -908,65 +1047,94 @@ class _SceneCaptureButtonState extends State<_SceneCaptureButton> {
         '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
     final outputPath = '${clipsDir.path}/clip_$ts.mp4';
 
-    final startStr = _fmtDur(start);
-    final dur = end - start;
+    final startStr = _fmtDur(_startPos);
+    final dur = endPos - _startPos;
     final durStr = _fmtDur(dur);
 
-    final bool isLocal = !inputUrl.startsWith('http');
+    final bool isLocal = !url.startsWith('http');
     final String command = isLocal
-        ? '-y -ss $startStr -i "$inputUrl" -t $durStr -c copy -avoid_negative_ts make_zero "$outputPath"'
-        : '-y -ss $startStr -i "$inputUrl" -t $durStr -c:v libx264 -c:a aac -movflags +faststart "$outputPath"';
+        ? '-y -ss $startStr -i "$url" -t $durStr -c copy -avoid_negative_ts make_zero "$outputPath"'
+        : '-y -ss $startStr -i "$url" -t $durStr -c:v libx264 -c:a aac -movflags +faststart "$outputPath"';
 
-    if (ctx.mounted) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        SnackBar(
-          content: Text('Capturing ${durStr}s clip...'),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
+    _cancelRequested = false;
+    widget.capture.setPhase(_CapturePhase.cutting);
 
     try {
-      final session = await FFmpegKit.execute(command);
-      final returnCode = await session.getReturnCode();
-
-      if (returnCode != null && returnCode.isValueSuccess()) {
-        if (ctx.mounted) {
-          ScaffoldMessenger.of(ctx).showSnackBar(
-            SnackBar(
-              content: Text('Clip saved: ${p.basename(outputPath)}'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      } else {
-        final log = await session.getAllLogsAsString();
-        final logSnippet = log != null ? log.substring(0, log.length.clamp(0, 500)) : 'no logs';
-        debugPrint('❌ Scene capture failed: $logSnippet');
-        if (ctx.mounted) {
-          ScaffoldMessenger.of(ctx).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to capture clip'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-        try {
-          final f = File(outputPath);
-          if (await f.exists()) await f.delete();
-        } catch (_) {}
-      }
+      final session = await FFmpegKit.executeAsync(
+        command,
+        (s) => _onComplete(s, outputPath),
+        null,
+        (Statistics stats) {
+          final t = stats.getTime();
+          if (t > 0) widget.capture.setProgress(t / dur.inMilliseconds);
+        },
+      );
+      _session = session;
     } catch (e) {
       debugPrint('❌ Scene capture error: $e');
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          SnackBar(
-            content: Text('Capture error: $e'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      widget.capture.setPhase(_CapturePhase.off);
+      _showSnack('Capture error');
+    }
+  }
+
+  Future<void> _onComplete(FFmpegSession session, String outputPath) async {
+    _session = null;
+    if (!mounted) return;
+
+    final rc = await session.getReturnCode();
+    final success = rc != null && rc.isValueSuccess();
+
+    if (!success) {
+      try {
+        final f = File(outputPath);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+    }
+
+    if (_cancelRequested || !success) {
+      if (!_cancelRequested) _showSnack('Failed to capture clip');
+      widget.capture.setPhase(_CapturePhase.off);
+      return;
+    }
+
+    widget.capture.setProgress(1);
+    widget.capture.setPhase(_CapturePhase.done);
+    _showSnack('Clip saved');
+    await Future.delayed(_doneFlash);
+    if (mounted && widget.capture.phase == _CapturePhase.done) {
+      widget.capture.setPhase(_CapturePhase.off);
+    }
+  }
+
+  Future<void> _cancel() async {
+    if (widget.capture.phase != _CapturePhase.cutting) return;
+    _cancelRequested = true;
+    HapticFeedback.selectionClick();
+    try {
+      final s = _session;
+      if (s != null) await FFmpegKit.cancel(s.getSessionId());
+    } catch (_) {}
+  }
+
+  void _reset({required bool cancelCut}) {
+    if (cancelCut && widget.capture.phase == _CapturePhase.cutting) {
+      _cancelRequested = true;
+      final s = _session;
+      if (s != null) {
+        try {
+          FFmpegKit.cancel(s.getSessionId());
+        } catch (_) {}
       }
     }
+    _armedUrl = null;
+    widget.capture.setPhase(_CapturePhase.off);
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
   }
 
   String _fmtDur(Duration d) {
@@ -982,38 +1150,135 @@ class _SceneCaptureButtonState extends State<_SceneCaptureButton> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPressStart: (_) {
-        widget.onInteraction();
-        _startCapture();
-      },
-      onLongPressEnd: (_) => _stopCapture(),
-      onLongPressCancel: () {
-        if (_isRecording) {
-          setState(() => _isRecording = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Capture cancelled'),
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
-      },
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(24),
-          highlightColor: Colors.white10,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Icon(
-              _isRecording ? Icons.fiber_manual_record : Icons.movie_creation_outlined,
-              color: _isRecording ? Colors.redAccent : Colors.white,
-              size: 24,
-            ),
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topRight,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 58, right: 10),
+          child: ListenableBuilder(
+            listenable: widget.capture,
+            builder: (context, _) {
+              final phase = widget.capture.phase;
+              final visible = phase != _CapturePhase.off &&
+                  widget.playerState.showControls;
+              return IgnorePointer(
+                ignoring: !visible,
+                child: AnimatedScale(
+                  scale: visible ? 1.0 : 0.5,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutBack,
+                  child: AnimatedOpacity(
+                    opacity: visible ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Material(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(24),
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        alignment: Alignment.centerRight,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            transitionBuilder: (child, anim) => FadeTransition(
+                              opacity: anim,
+                              child:
+                                  ScaleTransition(scale: anim, child: child),
+                            ),
+                            child: _buildCluster(phase),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCluster(_CapturePhase phase) {
+    switch (phase) {
+      case _CapturePhase.armed:
+        return Row(
+          key: const ValueKey('armed'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Pulsing red recording dot
+            ListenableBuilder(
+              listenable: _pulse!,
+              builder: (context, _) {
+                final t = Curves.easeInOut.transform(_pulse!.value);
+                return Container(
+                  width: 9.0 + 3.0 * t,
+                  height: 9.0 + 3.0 * t,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.redAccent.withValues(alpha: 0.55 + 0.45 * t),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.redAccent.withValues(alpha: 0.4 * t),
+                        blurRadius: 6 + 4 * t,
+                        spreadRadius: t,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            _tinyButton(Icons.stop, Colors.white, _beginCut),
+          ],
+        );
+      case _CapturePhase.cutting:
+        return Row(
+          key: const ValueKey('cutting'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(5),
+              child: ListenableBuilder(
+                listenable: widget.capture,
+                builder: (context, _) => SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: widget.capture.progress > 0
+                        ? widget.capture.progress
+                        : null,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.redAccent),
+                  ),
+                ),
+              ),
+            ),
+            _tinyButton(Icons.close, Colors.white70, _cancel),
+          ],
+        );
+      case _CapturePhase.done:
+        return const Padding(
+          key: ValueKey('done'),
+          padding: EdgeInsets.all(5),
+          child: Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
+        );
+      case _CapturePhase.off:
+        return const SizedBox(key: ValueKey('off'), width: 0, height: 0);
+    }
+  }
+
+  Widget _tinyButton(IconData icon, Color color, VoidCallback onTap) {
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(icon, color: color, size: 15),
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.all(4),
+      constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
     );
   }
 }
