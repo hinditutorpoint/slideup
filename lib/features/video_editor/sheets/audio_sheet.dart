@@ -1399,7 +1399,7 @@ class _AudioSheetState extends ConsumerState<AudioSheet>
     HapticFeedback.mediumImpact();
 
     try {
-      Result<String>? result;
+      late Result<String> result;
 
       switch (effectType) {
         case AudioEffectType.echo:
@@ -1444,11 +1444,9 @@ class _AudioSheetState extends ConsumerState<AudioSheet>
             onProgress: _onProgress,
           );
           break;
-        default:
-          break;
       }
 
-      if (result?.isSuccess == true && mounted) {
+      if (result.isSuccess && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('${effectType.name} applied successfully!'),

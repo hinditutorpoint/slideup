@@ -6,7 +6,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../models/video_edit_settings.dart';
-import '../providers/providers.dart';
+import '../providers/providers.dart' hide ExportJob;
 
 class ExportSheet extends ConsumerStatefulWidget {
   const ExportSheet({super.key});

@@ -1934,9 +1934,9 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     }
 
     try {
-      final result = await ref
-          .read(videoEditServiceProvider)
-          .extractAudio(inputPath: project.videoPath);
+        final result = await ref
+            .read(videoEditServiceProvider)
+            .extractAudio(inputPath: project.videoPath, format: AudioFormat.mp3);
       if (!mounted) return;
 
       if (result.isFailure) {

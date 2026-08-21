@@ -3695,3 +3695,46 @@ class StockVideo {
     );
   }
 }
+
+// ═══════════════════════════════════════════════════════
+// ✅ LEGACY COMPAT SHIMS — restored for sheets/tabs that still import this model
+// ═══════════════════════════════════════════════════════
+
+class AudioInfo {
+  final Duration duration; final int bitrate; final String format; final int fileSize;
+  const AudioInfo({required this.duration, this.bitrate=128, this.format='mp3', this.fileSize=0});
+  String get formattedDuration {
+    final m = duration.inMinutes.remainder(60).toString().padLeft(2,'0');
+    final s = duration.inSeconds.remainder(60).toString().padLeft(2,'0');
+    return '$m:$s';
+  }
+  String get formattedFileSize {
+    if (fileSize < 1024) return '$fileSize B';
+    if (fileSize < 1048576) return '${(fileSize/1024).toStringAsFixed(1)} KB';
+    return '${(fileSize/1048576).toStringAsFixed(1)} MB';
+  }
+}
+
+enum AudioEffectType { echo, compressor, vocalEnhancer, noiseRemoval, bassBoost, trebleBoost, vocalRemoval }
+
+class ExportJob {
+  final String id; final String projectId; final String outputPath; final ExportJobStatus status; final DateTime createdAt;
+  ExportJob({required this.id, required this.projectId, this.outputPath='', this.status=ExportJobStatus.pending, DateTime? createdAt}) : createdAt = createdAt ?? DateTime.now();
+}
+
+@immutable
+class ExportState {
+  final ExportStatus status; final double progress; final String? message; final String? outputPath; final String? error; final Duration elapsed; final Duration? estimated; final List<ExportJob> recentExports; final ExportJob? currentJob;
+  const ExportState({this.status=ExportStatus.idle, this.progress=0, this.message, this.outputPath, this.error, this.elapsed=Duration.zero, this.estimated, this.recentExports=const [], this.currentJob});
+  bool get isExporting => status==ExportStatus.processing||status==ExportStatus.encoding||status==ExportStatus.preparing||status==ExportStatus.saving;
+  bool get isCompleted => status==ExportStatus.completed;
+  bool get isFailed => status==ExportStatus.failed;
+  String get progressPercent => '${(progress*100).toStringAsFixed(0)}%';
+  String get etaFormatted {
+    if (estimated==null) return '--:--';
+    final m=estimated!.inMinutes; final s=estimated!.inSeconds%60; return '${m.toString().padLeft(2,'0')}:${s.toString().padLeft(2,'0')}';
+  }
+  ExportState copyWith({ExportStatus? status,double? progress,String? message,String? outputPath,String? error,Duration? elapsed,Duration? estimated,List<ExportJob>? recentExports,ExportJob? currentJob})=>ExportState(status:status??this.status,progress:progress??this.progress,message:message??this.message,outputPath:outputPath??this.outputPath,error:error??this.error,elapsed:elapsed??this.elapsed,estimated:estimated??this.estimated,recentExports:recentExports??this.recentExports,currentJob:currentJob??this.currentJob);
+}
+
+// MergeItem/MediaType already defined above — legacy shim omits duplicates
