@@ -179,12 +179,17 @@ class _ImageGalleryScreenState extends ConsumerState<ImageGalleryScreen> {
         title: TextField(
           controller: _searchController,
           autofocus: true,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Search images...',
             border: InputBorder.none,
-            hintStyle: TextStyle(color: Colors.white70),
+            hintStyle: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
-          style: const TextStyle(color: Colors.white, fontSize: 18),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface,
+            fontSize: 18,
+          ),
           onChanged: (value) {
             ref.read(imageGalleryProvider.notifier).setSearchQuery(value);
           },

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../providers/media_provider.dart';
+import '../../../../services/thumbnail_service.dart';
 import '../models/player_media.dart';
 import '../providers/video_player_provider.dart';
 
@@ -204,7 +205,9 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
           media: item.media,
           index: originalIndex,
           isPlaying: originalIndex == currentIndex,
-          metaLine: _buildMetaLine(item.media, _lastPlayedById),
+          lastPlayed: _lastPlayedById[item.media.id] ??
+              _lastPlayedById[item.media.url] ??
+              item.media.lastPlayedAt,
           onTap: () => _jumpToIndex(originalIndex),
         );
       },
@@ -293,15 +296,51 @@ class _PlaylistSheetWidgetState extends ConsumerState<PlaylistSheetWidget> {
     if (parts.isEmpty) return null;
     return parts.join('  •  ');
   }
+}
 
-  String _timeAgo(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${time.day}/${time.month}/${time.year}';
+/// Human-readable media type derived from mimeType / URL extension.
+String _mediaTypeLabel(PlayerMedia media) {
+  final mime = media.metadata?['mimeType'] as String?;
+  if (mime != null && mime.isNotEmpty) {
+    final sub = mime.split('/').last.trim().toUpperCase();
+    if (sub.isNotEmpty && sub != 'VIDEO' && sub != '*' && !sub.contains(';')) {
+      // e.g. "video/x-matroska" -> "X-MATROSKA" reads poorly; map common ones
+      const known = {
+        'MP4': 'MP4',
+        'MPEG4': 'MP4',
+        'MATROSKA': 'MKV',
+        'X-MATROSKA': 'MKV',
+        'WEBM': 'WEBM',
+        'QUICKTIME': 'MOV',
+        'X-MSVIDEO': 'AVI',
+        'MPEG': 'MPEG',
+        'MP2T': 'TS',
+        '3GPP': '3GP',
+        'X-FLV': 'FLV',
+      };
+      return known[sub] ?? sub;
+    }
   }
+
+  final clean = media.url.split('?').first.toLowerCase();
+  if (clean.endsWith('.m3u8')) return 'HLS';
+  if (clean.endsWith('.mpd')) return 'DASH';
+  const extensions = [
+    'MP4', 'MKV', 'WEBM', 'MOV', 'AVI', 'M4V', '3GP', 'TS', 'FLV', 'WMV', 'MPG'
+  ];
+  for (final ext in extensions) {
+    if (clean.endsWith('.${ext.toLowerCase()}')) return ext;
+  }
+  return media.url.startsWith('http') ? 'STREAM' : 'VIDEO';
+}
+
+String _timeAgo(DateTime time) {
+  final diff = DateTime.now().difference(time);
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  return '${time.day}/${time.month}/${time.year}';
 }
 
 class _FilteredItem {
@@ -318,14 +357,14 @@ class _PlaylistListItem extends StatelessWidget {
   final PlayerMedia media;
   final int index;
   final bool isPlaying;
-  final String? metaLine;
+  final DateTime? lastPlayed;
   final VoidCallback onTap;
 
   const _PlaylistListItem({
     required this.media,
     required this.index,
     required this.isPlaying,
-    this.metaLine,
+    this.lastPlayed,
     required this.onTap,
   });
 
@@ -391,35 +430,43 @@ class _PlaylistListItem extends StatelessWidget {
           color: isPlaying ? Colors.red : Colors.white,
           fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
         ),
-        maxLines: 2,
+        maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (media.artist != null)
-            Text(
-              media.artist!,
-              style: TextStyle(color: Colors.grey[400], fontSize: 12),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            )
-          else
-            Text(
-              'Video ${index + 1}',
-              style: TextStyle(color: Colors.grey[400], fontSize: 12),
-            ),
-          if (metaLine != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 1),
-              child: Text(
-                metaLine!,
-                style: TextStyle(color: Colors.white54, fontSize: 11),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+          // Line 2: file path / URL
+          Text(
+            media.url,
+            style: TextStyle(color: Colors.grey[500], fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          // Line 3: frame size | duration | file size
+          Text(
+            _metaLine(),
+            style: const TextStyle(color: Colors.white54, fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          // Line 4: media type (left) | last played (right)
+          Row(
+            children: [
+              Text(
+                _mediaTypeLabel(media),
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
               ),
-            ),
+              const Spacer(),
+              if (lastPlayed != null)
+                Text(
+                  'Played ${_timeAgo(lastPlayed!)}',
+                  style:
+                      const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+            ],
+          ),
         ],
       ),
       trailing: isPlaying
@@ -428,31 +475,18 @@ class _PlaylistListItem extends StatelessWidget {
     );
   }
 
-  Widget _buildThumbnail() {
-    if (media.thumbnailPath != null) {
-      // Check if it's a file path or URL
-      if (media.thumbnailPath!.startsWith('http')) {
-        return Image.network(
-          media.thumbnailPath!,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholder(),
-        );
-      } else {
-        return Image.file(
-          File(media.thumbnailPath!),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholder(),
-        );
-      }
-    }
-    return _buildPlaceholder();
+  /// "frame size | duration | file size", skipping missing parts.
+  String _metaLine() {
+    final parts = <String>[
+      if (media.resolutionText != null) media.resolutionText!,
+      if (media.duration != null) media.durationFormatted,
+      if (media.fileSizeText != null) media.fileSizeText!,
+    ];
+    return parts.isEmpty ? 'Video ${index + 1}' : parts.join(' | ');
   }
 
-  Widget _buildPlaceholder() {
-    return Container(
-      color: Colors.grey[800],
-      child: const Icon(Icons.movie, color: Colors.white38, size: 24),
-    );
+  Widget _buildThumbnail() {
+    return _MediaThumbnail(media: media);
   }
 }
 
@@ -604,28 +638,70 @@ class _PlaylistGridItem extends StatelessWidget {
   }
 
   Widget _buildThumbnail() {
-    if (media.thumbnailPath != null) {
-      if (media.thumbnailPath!.startsWith('http')) {
+    return _MediaThumbnail(media: media, iconSize: 32);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ LAZY THUMBNAIL (generates on demand for local files)
+// ═══════════════════════════════════════════════════════
+
+/// Shows media.thumbnailPath when available; otherwise lazily generates a
+/// cached thumbnail via ThumbnailService for local files. Covers the case
+/// where playback starts from sources (e.g. file browser) whose MediaFile
+/// models don't carry a stored thumbnailPath.
+class _MediaThumbnail extends StatelessWidget {
+  final PlayerMedia media;
+  final double iconSize;
+
+  const _MediaThumbnail({
+    required this.media,
+    this.iconSize = 24,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tp = media.thumbnailPath;
+    if (tp != null && tp.isNotEmpty) {
+      if (tp.startsWith('http')) {
         return Image.network(
-          media.thumbnailPath!,
+          tp,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholder(),
-        );
-      } else {
-        return Image.file(
-          File(media.thumbnailPath!),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholder(),
+          errorBuilder: (_, __, ___) => _placeholder(),
         );
       }
+      return Image.file(
+        File(tp),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
     }
-    return _buildPlaceholder();
+
+    final url = media.url;
+    if (!url.startsWith('http')) {
+      return FutureBuilder<String?>(
+        future: ThumbnailService.instance.getThumbnail(url),
+        builder: (context, snap) {
+          final p = snap.data;
+          if (snap.connectionState == ConnectionState.done && p != null) {
+            return Image.file(
+              File(p),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _placeholder(),
+            );
+          }
+          return _placeholder();
+        },
+      );
+    }
+
+    return _placeholder();
   }
 
-  Widget _buildPlaceholder() {
+  Widget _placeholder() {
     return Container(
-      color: Colors.grey[700],
-      child: const Icon(Icons.movie, color: Colors.white38, size: 32),
+      color: Colors.grey[800],
+      child: Icon(Icons.movie, color: Colors.white38, size: iconSize),
     );
   }
 }

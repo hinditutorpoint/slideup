@@ -12,6 +12,29 @@ class PermissionService {
   static final PermissionService instance = PermissionService._();
   PermissionService._();
 
+  /// Probe directories for the real-world write test below. Ordered from
+  /// most likely writable to fallback.
+  static const List<String> _writeProbeDirs = [
+    '/storage/emulated/0/Download',
+    '/storage/emulated/0',
+    '/sdcard',
+  ];
+
+  /// MANAGE_EXTERNAL_STORAGE status is unreliable on several OEM ROMs
+  /// (OPPO/ColorOS, Vivo, Xiaomi): the plugin reports "denied" even when
+  /// "All files access" is enabled in system settings. This probe performs
+  /// an actual create/read/delete round-trip and is used as the source of
+  /// truth whenever the reported status looks denied.
+  Future<bool> _canActuallyWrite() async {
+    for (final dir in _writeProbeDirs) {
+      if (await _testWriteCapability(dir)) {
+        debugPrint('✅ Write probe succeeded in $dir (OEM status was wrong)');
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Check if the app has all required permissions including write
   Future<bool> hasAllPermissions() async {
     if (Platform.isAndroid) {
@@ -54,8 +77,12 @@ class PermissionService {
       final androidInfo = await deviceInfo.androidInfo;
 
       if (androidInfo.version.sdkInt >= 30) {
-        // Android 11+ requires MANAGE_EXTERNAL_STORAGE for full write access
-        return await Permission.manageExternalStorage.status.isGranted;
+        // Android 11+ requires MANAGE_EXTERNAL_STORAGE for full write access.
+        // The reported status lies on some OEM ROMs — verify with a real
+        // write probe before concluding "denied".
+        final status = await Permission.manageExternalStorage.status;
+        if (status.isGranted) return true;
+        return await _canActuallyWrite();
       } else {
         // Android 10 and below use regular storage permission
         return await Permission.storage.status.isGranted;
@@ -185,8 +212,11 @@ class PermissionService {
       final androidInfo = await deviceInfo.androidInfo;
 
       if (androidInfo.version.sdkInt >= 30) {
-        // Android 11+ - Check MANAGE_EXTERNAL_STORAGE
-        return await Permission.manageExternalStorage.status.isGranted;
+        // Android 11+ - Check MANAGE_EXTERNAL_STORAGE. Status can be wrong
+        // on OPPO/ColorOS & friends, so confirm with a real write probe.
+        final status = await Permission.manageExternalStorage.status;
+        if (status.isGranted) return true;
+        return await _canActuallyWrite();
       } else {
         // Android 10 and below - Check regular storage permission
         return await Permission.storage.status.isGranted;
@@ -259,16 +289,25 @@ class PermissionService {
         return true;
       }
 
-      // On OEM-restricted devices (Xiaomi, Huawei, etc.) the normal request
-      // may silently fail. Open the system settings page directly so the
-      // user can toggle "All files access" manually.
+      // On OEM-restricted devices (OPPO/ColorOS, Vivo, Xiaomi, etc.) the
+      // reported status can stay "denied" even though "All files access"
+      // is already enabled. If we can really write, treat it as granted
+      // instead of annoying the user with another prompt.
+      if (await _canActuallyWrite()) {
+        debugPrint(
+            '✅ Write probe succeeded despite status=$status — treating as granted');
+        return true;
+      }
+
+      // Genuinely not granted: open the system settings page directly so
+      // the user can toggle "All files access" manually.
       debugPrint('⚠️ MANAGE_EXTERNAL_STORAGE not granted ($status), opening settings page');
       await SafService.instance.openManageStorageSettings();
 
       // Give the user time to toggle; then re-check
       await Future.delayed(const Duration(seconds: 2));
       final recheck = await Permission.manageExternalStorage.status;
-      if (recheck.isGranted) {
+      if (recheck.isGranted || await _canActuallyWrite()) {
         debugPrint('✅ MANAGE_EXTERNAL_STORAGE granted after settings redirect');
         return true;
       }

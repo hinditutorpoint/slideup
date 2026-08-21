@@ -266,12 +266,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen>
         title: TextField(
           controller: _searchController,
           autofocus: true,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Search files and folders...',
             border: InputBorder.none,
-            hintStyle: TextStyle(color: Colors.white70),
+            hintStyle: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           onChanged: (value) => notifier.search(value),
           onSubmitted: (value) => notifier.search(value),
         ),

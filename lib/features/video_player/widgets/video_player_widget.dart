@@ -184,11 +184,20 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
 
       switch (state) {
         case AppLifecycleState.paused:
-        case AppLifecycleState.inactive:
-          if (playerState.mode != PlayerMode.pip &&
+          // Respect the app's background-playback setting: when enabled,
+          // keep playing in the background (audio continues) instead of
+          // force-pausing. Native PiP / background modes always continue.
+          final bgEnabled =
+              ref.read(settingsProvider).backgroundAudioEnabled;
+          if (!bgEnabled &&
+              playerState.mode != PlayerMode.pip &&
               playerState.mode != PlayerMode.background) {
             notifier.pause();
           }
+          break;
+        case AppLifecycleState.inactive:
+          // Transient state (notification shade, permission dialogs) —
+          // real backgrounding lands in 'paused'; don't kill playback here.
           break;
         case AppLifecycleState.resumed:
           break;
@@ -370,10 +379,10 @@ class _VideoPlayerWidgetState extends ConsumerState<VideoPlayerWidget>
               NetworkClockOverlayWidget(visible: !playerState.showControls),
 
             // Layer 6: Controls overlay
-            if (isReady &&
-                playerState.showControls &&
-                !playerState.isLocked &&
-                !pipState.isNativeActive)
+            // Always mounted (not tied to showControls) so the scene-capture
+            // overlay survives controls auto-hide; visibility is handled
+            // internally via AnimatedOpacity + IgnorePointer.
+            if (isReady && !pipState.isNativeActive)
               ControlsOverlayWidget(
                 playlist: widget.playlist,
                 onBack: _handleBack,

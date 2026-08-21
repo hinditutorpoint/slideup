@@ -1153,14 +1153,20 @@ class _SceneCaptureOverlayState extends State<_SceneCaptureOverlay>
     return SafeArea(
       child: Align(
         alignment: Alignment.topRight,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 58, right: 10),
+        // Sits below the top bar while controls are visible, then glides up
+        // to the video frame's top-right corner when controls hide.
+        child: AnimatedPadding(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          padding: EdgeInsets.only(
+            top: widget.playerState.showControls ? 58 : 8,
+            right: 10,
+          ),
           child: ListenableBuilder(
             listenable: widget.capture,
             builder: (context, _) {
               final phase = widget.capture.phase;
-              final visible = phase != _CapturePhase.off &&
-                  widget.playerState.showControls;
+              final visible = phase != _CapturePhase.off;
               return IgnorePointer(
                 ignoring: !visible,
                 child: AnimatedScale(
