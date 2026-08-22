@@ -47,10 +47,24 @@ class FileOperationResult {
 
 class FileOperationsService {
   static final FileOperationsService instance = FileOperationsService._();
-  FileOperationsService._();
+  FileOperationsService._() {
+    _loadSafVolumes();
+  }
+
+  /// Restores persisted SAF tree grants so [_needsSaf] routes removable
+  /// volume writes through SAF even before any picker ran this session.
+  Future<void> _loadSafVolumes() async {
+    try {
+      _safVolumes.addAll(await SafService.instance.getStoredTrees());
+    } catch (_) {}
+  }
 
   List<FileSystemEntity> _clipboard = [];
   FileOperation? _currentOperation;
+
+  /// Volume IDs (e.g. `XXXX-XXXX`) that have SAF tree access granted.
+  /// Paths under these volumes must route writes/deletes through SAF.
+  final Set<String> _safVolumes = {};
 
   // Progress callback for long operations
   Function(int current, int total, String currentFile)? onProgress;
@@ -60,12 +74,73 @@ class FileOperationsService {
   FileOperation? get currentOperation => _currentOperation;
   bool get hasClipboard => _clipboard.isNotEmpty;
 
-  Future<bool> _checkWritePermissionForOperation(String path) async {
-    final hasPermission = await PermissionService.instance.isPathWritable(path);
-    if (!hasPermission) {
-      debugPrint('❌ No write permission for path: $path');
+  Future<bool> _checkWritePermissionForOperation(String opPath) async {
+    // A persisted SAF tree grant means the volume is writable through SAF
+    // even though raw-path writes stay blocked — skip both the write test
+    // and the picker prompt.
+    if (PermissionService.instance.isRemovableStorage(opPath)) {
+      if (await SafService.instance.hasTree(opPath)) {
+        final segments = opPath.split('/');
+        if (segments.length >= 3) _safVolumes.add(segments[2]);
+        debugPrint('✅ Reusing persisted SAF tree for: $opPath');
+        return true;
+      }
     }
-    return hasPermission;
+
+    final hasPermission =
+        await PermissionService.instance.isPathWritable(opPath);
+    if (hasPermission) return true;
+
+    if (PermissionService.instance.isRemovableStorage(opPath)) {
+      debugPrint('🔄 Removable storage blocked — requesting SAF tree access…');
+      final treeUri = await SafService.instance.pickTree();
+      if (treeUri != null) {
+        final stored = await SafService.instance.storeTree(treeUri);
+        if (stored != null) {
+          debugPrint('✅ SAF tree granted for volume: $stored');
+          _safVolumes.add(stored);
+          return true;
+        }
+      }
+      debugPrint('❌ SAF tree access not granted for: $opPath');
+    }
+
+    debugPrint('❌ No write permission for path: $opPath');
+    return false;
+  }
+
+  /// Returns `true` if [opPath] is on a removable volume with SAF access.
+  bool _needsSaf(String opPath) {
+    if (!PermissionService.instance.isRemovableStorage(opPath)) return false;
+    final segments = opPath.split('/');
+    if (segments.length >= 3 && segments[0] == '' && segments[1] == 'storage') {
+      return _safVolumes.contains(segments[2]);
+    }
+    return false;
+  }
+
+  /// SAF-based file write: reads source bytes, writes through SAF channel.
+  Future<bool> _safCopyFile(File source, String destPath) async {
+    try {
+      final bytes = await source.readAsBytes();
+      final result = await SafService.instance.writeFile(destPath, bytes);
+      return result == 'ok';
+    } catch (e) {
+      debugPrint('❌ SAF copy failed: $e');
+      return false;
+    }
+  }
+
+  /// SAF-based file delete.
+  Future<bool> _safDeleteFile(String filePath) async {
+    final result = await SafService.instance.deleteFile(filePath);
+    return result == 'ok';
+  }
+
+  /// SAF-based move: copy then delete source.
+  Future<bool> _safMoveFile(File source, String destPath) async {
+    if (!await _safCopyFile(source, destPath)) return false;
+    return await _safDeleteFile(source.path);
   }
 
   /// Enhanced create folder with permission check
@@ -178,26 +253,44 @@ class FileOperationsService {
       int safDeleted = 0;
 
       for (final file in files) {
-        final fileDir = file.parent.path;
-        if (await _checkWritePermissionForOperation(fileDir)) {
+        final filePath = file.path;
+
+        // Removable volumes block raw unlink even when the write-permission
+        // check passes, so always route them through SAF first. The native
+        // side reads its persisted tree grants directly, so this works
+        // regardless of the in-memory [_safVolumes] cache.
+        if (PermissionService.instance.isRemovableStorage(filePath)) {
+          final safResult = await SafService.instance.deleteFile(filePath);
+          switch (safResult) {
+            case 'ok':
+              safDeleted++;
+              debugPrint('🗑️ Deleted via SAF: $filePath');
+              continue;
+            case 'needs_tree':
+              needsTree = true;
+              debugPrint('🔑 SAF tree access needed for: $filePath');
+              continue;
+            default:
+              return FileOperationResult(
+                success: false,
+                error: 'Could not delete ${path.basename(filePath)} from '
+                    'removable storage.',
+                processedCount: safDeleted,
+                totalCount: files.length,
+              );
+          }
+        }
+
+        if (await _checkWritePermissionForOperation(file.parent.path)) {
           rawDeletable.add(file);
           continue;
         }
 
-        final safResult = await SafService.instance.deleteFile(file.path);
-        if (safResult == 'ok') {
-          safDeleted++;
-          debugPrint('🗑️ Deleted via SAF: ${file.path}');
-        } else if (safResult == 'needs_tree') {
-          needsTree = true;
-          rawDeletable.add(file);
-        } else {
-          return FileOperationResult(
-            success: false,
-            error: 'No write permission to delete files from this location.',
-            totalCount: files.length,
-          );
-        }
+        return FileOperationResult(
+          success: false,
+          error: 'No write permission to delete files from this location.',
+          totalCount: files.length,
+        );
       }
 
       final rawResult = rawDeletable.isEmpty
@@ -296,16 +389,27 @@ class FileOperationsService {
           final fileName = path.basename(file.path);
           final newPath = path.join(destinationPath, fileName);
 
-          // Call progress callback if available
           final progressCallback = onProgress;
           if (progressCallback != null) {
             progressCallback(processedCount, totalCount, fileName);
           }
 
+          final useSaf = _needsSaf(newPath);
+
           if (_currentOperation == FileOperation.copy) {
-            await _copyFileOrDirectory(file, newPath);
+            if (useSaf && file is File) {
+              final ok = await _safCopyFile(file, newPath);
+              if (!ok) throw Exception('SAF write failed');
+            } else {
+              await _copyFileOrDirectory(file, newPath);
+            }
           } else if (_currentOperation == FileOperation.cut) {
-            await _moveFileOrDirectory(file, newPath);
+            if (useSaf && file is File) {
+              final ok = await _safMoveFile(file, newPath);
+              if (!ok) throw Exception('SAF move failed');
+            } else {
+              await _moveFileOrDirectory(file, newPath);
+            }
           }
 
           processedCount++;
@@ -381,7 +485,12 @@ class FileOperationsService {
             progressCallback(processedCount, totalCount, fileName);
           }
 
-          await _moveFileOrDirectory(file, newPath);
+          if (_needsSaf(newPath) && file is File) {
+            final ok = await _safMoveFile(file, newPath);
+            if (!ok) throw Exception('SAF move failed');
+          } else {
+            await _moveFileOrDirectory(file, newPath);
+          }
           processedCount++;
         } catch (e) {
           errors.add('${path.basename(file.path)}: $e');
@@ -508,7 +617,15 @@ class FileOperationsService {
         );
       }
 
-      await file.rename(newPath);
+      if (_needsSaf(newPath) && file is File) {
+        // SAF rename: read → write to new path → delete old
+        final bytes = await file.readAsBytes();
+        final writeResult = await SafService.instance.writeFile(newPath, bytes);
+        if (writeResult != 'ok') throw Exception('SAF rename write failed: $writeResult');
+        await _safDeleteFile(file.path);
+      } else {
+        await file.rename(newPath);
+      }
       debugPrint('✏️ Renamed: ${file.path} → $newPath');
 
       return const FileOperationResult(
@@ -551,7 +668,19 @@ class FileOperationsService {
       }
 
       final directory = Directory(newPath);
-      await directory.create(recursive: true);
+
+      if (_needsSaf(newPath)) {
+        // SAF can't mkdir directly — write an empty placeholder to create the folder.
+        final result = await SafService.instance.writeFile(
+          path.join(newPath, '.nomedia'),
+          Uint8List(0),
+        );
+        if (result != 'ok' && result != 'needs_tree') {
+          throw Exception('SAF folder create failed: $result');
+        }
+      } else {
+        await directory.create(recursive: true);
+      }
       debugPrint('📁 Created folder: $newPath');
 
       return const FileOperationResult(
@@ -594,8 +723,16 @@ class FileOperationsService {
         );
       }
 
-      final file = File(newPath);
-      await file.writeAsString(content);
+      if (_needsSaf(newPath)) {
+        final result = await SafService.instance.writeFile(
+          newPath,
+          Uint8List.fromList(content.codeUnits),
+        );
+        if (result != 'ok') throw Exception('SAF write failed: $result');
+      } else {
+        final file = File(newPath);
+        await file.writeAsString(content);
+      }
       debugPrint('📄 Created file: $newPath');
 
       return const FileOperationResult(

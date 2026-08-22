@@ -52,5 +52,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>SlideUp needs access to your photo library to browse and add photos, videos, and audio to your projects.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SlideUp needs access to save media to your photo library.</string>
 </dict>
 </plist>

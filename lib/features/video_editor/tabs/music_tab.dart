@@ -38,6 +38,7 @@ class _MusicTabState extends State<MusicTab>
   Timer? _debounce;
 
   String? _playingTrackId;
+  String? _loadingPreviewTrackId;
   bool _isPlaying = false;
   Duration _currentPosition = Duration.zero;
   StreamSubscription? _positionSub;
@@ -570,11 +571,19 @@ class _MusicTabState extends State<MusicTab>
             color: Colors.black54,
             shape: BoxShape.circle,
           ),
-          child: Icon(
-            isCurrentTrack && _isPlaying ? Icons.pause : Icons.play_arrow,
-            color: Colors.white,
-            size: isCompact ? 14 : 16,
-          ),
+          child: _loadingPreviewTrackId == track.id
+              ? Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.purpleAccent.shade100,
+                  ),
+                )
+              : Icon(
+                  isCurrentTrack && _isPlaying ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: isCompact ? 14 : 16,
+                ),
         ),
       ],
     );
@@ -826,11 +835,45 @@ class _MusicTabState extends State<MusicTab>
   // ═══════════════════════════════════════════════════════
 
   Future<void> _playPreview(MusicTrack track) async {
+    final url = (track.localPath != null && track.localPath!.isNotEmpty)
+        ? track.localPath!
+        : (track.previewUrl.isNotEmpty ? track.previewUrl : track.downloadUrl);
+
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Audio stream URL not available for this track'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (_playingTrackId == track.id && _isPlaying) {
+      await _apiService.pausePreview();
+      return;
+    }
+
+    setState(() => _loadingPreviewTrackId = track.id);
     try {
       await _apiService.playPreview(track);
       HapticFeedback.selectionClick();
     } catch (e) {
-      debugPrint('❌ Play error: $e');
+      debugPrint('❌ Play preview error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play preview: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingPreviewTrackId = null);
+      }
     }
   }
 

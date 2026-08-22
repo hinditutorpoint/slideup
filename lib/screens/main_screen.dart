@@ -36,6 +36,7 @@ import '../providers/media_provider.dart';
 import '../core/theme/app_theme.dart';
 import '../features/documents/screens/unified_reader_screen.dart';
 import '../features/reel_editor/ui/reel_editor_screen.dart';
+import '../features/video_editor/video_editor_screen.dart';
 import '../features/private_browser/private_browser_screen.dart';
 import '../features/converter/screens/converter_home_screen.dart';
 import '../features/iptv/screens/iptv_home_screen.dart';
@@ -1867,7 +1868,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => const ReelEditorScreen(mode: EditorMode.reel),
+          builder: (context) => const VideoEditorScreen(),
         ),
       );
     } catch (e) {

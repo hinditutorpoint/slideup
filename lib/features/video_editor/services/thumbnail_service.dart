@@ -6,6 +6,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -69,18 +70,20 @@ class ThumbnailService {
   // ═══════════════════════════════════════════════════════
 
   Future<Map<String, dynamic>?> getVideoInfo(String videoPath) async {
-    // Check cache first
-    if (_videoInfoCache.containsKey(videoPath)) {
-      return _videoInfoCache[videoPath];
+    final normalized = _normalizePath(videoPath);
+
+    // Check cache first (keyed by normalized path)
+    if (_videoInfoCache.containsKey(normalized)) {
+      return _videoInfoCache[normalized];
     }
 
     try {
-      if (!await _validateVideoFile(videoPath)) return null;
-
-      final session = await FFprobeKit.getMediaInformation(videoPath);
+      // NOTE: don't gate on _validateVideoFile — content/file URIs can fail
+      // the dart:io check but still be probeable. Let ffprobe decide.
+      final session = await FFprobeKit.getMediaInformation(normalized);
       final info = session.getMediaInformation();
 
-      if (info == null) return null;
+      if (info == null) return await _fallbackInfo(normalized);
 
       final streams = info.getStreams();
       int? width;
@@ -129,6 +132,12 @@ class ThumbnailService {
         }
       }
 
+      // If ffprobe couldn't read a duration, fall back to MediaKit
+      if (duration == null || duration.inMilliseconds <= 0) {
+        final probed = await _probeDurationViaMediaKit(normalized);
+        if (probed != null) duration = probed;
+      }
+
       final result = <String, dynamic>{
         'duration': duration,
         'width': width ?? 1920,
@@ -142,7 +151,7 @@ class ThumbnailService {
       };
 
       // Cache the result
-      _videoInfoCache[videoPath] = result;
+      _videoInfoCache[normalized] = result;
 
       return result;
     } catch (e, stack) {
@@ -150,6 +159,54 @@ class ThumbnailService {
       debugPrint('Stack: $stack');
       return null;
     }
+  }
+
+  // Fallback used when ffprobe returns no info at all (e.g. URI paths).
+  Future<Map<String, dynamic>?> _fallbackInfo(String normalized) async {
+    final duration = await _probeDurationViaMediaKit(normalized);
+    if (duration == null) return null;
+    return <String, dynamic>{
+      'duration': duration,
+      'width': 1920,
+      'height': 1080,
+      'fps': 30.0,
+      'codec': null,
+      'rotation': 0,
+      'size': null,
+      'bitrate': null,
+      'format': null,
+    };
+  }
+
+  // Probe duration using MediaKit — robust for any path that can actually
+  // be played (handles file:// and content:// URIs that ffprobe rejects).
+  Future<Duration?> _probeDurationViaMediaKit(String path) async {
+    Player? player;
+    try {
+      MediaKit.ensureInitialized();
+      player = Player();
+      await player.open(Media(path));
+      final duration = await player.stream.duration
+          .firstWhere((d) => d.inMilliseconds > 0)
+          .timeout(const Duration(seconds: 8));
+      return duration;
+    } catch (e) {
+      debugPrint('❌ MediaKit duration probe error: $e');
+      return null;
+    } finally {
+      try {
+        await player?.dispose();
+      } catch (_) {}
+    }
+  }
+
+  // Normalize common URI prefixes so ffprobe/MediaKit get a usable path.
+  String _normalizePath(String path) {
+    var p = path.trim();
+    if (p.startsWith('file://')) {
+      p = p.replaceFirst('file://', '');
+    }
+    return p;
   }
 
   // ═══════════════════════════════════════════════════════
@@ -282,6 +339,7 @@ class ThumbnailService {
     }
 
     // Validate input
+    videoPath = _normalizePath(videoPath);
     if (!await _validateVideoFile(videoPath)) {
       debugPrint('❌ Invalid video file: $videoPath');
       return null;
@@ -489,6 +547,7 @@ class ThumbnailService {
         return thumbnails;
       }
 
+      videoPath = _normalizePath(videoPath);
       if (!await _validateVideoFile(videoPath)) {
         debugPrint('❌ Invalid video file');
         return thumbnails;
@@ -680,21 +739,21 @@ class _AsyncLock {
   Future<void>? _lastOperation;
 
   Future<T> synchronized<T>(Future<T> Function() operation) async {
-    while (_lastOperation != null) {
-      try {
-        await _lastOperation;
-      } catch (_) {}
-    }
-
+    final prev = _lastOperation;
     final completer = Completer<void>();
     _lastOperation = completer.future;
+
+    if (prev != null) {
+      try {
+        await prev;
+      } catch (_) {}
+    }
 
     try {
       final result = await operation();
       return result;
     } finally {
       completer.complete();
-      _lastOperation = null;
     }
   }
 }

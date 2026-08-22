@@ -18,6 +18,7 @@ dependencies:
   image_picker: ^1.1.2
   path_provider: ^2.1.5
   permission_handler: ^12.0.1
+  photo_manager: ^3.2.0
 
   # Network
   flutter_chrome_cast: ^1.4.8

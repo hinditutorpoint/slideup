@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:file_picker/file_picker.dart';
+
+import '../../../services/file_picker_service.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart' hide ExportJob;
@@ -1216,7 +1217,7 @@ class _ExportSheetState extends ConsumerState<ExportSheet> {
 
   Future<void> _pickExportLocation() async {
     try {
-      final result = await FilePicker.platform.getDirectoryPath();
+      final result = await FilePickerService.getDirectoryPath();
       if (result != null) {
         setState(() => _customOutputPath = result);
       }

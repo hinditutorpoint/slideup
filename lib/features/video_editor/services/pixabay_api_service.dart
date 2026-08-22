@@ -224,10 +224,11 @@ class PixabayApiService {
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ FETCH MUSIC (Using free music API or mock data)
-  // Note: Pixabay doesn't have a public music API,
-  // so we'll use freesound.org or mock data
+  // ✅ FETCH MUSIC (Pixabay Audio API)
+  // Endpoint: https://pixabay.com/api/audio/
   // ═══════════════════════════════════════════════════════
+
+  static const String _musicBaseUrl = 'https://pixabay.com/api/audio/';
 
   Future<List<MusicTrack>> fetchMusic({
     String query = '',
@@ -236,19 +237,49 @@ class PixabayApiService {
     int perPage = 20,
   }) async {
     try {
-      // For demo purposes, return mock data
-      // In production, integrate with a music API like:
-      // - Freesound.org
-      // - Jamendo
-      // - Free Music Archive
+      if (!Api.isConfigured || Api.pixaBayKey.isEmpty) {
+        debugPrint('⚠️ Pixabay key missing; returning mock music tracks');
+        return _getMockMusicTracks(query, category);
+      }
 
-      await Future.delayed(const Duration(milliseconds: 500));
+      final params = {
+        'key': Api.pixaBayKey,
+        'q': query.isNotEmpty ? query : 'music',
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+        'safesearch': 'true',
+      };
 
-      final mockTracks = _getMockMusicTracks(query, category);
-      return await _updateMusicDownloadStatus(mockTracks);
+      final uri = Uri.parse(_musicBaseUrl).replace(queryParameters: params);
+
+      debugPrint('🎵 Fetching Pixabay music: $uri');
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final hits = data['hits'] as List? ?? [];
+
+        final tracks = hits
+            .map((hit) {
+              try {
+                return MusicTrack.fromPixabay(hit);
+              } catch (e) {
+                debugPrint('❌ Parse music track error: $e');
+                return null;
+              }
+            })
+            .whereType<MusicTrack>()
+            .toList();
+
+        return await _updateMusicDownloadStatus(tracks);
+      } else {
+        debugPrint('❌ Pixabay Music API error: ${response.statusCode}');
+        return _getMockMusicTracks(query, category);
+      }
     } catch (e) {
       debugPrint('❌ Fetch music error: $e');
-      return [];
+      return _getMockMusicTracks(query, category);
     }
   }
 
@@ -450,10 +481,30 @@ class PixabayApiService {
         return;
       }
 
-      _currentPlayingId = track.id;
-      final url = track.localPath ?? track.previewUrl;
+      final url = (track.localPath != null && track.localPath!.isNotEmpty)
+          ? track.localPath!
+          : (track.previewUrl.isNotEmpty
+              ? track.previewUrl
+              : track.downloadUrl);
 
-      await _audioPlayer.setUrl(url);
+      if (url.isEmpty) {
+        debugPrint('⚠️ Cannot play preview: audio URL is empty for "${track.title}"');
+        return;
+      }
+
+      _currentPlayingId = track.id;
+
+      if (!url.startsWith('http')) {
+        await _audioPlayer.setFilePath(url);
+      } else {
+        await _audioPlayer.setUrl(
+          url,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          },
+        );
+      }
       await _audioPlayer.play();
     } catch (e) {
       debugPrint('❌ Play preview error: $e');

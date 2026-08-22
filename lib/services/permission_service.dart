@@ -383,6 +383,17 @@ class PermissionService {
     return protectedPaths.any((protected) => dirPath.contains(protected));
   }
 
+  /// Returns true if [dirPath] is on a removable SD card or USB OTG volume.
+  ///
+  /// On many OEM ROMs (OPPO/ColorOS, Vivo, Xiaomi) the OS blocks direct
+  /// file-path writes to removable volumes even when `WRITE_EXTERNAL_STORAGE`
+  /// is granted.  Callers should fall back to SAF-based I/O when this returns
+  /// true and `_testWriteCapability` fails.
+  bool isRemovableStorage(String dirPath) {
+    final type = _getStorageType(dirPath);
+    return type == StorageType.external || type == StorageType.usb;
+  }
+
   /// Determine storage type from path
   StorageType _getStorageType(String dirPath) {
     if (dirPath.startsWith('/storage/emulated/0') ||

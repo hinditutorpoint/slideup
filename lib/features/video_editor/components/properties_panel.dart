@@ -4,6 +4,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart';
+import 'sync_text_field.dart';
+
+const List<String> _fontFamilies = [
+  'Arial',
+  'Roboto',
+  'Helvetica',
+  'Times New Roman',
+  'Georgia',
+  'Courier New',
+  'Verdana',
+  'Impact',
+  'Comic Sans MS',
+  'Montserrat',
+];
 
 // ═══════════════════════════════════════════════════════
 // ✅ PROPERTIES PANEL (COMPREHENSIVE)
@@ -132,8 +146,13 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
       return _buildTextProperties(widget.item as TextTimelineItem);
     } else if (widget.item is ImageTimelineItem) {
       return _buildImageProperties(widget.item as ImageTimelineItem);
+    } else if (widget.item is VideoOverlayTimelineItem) {
+      return _buildVideoOverlayProperties(
+          widget.item as VideoOverlayTimelineItem);
     } else if (widget.item is AudioTimelineItem) {
       return _buildAudioProperties(widget.item as AudioTimelineItem);
+    } else if (widget.item is SolidColorTimelineItem) {
+      return _buildSolidColorProperties(widget.item as SolidColorTimelineItem);
     }
 
     return const Center(
@@ -155,8 +174,8 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
         // Text content
         _buildSection(
           title: 'Content',
-          child: TextField(
-            controller: TextEditingController(text: item.text),
+          child: SyncTextField(
+            text: item.text,
             maxLines: 3,
             style: const TextStyle(color: Colors.white, fontSize: 13),
             decoration: InputDecoration(
@@ -175,6 +194,14 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
             },
           ),
         ),
+
+        const SizedBox(height: 16),
+
+        // Common: lock & visibility
+        _buildCommonItemControls(item),
+
+        // Keyframes
+        _buildKeyframeSection(item),
 
         const SizedBox(height: 16),
 
@@ -231,6 +258,24 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
             _updateTextItem(
               item.copyWith(style: item.style.copyWith(fontSize: value)),
             );
+          },
+        ),
+
+        const SizedBox(height: 12),
+
+        // Font family
+        _buildDropdown<String>(
+          label: 'Font Family',
+          value: item.style.fontFamily.isNotEmpty
+              ? item.style.fontFamily
+              : _fontFamilies.first,
+          items: _fontFamilies,
+          onChanged: (value) {
+            if (value != null) {
+              _updateTextItem(
+                item.copyWith(style: item.style.copyWith(fontFamily: value)),
+              );
+            }
           },
         ),
 
@@ -312,6 +357,84 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
           onChanged: (value) {
             _updateTextItem(
               item.copyWith(style: item.style.copyWith(shadowBlur: value)),
+            );
+          },
+        ),
+
+        const SizedBox(height: 12),
+
+        // Shadow color
+        _buildColorPicker(
+          label: 'Shadow Color',
+          color: Color(item.style.shadowColor),
+          onColorChanged: (color) {
+            _updateTextItem(
+              item.copyWith(
+                style: item.style.copyWith(shadowColor: color.toARGB32()),
+              ),
+            );
+          },
+        ),
+
+        const SizedBox(height: 12),
+
+        // Stroke width
+        _buildSliderControl(
+          label: 'Stroke Width',
+          value: item.style.strokeWidth,
+          min: 0,
+          max: 10,
+          onChanged: (value) {
+            _updateTextItem(
+              item.copyWith(style: item.style.copyWith(strokeWidth: value)),
+            );
+          },
+        ),
+
+        if (item.style.strokeWidth > 0) ...[
+          const SizedBox(height: 12),
+          _buildColorPicker(
+            label: 'Stroke Color',
+            color: Color(item.style.strokeColor),
+            onColorChanged: (color) {
+              _updateTextItem(
+                item.copyWith(
+                  style: item.style.copyWith(strokeColor: color.toARGB32()),
+                ),
+              );
+            },
+          ),
+        ],
+
+        const SizedBox(height: 12),
+
+        // Letter spacing
+        _buildSliderControl(
+          label: 'Letter Spacing',
+          value: item.style.letterSpacing,
+          min: -5,
+          max: 20,
+          onChanged: (value) {
+            _updateTextItem(
+              item.copyWith(
+                style: item.style.copyWith(letterSpacing: value),
+              ),
+            );
+          },
+        ),
+
+        const SizedBox(height: 12),
+
+        // Line height
+        _buildSliderControl(
+          label: 'Line Height',
+          value: item.style.lineHeight,
+          min: 0.5,
+          max: 3,
+          divisions: 25,
+          onChanged: (value) {
+            _updateTextItem(
+              item.copyWith(style: item.style.copyWith(lineHeight: value)),
             );
           },
         ),
@@ -482,6 +605,14 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
 
         const SizedBox(height: 16),
 
+        // Common: lock & visibility
+        _buildCommonItemControls(item),
+
+        // Keyframes
+        _buildKeyframeSection(item),
+
+        const SizedBox(height: 16),
+
         // Transform
         _buildExpandableSection(
           title: 'Transform',
@@ -509,6 +640,235 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
     );
   }
 
+  Widget _buildCommonItemControls(TimelineItem item) {
+    return _buildSection(
+      title: 'Object',
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildToggleButton(
+              label: 'Visible',
+              icon: item.isVisible ? Icons.visibility : Icons.visibility_off,
+              isActive: item.isVisible,
+              onTap: () => _updateCommon(
+                item,
+                visible: !item.isVisible,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildToggleButton(
+              label: 'Lock',
+              icon: Icons.lock,
+              isActive: item.isLocked,
+              color: Colors.orange,
+              onTap: () => _updateCommon(
+                item,
+                locked: !item.isLocked,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // KEYFRAME SECTION
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildKeyframeSection(TimelineItem item) {
+    final state = ref.watch(timelineProvider);
+    final kfs = state.keyframes[item.id] ?? [];
+    final position = state.currentPosition;
+    final relativePos = position - item.startTime;
+
+    // Find if there's a keyframe at the current position (within 100ms)
+    final nearbyKf = kfs
+        .where((k) => (k.time - relativePos).inMilliseconds.abs() < 100)
+        .fold<KeyframeData?>(
+          null,
+          (prev, k) => prev == null || (k.time - relativePos).abs() < (prev.time - relativePos).abs() ? k : prev,
+        );
+
+    return _buildSection(
+      title: 'Keyframes',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _addKeyframe(item, relativePos),
+                  icon: const Icon(Icons.add_circle_outline, size: 16),
+                  label: const Text('Add at Playhead'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6C63FF),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+              if (nearbyKf != null) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _removeKeyframe(item.id, nearbyKf.id),
+                    icon: const Icon(Icons.remove_circle_outline, size: 16),
+                    label: const Text('Remove Here'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade800,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (kfs.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${kfs.length} keyframe${kfs.length == 1 ? '' : 's'}',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 4),
+            ...kfs.map((kf) => Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: (kf.time - relativePos).inMilliseconds.abs() < 100
+                      ? const Color(0xFF6C63FF)
+                      : Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.circle,
+                    size: 6,
+                    color: const Color(0xFF6C63FF),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    kf.time.toString().split('.').first,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 11,
+                    ),
+                  ),
+                  const Spacer(),
+                  ..._keyframeIndicators(kf),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => _removeKeyframe(item.id, kf.id),
+                    child: Icon(Icons.close, size: 12, color: Colors.red.shade300),
+                  ),
+                ],
+              ),
+            )),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _keyframeIndicators(KeyframeData kf) {
+    final props = <Widget>[];
+    if (kf.x != null || kf.y != null) {
+      props.add(_kfDot(Colors.blue, 'P'));
+    }
+    if (kf.scale != null) {
+      props.add(_kfDot(Colors.green, 'S'));
+    }
+    if (kf.rotation != null) {
+      props.add(_kfDot(Colors.orange, 'R'));
+    }
+    if (kf.opacity != null) {
+      props.add(_kfDot(Colors.purple, 'O'));
+    }
+    if (kf.volume != null) {
+      props.add(_kfDot(Colors.teal, 'V'));
+    }
+    if (kf.speed != null) {
+      props.add(_kfDot(Colors.orangeAccent, '⚡'));
+    }
+    return props;
+  }
+
+  Widget _kfDot(Color color, String label) => Container(
+    width: 14,
+    height: 14,
+    margin: const EdgeInsets.only(right: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.3),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Center(
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 7, fontWeight: FontWeight.bold),
+      ),
+    ),
+  );
+
+  void _addKeyframe(TimelineItem item, Duration relativePos) {
+    final kf = KeyframeData(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      time: relativePos,
+      x: item.x,
+      y: item.y,
+      scale: item.scale,
+      rotation: item.rotation,
+      opacity: 1.0,
+    );
+    ref.read(timelineProvider.notifier).addKeyframe(item.id, kf);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _removeKeyframe(String itemId, String keyframeId) {
+    ref.read(timelineProvider.notifier).removeKeyframe(itemId, keyframeId);
+    HapticFeedback.lightImpact();
+  }
+
+  void _updateCommon(
+    TimelineItem item, {
+    bool? locked,
+    bool? visible,
+  }) {
+    final notifier = ref.read(timelineProvider.notifier);
+    if (item is TextTimelineItem) {
+      notifier.updateTextItem(
+        item.id,
+        item.copyWith(isLocked: locked, isVisible: visible),
+      );
+    } else if (item is ImageTimelineItem) {
+      notifier.updateImageItem(
+        item.id,
+        item.copyWith(isLocked: locked, isVisible: visible),
+      );
+    } else if (item is AudioTimelineItem) {
+      notifier.updateAudioItem(
+        item.id,
+        item.copyWith(isLocked: locked, isVisible: visible),
+      );
+    }
+  }
+
   Widget _buildImageStyleControls(ImageTimelineItem item) {
     return Column(
       children: [
@@ -520,6 +880,20 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
           max: 1.0,
           onChanged: (value) {
             _updateImageItem(item.copyWith(opacity: value));
+          },
+        ),
+
+        const SizedBox(height: 12),
+
+        // Blend mode
+        _buildDropdown<BlendMode>(
+          label: 'Blend Mode',
+          value: item.blendMode ?? BlendMode.srcOver,
+          items: BlendMode.values,
+          onChanged: (value) {
+            if (value != null) {
+              _updateImageItem(item.copyWith(blendMode: value));
+            }
           },
         ),
 
@@ -581,6 +955,155 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
   // ✅ AUDIO PROPERTIES
   // ═══════════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════════
+  // ✅ VIDEO OVERLAY LAYER PROPERTIES
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildVideoOverlayProperties(VideoOverlayTimelineItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSection(
+          title: 'Video Layer',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildInfoRow('Duration', _formatDuration(item.duration)),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        _buildSection(
+          title: 'Layer Controls',
+          child: Column(
+            children: [
+              _buildSliderControl(
+                label: 'Volume (${(item.volume * 100).toInt()}%)',
+                value: item.volume,
+                min: 0.0,
+                max: 2.0,
+                onChanged: (value) {
+                  _updateVideoOverlay(item.copyWith(volume: value));
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildSliderControl(
+                label: 'Opacity (${(item.opacity * 100).toInt()}%)',
+                value: item.opacity,
+                min: 0.0,
+                max: 1.0,
+                onChanged: (value) {
+                  _updateVideoOverlay(item.copyWith(opacity: value));
+                },
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        _buildCommonItemControls(item),
+
+        // Keyframes
+        _buildKeyframeSection(item),
+      ],
+    );
+  }
+
+  void _updateVideoOverlay(VideoOverlayTimelineItem item) {
+    ref.read(timelineProvider.notifier).updateVideoOverlayItem(item.id, item);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ✅ SOLID COLOR LAYER PROPERTIES
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildSolidColorProperties(SolidColorTimelineItem item) {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        _buildSection(
+          title: 'Solid Color Layer',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildInfoRow('Duration', _formatDuration(item.duration)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Text('Color', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => _pickSolidColor(item),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: Color(item.colorValue),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey[600]!),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildSection(
+          title: 'Controls',
+          child: Column(
+            children: [
+              _buildSliderControl(
+                label: 'Opacity (${(item.opacity * 100).toInt()}%)',
+                value: item.opacity,
+                min: 0.0,
+                max: 1.0,
+                onChanged: (value) => _updateSolidColor(item.copyWith(opacity: value)),
+              ),
+              const SizedBox(height: 12),
+              _buildSliderControl(
+                label: 'Width (${(item.width * 100).toInt()}%)',
+                value: item.width,
+                min: 0.1,
+                max: 2.0,
+                onChanged: (value) => _updateSolidColor(item.copyWith(width: value)),
+              ),
+              const SizedBox(height: 12),
+              _buildSliderControl(
+                label: 'Height (${(item.height * 100).toInt()}%)',
+                value: item.height,
+                min: 0.1,
+                max: 2.0,
+                onChanged: (value) => _updateSolidColor(item.copyWith(height: value)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildCommonItemControls(item),
+        _buildKeyframeSection(item),
+      ],
+    );
+  }
+
+  void _updateSolidColor(SolidColorTimelineItem item) {
+    ref.read(timelineProvider.notifier).updateSolidColorItem(item.id, item);
+  }
+
+  Future<void> _pickSolidColor(SolidColorTimelineItem item) async {
+    final color = await showDialog<Color>(
+      context: context,
+      builder: (_) => _SolidColorPickerDialog(initialColor: Color(item.colorValue)),
+    );
+    if (color != null) {
+      _updateSolidColor(item.copyWith(colorValue: color.toARGB32()));
+    }
+  }
+
   Widget _buildAudioProperties(AudioTimelineItem item) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -609,6 +1132,14 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
           },
           child: _buildAudioControls(item),
         ),
+
+        const SizedBox(height: 16),
+
+        // Common: lock & visibility
+        _buildCommonItemControls(item),
+
+        // Keyframes
+        _buildKeyframeSection(item),
       ],
     );
   }
@@ -1264,4 +1795,111 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
       ],
     );
   }
+}
+
+class _SolidColorPickerDialog extends StatefulWidget {
+  final Color initialColor;
+  const _SolidColorPickerDialog({required this.initialColor});
+
+  @override
+  State<_SolidColorPickerDialog> createState() => _SolidColorPickerDialogState();
+}
+
+class _SolidColorPickerDialogState extends State<_SolidColorPickerDialog> {
+  late HSVColor _hsv;
+
+  @override
+  void initState() {
+    super.initState();
+    _hsv = HSVColor.fromColor(widget.initialColor);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _hsv.toColor();
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      title: const Text('Pick Color', style: TextStyle(color: Colors.white, fontSize: 16)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: double.infinity,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey[600]!),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildHueSlider(),
+          _buildSatSlider(),
+          _buildValSlider(),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, color),
+          style: ElevatedButton.styleFrom(backgroundColor: color),
+          child: const Text('Select'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHueSlider() => Row(
+    children: [
+      const SizedBox(width: 16, child: Text('H', style: TextStyle(color: Colors.grey, fontSize: 11))),
+      Expanded(
+        child: SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: _hsv.toColor(),
+            thumbColor: Colors.white,
+            inactiveTrackColor: Colors.grey[700],
+            trackHeight: 2,
+          ),
+          child: Slider(value: _hsv.hue, min: 0, max: 360, onChanged: (v) => setState(() => _hsv = _hsv.withHue(v))),
+        ),
+      ),
+    ],
+  );
+
+  Widget _buildSatSlider() => Row(
+    children: [
+      const SizedBox(width: 16, child: Text('S', style: TextStyle(color: Colors.grey, fontSize: 11))),
+      Expanded(
+        child: SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: _hsv.toColor(),
+            thumbColor: Colors.white,
+            inactiveTrackColor: Colors.grey[700],
+            trackHeight: 2,
+          ),
+          child: Slider(value: _hsv.saturation, min: 0, max: 1, onChanged: (v) => setState(() => _hsv = _hsv.withSaturation(v))),
+        ),
+      ),
+    ],
+  );
+
+  Widget _buildValSlider() => Row(
+    children: [
+      const SizedBox(width: 16, child: Text('V', style: TextStyle(color: Colors.grey, fontSize: 11))),
+      Expanded(
+        child: SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: _hsv.toColor(),
+            thumbColor: Colors.white,
+            inactiveTrackColor: Colors.grey[700],
+            trackHeight: 2,
+          ),
+          child: Slider(value: _hsv.value, min: 0, max: 1, onChanged: (v) => setState(() => _hsv = _hsv.withValue(v))),
+        ),
+      ),
+    ],
+  );
 }

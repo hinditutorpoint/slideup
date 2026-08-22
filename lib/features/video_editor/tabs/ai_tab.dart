@@ -35,7 +35,7 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   static const String _apiKeyKey = 'ai_api_key';
 
   AiImageStyle _selectedStyle = AiImageStyle.realistic;
-  AiImageSize _selectedSize = AiImageSize.landscape;
+  AiImageSize _selectedSize = AiImageSize.portrait; // Default to portrait (9:16 / 3:4) for reels
   AiProvider _selectedProvider = AiProvider.openRouter;
   int _imageCount = 1;
 
@@ -43,6 +43,7 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   List<AiGeneratedImage> _savedImages = [];
   bool _isLoading = false;
   bool _showAdvanced = false;
+  bool _showProviderSettings = false;
   String? _error;
 
   AiGenerationState _generationState = AiGenerationState.idle();
@@ -53,9 +54,6 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
     _tabController = TabController(length: 2, vsync: this);
     _loadSavedImages();
     _listenToGeneration();
-
-    // Configure AI service (use your API key)
-    // In production, load from secure storage
     _loadSavedConfig();
   }
 
@@ -67,14 +65,16 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
 
       setState(() {
         if (providerName != null) {
-          _selectedProvider =
-              AiProvider.values.firstWhere(
-                (p) => p.name == providerName,
-                orElse: () => AiProvider.openRouter,
-              );
+          _selectedProvider = AiProvider.values.firstWhere(
+            (p) => p.name == providerName,
+            orElse: () => AiProvider.openRouter,
+          );
         }
         if (apiKey != null && apiKey.isNotEmpty) {
           _apiKeyController.text = apiKey;
+        } else {
+          // If no API key is found, show settings by default so user can configure
+          _showProviderSettings = true;
         }
       });
 
@@ -101,6 +101,9 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       _aiService.configure(
         AiProviderConfig(provider: _selectedProvider, apiKey: apiKey),
       );
+      setState(() {
+        _showProviderSettings = false;
+      });
       _showSnack('AI settings saved');
       HapticFeedback.selectionClick();
     } catch (e) {
@@ -114,7 +117,7 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       SnackBar(
         content: Text(message, style: const TextStyle(fontSize: 12)),
         duration: const Duration(seconds: 2),
-        backgroundColor: Colors.grey[800],
+        backgroundColor: const Color(0xFF2A2A2A),
       ),
     );
   }
@@ -156,64 +159,44 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   void dispose() {
     _promptController.dispose();
     _negativePromptController.dispose();
+    _apiKeyController.dispose();
     _tabController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isCompact = constraints.maxHeight < 450;
-
-        return Column(
-          children: [
-            // Tabs
-            _buildTabs(isCompact),
-
-            // Content
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildGenerateTab(isCompact),
-                  _buildHistoryTab(isCompact),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildTabs(bool isCompact) {
     return Container(
-      margin: EdgeInsets.all(isCompact ? 8 : 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
+      decoration: const BoxDecoration(
+        color: Color(0xFF161618),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          color: Colors.purple,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.grey[400],
-        labelStyle: TextStyle(
-          fontSize: isCompact ? 12 : 13,
-          fontWeight: FontWeight.bold,
-        ),
-        tabs: [
-          Tab(
-            icon: Icon(Icons.auto_awesome, size: isCompact ? 18 : 20),
-            text: 'Generate',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Container(
+            width: 32,
+            height: 3,
+            margin: const EdgeInsets.only(top: 8, bottom: 4),
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(1.5),
+            ),
           ),
-          Tab(
-            icon: Icon(Icons.history, size: isCompact ? 18 : 20),
-            text: 'History (${_savedImages.length})',
+
+          // Compact Header Bar
+          _buildCompactHeader(),
+
+          // Main View Tabs
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildGenerateTab(),
+                _buildHistoryTab(),
+              ],
+            ),
           ),
         ],
       ),
@@ -221,159 +204,263 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ GENERATE TAB
+  // 🎯 COMPACT HEADER
   // ═══════════════════════════════════════════════════════
 
-  Widget _buildGenerateTab(bool isCompact) {
+  Widget _buildCompactHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 10, 6),
+      child: Row(
+        children: [
+          // Title
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF8A2387), Color(0xFFE94057), Color(0xFFF27121)],
+                  ),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(Icons.auto_awesome, color: Colors.white, size: 13),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'AI Image',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+
+          // Compact Tab Pills
+          Container(
+            height: 28,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              indicator: BoxDecoration(
+                color: Colors.purpleAccent.shade400,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white54,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+              labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              dividerColor: Colors.transparent,
+              indicatorSize: TabBarIndicatorSize.tab,
+              tabs: [
+                const Tab(text: 'Generate'),
+                Tab(text: 'History (${_savedImages.length})'),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+
+          // Provider Config Gear Toggle
+          IconButton(
+            onPressed: () {
+              setState(() => _showProviderSettings = !_showProviderSettings);
+              HapticFeedback.selectionClick();
+            },
+            icon: Icon(
+              Icons.tune_rounded,
+              color: _showProviderSettings ? Colors.purpleAccent : Colors.white60,
+              size: 18,
+            ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            tooltip: 'AI Provider Settings',
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ⚡ GENERATE TAB
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildGenerateTab() {
     return SingleChildScrollView(
-      padding: EdgeInsets.all(isCompact ? 10 : 14),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Provider / API key config
-          _buildProviderConfig(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          // Expandable Provider Config
+          if (_showProviderSettings) ...[
+            _buildCompactProviderConfig(),
+            const SizedBox(height: 10),
+          ],
 
-          // Prompt input
-          _buildPromptInput(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          // Prompt Input
+          _buildCompactPromptInput(),
+          const SizedBox(height: 8),
 
-          // Quick prompts
-          _buildQuickPrompts(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          // Quick ideas horizontal pills
+          _buildCompactQuickPrompts(),
+          const SizedBox(height: 10),
 
           // Style selection
-          _buildStyleSelection(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          _buildCompactStyleSelection(),
+          const SizedBox(height: 10),
 
-          // Size selection
-          _buildSizeSelection(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          // Aspect ratio selection
+          _buildCompactSizeSelection(),
+          const SizedBox(height: 10),
 
-          // Advanced options
+          // Advanced options accordion
           if (_showAdvanced) ...[
-            _buildAdvancedOptions(isCompact),
-            SizedBox(height: isCompact ? 12 : 16),
+            _buildCompactAdvancedOptions(),
+            const SizedBox(height: 10),
           ],
 
           // Advanced toggle
-          _buildAdvancedToggle(isCompact),
-          SizedBox(height: isCompact ? 16 : 20),
+          _buildAdvancedToggle(),
+          const SizedBox(height: 12),
 
           // Generate button
-          _buildGenerateButton(isCompact),
-          SizedBox(height: isCompact ? 12 : 16),
+          _buildCompactGenerateButton(),
 
-          // Generation progress
-          if (_generationState.isGenerating)
-            _buildGenerationProgress(isCompact),
+          // Progress
+          if (_generationState.isGenerating) ...[
+            const SizedBox(height: 10),
+            _buildCompactProgress(),
+          ],
 
-          // Error message
-          if (_error != null) _buildErrorMessage(isCompact),
+          // Error
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            _buildErrorMessage(),
+          ],
 
-          // Recent generations
+          // Recent Generations
           if (_generatedImages.isNotEmpty) ...[
-            SizedBox(height: isCompact ? 16 : 20),
-            _buildRecentGenerations(isCompact),
+            const SizedBox(height: 14),
+            _buildRecentGenerations(),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildProviderConfig(bool isCompact) {
+  // ═══════════════════════════════════════════════════════
+  // ⚙️ COMPACT PROVIDER CONFIG
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactProviderConfig() {
     return Container(
-      padding: EdgeInsets.all(isCompact ? 10 : 12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.purple.withValues(alpha: 0.08),
+        color: const Color(0xFF1F1F24),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.purple.withValues(alpha: 0.25)),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'AI Provider',
-            style: TextStyle(
-              color: Colors.purpleAccent,
-              fontSize: isCompact ? 11 : 12,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            children: [
+              const Icon(Icons.hub_outlined, color: Colors.purpleAccent, size: 14),
+              const SizedBox(width: 6),
+              const Text(
+                'AI Provider & API Key',
+                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => setState(() => _showProviderSettings = false),
+                child: const Icon(Icons.close, size: 14, color: Colors.white54),
+              ),
+            ],
           ),
-          SizedBox(height: isCompact ? 8 : 10),
-          DropdownButtonFormField<AiProvider>(
-            value: _selectedProvider,
-            dropdownColor: Colors.grey[850],
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: isCompact ? 12 : 13,
-            ),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: isCompact ? 8 : 10,
-              ),
-            ),
-            items: AiProvider.values.map((provider) {
-              return DropdownMenuItem(
-                value: provider,
-                child: Text(
-                  _providerLabel(provider),
-                  style: const TextStyle(color: Colors.white),
-                ),
-              );
-            }).toList(),
-            onChanged: (provider) {
-              if (provider != null) {
-                setState(() => _selectedProvider = provider);
-              }
-            },
-          ),
-          SizedBox(height: isCompact ? 8 : 10),
-          TextField(
-            controller: _apiKeyController,
-            obscureText: true,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Enter your API key...',
-              hintStyle: TextStyle(color: Colors.grey[600]),
-              filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: EdgeInsets.all(isCompact ? 10 : 12),
-            ),
-          ),
-          SizedBox(height: isCompact ? 8 : 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _saveAiConfig,
-              icon: Icon(
-                Icons.save_outlined,
-                size: isCompact ? 14 : 16,
-                color: Colors.purpleAccent,
-              ),
-              label: Text(
-                _aiService.isConfigured ? 'Update AI Settings' : 'Save & Enable',
-                style: TextStyle(
-                  fontSize: isCompact ? 11 : 12,
-                  color: Colors.purpleAccent,
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              // Provider Dropdown
+              Expanded(
+                flex: 4,
+                child: Container(
+                  height: 34,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<AiProvider>(
+                      value: _selectedProvider,
+                      dropdownColor: const Color(0xFF222228),
+                      isExpanded: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                      items: AiProvider.values.map((p) {
+                        return DropdownMenuItem(
+                          value: p,
+                          child: Text(_providerLabel(p), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        );
+                      }).toList(),
+                      onChanged: (p) {
+                        if (p != null) setState(() => _selectedProvider = p);
+                      },
+                    ),
+                  ),
                 ),
               ),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.purple.withValues(alpha: 0.4)),
-                padding: EdgeInsets.symmetric(vertical: isCompact ? 8 : 10),
+              const SizedBox(width: 8),
+
+              // API Key input
+              Expanded(
+                flex: 5,
+                child: SizedBox(
+                  height: 34,
+                  child: TextField(
+                    controller: _apiKeyController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                    decoration: InputDecoration(
+                      hintText: 'API Key...',
+                      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.06),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 6),
+
+              // Save button
+              SizedBox(
+                height: 34,
+                child: ElevatedButton(
+                  onPressed: _saveAiConfig,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purpleAccent.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    elevation: 0,
+                  ),
+                  child: const Text('Save', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -385,134 +472,134 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       case AiProvider.stabilityAi:
         return 'Stability AI';
       case AiProvider.openAi:
-        return 'OpenAI (DALL·E)';
+        return 'OpenAI DALL·E';
       case AiProvider.replicate:
         return 'Replicate';
       case AiProvider.deepAi:
         return 'DeepAI';
       case AiProvider.lexica:
-        return 'Lexica (search)';
+        return 'Lexica';
       case AiProvider.openRouter:
         return 'OpenRouter';
       case AiProvider.cloudflare:
-        return 'Cloudflare Workers';
+        return 'Cloudflare';
     }
   }
 
-  Widget _buildPromptInput(bool isCompact) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.edit, color: Colors.purple, size: isCompact ? 16 : 18),
-            const SizedBox(width: 8),
-            Text(
-              'Describe your image',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: isCompact ? 13 : 14,
-                fontWeight: FontWeight.bold,
-              ),
+  // ═══════════════════════════════════════════════════════
+  // ✍️ COMPACT PROMPT INPUT
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactPromptInput() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E24),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        children: [
+          TextField(
+            controller: _promptController,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+            maxLines: 2,
+            minLines: 1,
+            decoration: InputDecoration(
+              hintText: 'Describe image to generate (e.g. neon cyberpunk city in rain)...',
+              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11),
+              contentPadding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+              border: InputBorder.none,
             ),
-          ],
-        ),
-        SizedBox(height: isCompact ? 8 : 10),
-        TextField(
-          controller: _promptController,
-          style: const TextStyle(color: Colors.white),
-          maxLines: 3,
-          minLines: 2,
-          decoration: InputDecoration(
-            hintText:
-                'A beautiful sunset over mountains with dramatic clouds...',
-            hintStyle: TextStyle(color: Colors.grey[500]),
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.1),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Colors.purple),
-            ),
-            contentPadding: EdgeInsets.all(isCompact ? 12 : 14),
-            suffixIcon: _promptController.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear, color: Colors.grey),
-                    onPressed: () {
+            onChanged: (_) => setState(() {}),
+          ),
+          if (_promptController.text.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 6, bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  GestureDetector(
+                    onTap: () {
                       _promptController.clear();
                       setState(() {});
                     },
-                  )
-                : null,
-          ),
-          onChanged: (_) => setState(() {}),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickPrompts(bool isCompact) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Quick ideas',
-          style: TextStyle(
-            color: Colors.grey[400],
-            fontSize: isCompact ? 11 : 12,
-          ),
-        ),
-        SizedBox(height: isCompact ? 6 : 8),
-        SizedBox(
-          height: isCompact ? 32 : 36,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: AiImageService.promptSuggestions.length,
-            itemBuilder: (context, index) {
-              final suggestion = AiImageService.promptSuggestions[index];
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ActionChip(
-                  label: Text(
-                    suggestion.length > 25
-                        ? '${suggestion.substring(0, 25)}...'
-                        : suggestion,
-                    style: TextStyle(fontSize: isCompact ? 10 : 11),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.clear, size: 10, color: Colors.white70),
+                          SizedBox(width: 2),
+                          Text('Clear', style: TextStyle(color: Colors.white70, fontSize: 9)),
+                        ],
+                      ),
+                    ),
                   ),
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
-                  labelStyle: const TextStyle(color: Colors.white70),
-                  onPressed: () {
-                    _promptController.text = suggestion;
-                    setState(() {});
-                    HapticFeedback.selectionClick();
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _buildStyleSelection(bool isCompact) {
+  // ═══════════════════════════════════════════════════════
+  // 💡 COMPACT QUICK PROMPTS
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactQuickPrompts() {
+    return SizedBox(
+      height: 24,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: AiImageService.promptSuggestions.length,
+        itemBuilder: (context, index) {
+          final suggestion = AiImageService.promptSuggestions[index];
+          return Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: GestureDetector(
+              onTap: () {
+                _promptController.text = suggestion;
+                setState(() {});
+                HapticFeedback.selectionClick();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: Text(
+                  suggestion.length > 20 ? '${suggestion.substring(0, 20)}...' : suggestion,
+                  style: const TextStyle(color: Colors.white70, fontSize: 10),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // 🎨 COMPACT STYLE SELECTION
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactStyleSelection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'Style',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: isCompact ? 13 : 14,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
         ),
-        SizedBox(height: isCompact ? 8 : 10),
+        const SizedBox(height: 6),
         SizedBox(
-          height: isCompact ? 70 : 80,
+          height: 48,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: AiImageStyle.values.length,
@@ -526,16 +613,16 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
                   HapticFeedback.selectionClick();
                 },
                 child: Container(
-                  width: isCompact ? 70 : 80,
-                  margin: const EdgeInsets.only(right: 10),
+                  width: 58,
+                  margin: const EdgeInsets.only(right: 6),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? Colors.purple.withValues(alpha: 0.3)
-                        : Colors.white.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
+                        ? Colors.purpleAccent.withValues(alpha: 0.25)
+                        : Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: isSelected ? Colors.purple : Colors.transparent,
-                      width: 2,
+                      color: isSelected ? Colors.purpleAccent : Colors.white.withValues(alpha: 0.08),
+                      width: isSelected ? 1.5 : 1,
                     ),
                   ),
                   child: Column(
@@ -543,20 +630,17 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
                     children: [
                       Icon(
                         _getStyleIcon(style),
-                        color: isSelected ? Colors.purple : Colors.white70,
-                        size: isCompact ? 22 : 26,
+                        color: isSelected ? Colors.purpleAccent : Colors.white60,
+                        size: 16,
                       ),
-                      SizedBox(height: isCompact ? 4 : 6),
+                      const SizedBox(height: 2),
                       Text(
                         _formatStyleName(style),
                         style: TextStyle(
-                          color: isSelected ? Colors.purple : Colors.white70,
-                          fontSize: isCompact ? 9 : 10,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.normal,
+                          color: isSelected ? Colors.white : Colors.white60,
+                          fontSize: 8.5,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                         ),
-                        textAlign: TextAlign.center,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -574,21 +658,21 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   IconData _getStyleIcon(AiImageStyle style) {
     switch (style) {
       case AiImageStyle.realistic:
-        return Icons.camera_alt;
+        return Icons.camera_alt_outlined;
       case AiImageStyle.artistic:
-        return Icons.palette;
+        return Icons.palette_outlined;
       case AiImageStyle.anime:
-        return Icons.face;
+        return Icons.face_outlined;
       case AiImageStyle.cartoon:
-        return Icons.child_care;
+        return Icons.child_care_outlined;
       case AiImageStyle.sketch:
-        return Icons.edit;
+        return Icons.draw_outlined;
       case AiImageStyle.painting:
-        return Icons.brush;
+        return Icons.brush_outlined;
       case AiImageStyle.threeD:
-        return Icons.view_in_ar;
+        return Icons.view_in_ar_outlined;
       case AiImageStyle.abstract:
-        return Icons.blur_on;
+        return Icons.blur_on_outlined;
     }
   }
 
@@ -601,19 +685,19 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
     }
   }
 
-  Widget _buildSizeSelection(bool isCompact) {
+  // ═══════════════════════════════════════════════════════
+  // 📐 COMPACT SIZE / ASPECT RATIO
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactSizeSelection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Size',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: isCompact ? 13 : 14,
-            fontWeight: FontWeight.bold,
-          ),
+        const Text(
+          'Aspect Ratio',
+          style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
         ),
-        SizedBox(height: isCompact ? 8 : 10),
+        const SizedBox(height: 6),
         Row(
           children: AiImageSize.values.map((size) {
             final isSelected = _selectedSize == size;
@@ -624,27 +708,28 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
                   HapticFeedback.selectionClick();
                 },
                 child: Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: EdgeInsets.symmetric(vertical: isCompact ? 10 : 12),
+                  margin: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.symmetric(vertical: 6),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? Colors.purple.withValues(alpha: 0.3)
-                        : Colors.white.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                        ? Colors.purpleAccent.withValues(alpha: 0.25)
+                        : Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                      color: isSelected ? Colors.purple : Colors.transparent,
-                      width: 2,
+                      color: isSelected ? Colors.purpleAccent : Colors.white.withValues(alpha: 0.08),
                     ),
                   ),
-                  child: Column(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildSizePreview(size, isCompact),
-                      SizedBox(height: isCompact ? 4 : 6),
+                      _buildSizeIcon(size, isSelected),
+                      const SizedBox(width: 4),
                       Text(
                         _formatSizeName(size),
                         style: TextStyle(
-                          color: isSelected ? Colors.purple : Colors.white70,
-                          fontSize: isCompact ? 9 : 10,
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontSize: 10,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                     ],
@@ -658,23 +743,24 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
     );
   }
 
-  Widget _buildSizePreview(AiImageSize size, bool isCompact) {
-    double w, h;
+  Widget _buildSizeIcon(AiImageSize size, bool isSelected) {
+    double w = 10, h = 10;
     switch (size) {
       case AiImageSize.square:
-        w = h = isCompact ? 20 : 24;
+        w = 9;
+        h = 9;
         break;
       case AiImageSize.portrait:
-        w = isCompact ? 16 : 18;
-        h = isCompact ? 22 : 26;
+        w = 7;
+        h = 11;
         break;
       case AiImageSize.landscape:
-        w = isCompact ? 24 : 28;
-        h = isCompact ? 16 : 18;
+        w = 11;
+        h = 8;
         break;
       case AiImageSize.wide:
-        w = isCompact ? 28 : 32;
-        h = isCompact ? 14 : 16;
+        w = 13;
+        h = 7;
         break;
     }
 
@@ -682,8 +768,11 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       width: w,
       height: h,
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.white54, width: 1.5),
-        borderRadius: BorderRadius.circular(2),
+        border: Border.all(
+          color: isSelected ? Colors.purpleAccent : Colors.white60,
+          width: 1,
+        ),
+        borderRadius: BorderRadius.circular(1.5),
       ),
     );
   }
@@ -693,7 +782,7 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
       case AiImageSize.square:
         return '1:1';
       case AiImageSize.portrait:
-        return '3:4';
+        return '9:16';
       case AiImageSize.landscape:
         return '4:3';
       case AiImageSize.wide:
@@ -701,270 +790,243 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
     }
   }
 
-  Widget _buildAdvancedOptions(bool isCompact) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Negative prompt
-        Text(
-          'Negative prompt (what to avoid)',
-          style: TextStyle(
-            color: Colors.grey[400],
-            fontSize: isCompact ? 11 : 12,
-          ),
-        ),
-        SizedBox(height: isCompact ? 6 : 8),
-        TextField(
-          controller: _negativePromptController,
-          style: const TextStyle(color: Colors.white),
-          maxLines: 2,
-          decoration: InputDecoration(
-            hintText: 'blurry, bad quality, distorted...',
-            hintStyle: TextStyle(color: Colors.grey[600]),
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.08),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: EdgeInsets.all(isCompact ? 10 : 12),
-          ),
-        ),
-        SizedBox(height: isCompact ? 12 : 14),
+  // ═══════════════════════════════════════════════════════
+  // ⚙️ ADVANCED OPTIONS
+  // ═══════════════════════════════════════════════════════
 
-        // Image count
-        Row(
-          children: [
-            Text(
-              'Number of images: $_imageCount',
-              style: TextStyle(
-                color: Colors.grey[400],
-                fontSize: isCompact ? 11 : 12,
+  Widget _buildCompactAdvancedOptions() {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Negative prompt', style: TextStyle(color: Colors.white60, fontSize: 10)),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _negativePromptController,
+            style: const TextStyle(color: Colors.white, fontSize: 11),
+            decoration: InputDecoration(
+              hintText: 'blurry, bad quality, watermark...',
+              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 10),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.05),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text('Image count: $_imageCount', style: const TextStyle(color: Colors.white60, fontSize: 10)),
+              const Spacer(),
+              GestureDetector(
+                onTap: _imageCount > 1 ? () => setState(() => _imageCount--) : null,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.remove, size: 12, color: Colors.white70),
+                ),
               ),
-            ),
-            const Spacer(),
-            IconButton(
-              onPressed: _imageCount > 1
-                  ? () => setState(() => _imageCount--)
-                  : null,
-              icon: Icon(
-                Icons.remove_circle_outline,
-                size: isCompact ? 20 : 22,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text('$_imageCount', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
               ),
-              color: _imageCount > 1 ? Colors.white70 : Colors.grey[700],
-            ),
-            Text(
-              '$_imageCount',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: isCompact ? 14 : 16,
+              GestureDetector(
+                onTap: _imageCount < 4 ? () => setState(() => _imageCount++) : null,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.add, size: 12, color: Colors.white70),
+                ),
               ),
-            ),
-            IconButton(
-              onPressed: _imageCount < 4
-                  ? () => setState(() => _imageCount++)
-                  : null,
-              icon: Icon(Icons.add_circle_outline, size: isCompact ? 20 : 22),
-              color: _imageCount < 4 ? Colors.white70 : Colors.grey[700],
-            ),
-          ],
-        ),
-      ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildAdvancedToggle(bool isCompact) {
+  Widget _buildAdvancedToggle() {
     return GestureDetector(
       onTap: () {
         setState(() => _showAdvanced = !_showAdvanced);
         HapticFeedback.selectionClick();
       },
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            _showAdvanced ? Icons.expand_less : Icons.expand_more,
-            color: Colors.grey[400],
-            size: isCompact ? 18 : 20,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            _showAdvanced ? 'Hide advanced options' : 'Show advanced options',
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: isCompact ? 11 : 12,
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _showAdvanced ? 'Hide Advanced' : 'More Options',
+              style: const TextStyle(color: Colors.white54, fontSize: 10),
             ),
-          ),
-        ],
+            Icon(
+              _showAdvanced ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              size: 14,
+              color: Colors.white54,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildGenerateButton(bool isCompact) {
-    final canGenerate =
-        _promptController.text.trim().isNotEmpty &&
-        !_isLoading &&
-        _aiService.isConfigured;
+  // ═══════════════════════════════════════════════════════
+  // 🚀 COMPACT GENERATE BUTTON
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildCompactGenerateButton() {
+    final canGenerate = _promptController.text.trim().isNotEmpty && !_isLoading;
 
     return SizedBox(
       width: double.infinity,
+      height: 38,
       child: ElevatedButton(
         onPressed: canGenerate ? _generateImage : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.purple,
+          backgroundColor: Colors.purpleAccent.shade700,
           foregroundColor: Colors.white,
-          disabledBackgroundColor: Colors.grey[800],
-          padding: EdgeInsets.symmetric(vertical: isCompact ? 14 : 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.08),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (_isLoading)
-              SizedBox(
-                width: isCompact ? 18 : 20,
-                height: isCompact ? 18 : 20,
-                child: const CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
+        child: _isLoading
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
               )
-            else
-              Icon(Icons.auto_awesome, size: isCompact ? 18 : 20),
-            SizedBox(width: isCompact ? 8 : 10),
-            Text(
-              _isLoading ? 'Generating...' : 'Generate Image',
-              style: TextStyle(
-                fontSize: isCompact ? 14 : 15,
-                fontWeight: FontWeight.bold,
+            : const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.auto_awesome, size: 14),
+                  SizedBox(width: 6),
+                  Text(
+                    'Generate AI Image',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
 
-  Widget _buildGenerationProgress(bool isCompact) {
+  Widget _buildCompactProgress() {
     return Container(
-      margin: EdgeInsets.only(top: isCompact ? 12 : 16),
-      padding: EdgeInsets.all(isCompact ? 12 : 14),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.purple.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  value: _generationState.progress > 0
-                      ? _generationState.progress
-                      : null,
-                  strokeWidth: 2,
-                  color: Colors.purple,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _generationState.message,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: isCompact ? 12 : 13,
-                  ),
-                ),
-              ),
-              if (_generationState.progress > 0)
-                Text(
-                  '${(_generationState.progress * 100).toInt()}%',
-                  style: TextStyle(
-                    color: Colors.purple,
-                    fontSize: isCompact ? 12 : 13,
-                  ),
-                ),
-            ],
-          ),
-          if (_generationState.progress > 0) ...[
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _generationState.progress,
-                backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation(Colors.purple),
-                minHeight: 4,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorMessage(bool isCompact) {
-    return Container(
-      margin: EdgeInsets.only(top: isCompact ? 12 : 16),
-      padding: EdgeInsets.all(isCompact ? 12 : 14),
-      decoration: BoxDecoration(
-        color: Colors.red.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        color: Colors.purple.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.error_outline,
-            color: Colors.red,
-            size: isCompact ? 20 : 22,
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(color: Colors.purpleAccent, strokeWidth: 1.5),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _error!,
-              style: TextStyle(
-                color: Colors.red[300],
-                fontSize: isCompact ? 12 : 13,
-              ),
+              _generationState.message,
+              style: const TextStyle(color: Colors.white, fontSize: 11),
             ),
-          ),
-          IconButton(
-            onPressed: () => setState(() => _error = null),
-            icon: const Icon(Icons.close, color: Colors.red, size: 18),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildRecentGenerations(bool isCompact) {
+  Widget _buildErrorMessage() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, color: Colors.redAccent, size: 14),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 10),
+            ),
+          ),
+          GestureDetector(
+            onTap: () => setState(() => _error = null),
+            child: const Icon(Icons.close, color: Colors.redAccent, size: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // 🖼️ RECENT GENERATIONS
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildRecentGenerations() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Recent Generations',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: isCompact ? 13 : 14,
-            fontWeight: FontWeight.bold,
-          ),
+        const Text(
+          'Generated (Tap to add to timeline)',
+          style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
         ),
-        SizedBox(height: isCompact ? 10 : 12),
+        const SizedBox(height: 6),
         SizedBox(
-          height: isCompact ? 100 : 120,
+          height: 72,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: _generatedImages.length.clamp(0, 10),
+            itemCount: _generatedImages.length,
             itemBuilder: (context, index) {
-              return _buildImageThumbnail(_generatedImages[index], isCompact);
+              final image = _generatedImages[index];
+              return GestureDetector(
+                onTap: () => _addToTimeline(image),
+                onLongPress: () => _showImageOptions(image),
+                child: Container(
+                  width: 72,
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _buildImageWidget(image),
+                        Positioned(
+                          bottom: 2,
+                          right: 2,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Colors.purpleAccent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.add, size: 10, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             },
           ),
         ),
@@ -973,169 +1035,69 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ HISTORY TAB
+  // 📜 HISTORY TAB
   // ═══════════════════════════════════════════════════════
 
-  Widget _buildHistoryTab(bool isCompact) {
+  Widget _buildHistoryTab() {
     if (_savedImages.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.auto_awesome,
-              color: Colors.grey[700],
-              size: isCompact ? 48 : 56,
-            ),
-            SizedBox(height: isCompact ? 12 : 16),
-            Text(
-              'No AI images yet',
-              style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: isCompact ? 14 : 16,
-              ),
-            ),
-            SizedBox(height: isCompact ? 4 : 8),
-            Text(
-              'Generate your first image!',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: isCompact ? 12 : 13,
-              ),
-            ),
+            Icon(Icons.auto_awesome_outlined, color: Colors.white.withValues(alpha: 0.2), size: 36),
+            const SizedBox(height: 8),
+            const Text('No saved AI images yet', style: TextStyle(color: Colors.white54, fontSize: 12)),
           ],
         ),
       );
     }
 
-    final crossAxisCount = MediaQuery.of(context).size.width > 600 ? 4 : 3;
-
     return GridView.builder(
-      padding: EdgeInsets.all(isCompact ? 10 : 12),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        crossAxisSpacing: isCompact ? 8 : 10,
-        mainAxisSpacing: isCompact ? 8 : 10,
+      padding: const EdgeInsets.all(10),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
         childAspectRatio: 1,
       ),
       itemCount: _savedImages.length,
       itemBuilder: (context, index) {
-        return _buildHistoryImageCard(_savedImages[index], isCompact);
+        final image = _savedImages[index];
+        return GestureDetector(
+          onTap: () => _addToTimeline(image),
+          onLongPress: () => _showImageOptions(image),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _buildImageWidget(image),
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      color: Colors.black54,
+                      child: Text(
+                        image.prompt,
+                        style: const TextStyle(color: Colors.white, fontSize: 8),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
       },
-    );
-  }
-
-  Widget _buildImageThumbnail(AiGeneratedImage image, bool isCompact) {
-    return GestureDetector(
-      onTap: () => _addToTimeline(image),
-      onLongPress: () => _showImageOptions(image),
-      child: Container(
-        width: isCompact ? 100 : 120,
-        margin: const EdgeInsets.only(right: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(9),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildImageWidget(image),
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.8),
-                      ],
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.add_circle,
-                    color: Colors.purple,
-                    size: isCompact ? 20 : 24,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHistoryImageCard(AiGeneratedImage image, bool isCompact) {
-    return GestureDetector(
-      onTap: () => _addToTimeline(image),
-      onLongPress: () => _showImageOptions(image),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white12),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(9),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildImageWidget(image),
-              // Overlay with prompt
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: EdgeInsets.all(isCompact ? 6 : 8),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.8),
-                      ],
-                    ),
-                  ),
-                  child: Text(
-                    image.prompt,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: isCompact ? 8 : 9,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-              // Add button
-              Positioned(
-                top: 4,
-                right: 4,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.purple,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Icon(
-                    Icons.add,
-                    color: Colors.white,
-                    size: isCompact ? 14 : 16,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1157,19 +1119,6 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
         image.url!,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _imagePlaceholder(),
-        loadingBuilder: (_, child, progress) {
-          if (progress == null) return child;
-          return Center(
-            child: CircularProgressIndicator(
-              value: progress.expectedTotalBytes != null
-                  ? progress.cumulativeBytesLoaded /
-                        progress.expectedTotalBytes!
-                  : null,
-              strokeWidth: 2,
-              color: Colors.purple,
-            ),
-          );
-        },
       );
     }
     return _imagePlaceholder();
@@ -1177,13 +1126,13 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
 
   Widget _imagePlaceholder() {
     return Container(
-      color: Colors.grey[800],
-      child: Icon(Icons.image, color: Colors.grey[600], size: 32),
+      color: Colors.grey[900],
+      child: const Icon(Icons.image, color: Colors.white24, size: 24),
     );
   }
 
   // ═══════════════════════════════════════════════════════
-  // ✅ ACTIONS
+  // 🎬 ACTIONS
   // ═══════════════════════════════════════════════════════
 
   Future<void> _generateImage() async {
@@ -1220,138 +1169,85 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
     try {
       final imagePath = image.localPath ?? image.url ?? '';
       if (imagePath.isEmpty && image.bytes == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Image not available'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        _showSnack('Image not available');
         return;
       }
 
       final timelineItem = ImageTimelineItem(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         startTime: widget.currentPosition,
-        endTime: widget.currentPosition + const Duration(seconds: 5),
+        endTime: widget.currentPosition + const Duration(seconds: 3),
         imagePath: imagePath,
         imageBytes: image.bytes,
         width: image.width,
         height: image.height,
         isAiGenerated: true,
         aiPrompt: image.prompt,
-        scale: 0.5,
+        scale: 0.4,
       );
 
       widget.onImageGenerated(timelineItem);
       HapticFeedback.mediumImpact();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Image added to timeline'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 1),
-        ),
-      );
     } catch (e) {
       debugPrint('❌ Add to timeline error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add image: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showSnack('Failed to add image: $e');
     }
   }
 
   void _showImageOptions(AiGeneratedImage image) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.grey[900],
+      backgroundColor: const Color(0xFF222228),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 32,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+                width: 28,
+                height: 3,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(1.5)),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'AI Generated Image',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 image.prompt,
-                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              _buildOptionTile(Icons.add_circle, 'Add to Timeline', () {
-                Navigator.pop(ctx);
-                _addToTimeline(image);
-              }),
-              _buildOptionTile(Icons.copy, 'Use Prompt', () {
-                Navigator.pop(ctx);
-                _promptController.text = image.prompt;
-                setState(() {});
-                HapticFeedback.selectionClick();
-              }),
-              _buildOptionTile(Icons.delete, 'Delete', () {
-                Navigator.pop(ctx);
-                _deleteImage(image);
-              }, isDestructive: true),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionTile(
-    IconData icon,
-    String label,
-    VoidCallback onTap, {
-    bool isDestructive = false,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          onTap();
-          HapticFeedback.selectionClick();
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                color: isDestructive ? Colors.red : Colors.white70,
-                size: 22,
+              const SizedBox(height: 10),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.add_circle, color: Colors.purpleAccent, size: 18),
+                title: const Text('Add to Timeline', style: TextStyle(color: Colors.white, fontSize: 13)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _addToTimeline(image);
+                },
               ),
-              const SizedBox(width: 16),
-              Text(
-                label,
-                style: TextStyle(
-                  color: isDestructive ? Colors.red : Colors.white,
-                  fontSize: 15,
-                ),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.copy, color: Colors.white70, size: 18),
+                title: const Text('Use Prompt', style: TextStyle(color: Colors.white, fontSize: 13)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _promptController.text = image.prompt;
+                  setState(() {});
+                },
+              ),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                title: const Text('Delete', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _deleteImage(image);
+                },
               ),
             ],
           ),
@@ -1369,16 +1265,6 @@ class _AiTabState extends State<AiTab> with SingleTickerProviderStateMixin {
           _savedImages.removeWhere((img) => img.id == image.id);
         });
         HapticFeedback.lightImpact();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Deleted'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
       }
     } catch (e) {
       debugPrint('❌ Delete image error: $e');

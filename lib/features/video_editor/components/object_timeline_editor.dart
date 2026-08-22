@@ -1,13 +1,19 @@
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
+import '../../../services/file_picker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/timeline_provider.dart';
+import '../providers/video_editor_provider.dart';
+import '../services/waveform_service.dart';
 import '../sheets/transition_sheet.dart';
+import '../sheets/solid_color_sheet.dart';
 import '../sheets/pixabay_video_picker_sheet.dart';
+import '../sheets/local_video_browser_sheet.dart';
+import '../tabs/ai_tab.dart';
 
 class _CompactDims {
   final double screenHeight;
@@ -76,6 +82,10 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   Duration _originalDuration = Duration.zero;
   bool _isMultiDrag = false;
 
+  // Snap state
+  static const double _snapThresholdPx = 6.0;
+  double? _snapLineX;
+
   double get _pixelsPerSecond {
     final zoom = ref.watch(timelineProvider).zoomLevel;
     return 50.0 * zoom;
@@ -100,6 +110,37 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<TimelineState>(timelineProvider, (prev, next) {
+      if (!mounted || _dragMode != _DragMode.none) return;
+
+      if (_scrollController.hasClients) {
+        final playheadX =
+            next.currentPosition.inMilliseconds / 1000 * _pixelsPerSecond +
+            _dims.trackLabelWidth;
+        final viewportWidth = _scrollController.position.viewportDimension;
+        final currentOffset = _scrollController.offset;
+        final maxScroll = _scrollController.position.maxScrollExtent;
+
+        if (next.isPlaying) {
+          // Keep playhead comfortably visible in viewport during playback
+          if (playheadX > currentOffset + viewportWidth - 80 ||
+              playheadX < currentOffset) {
+            final targetOffset =
+                (playheadX - viewportWidth * 0.3).clamp(0.0, maxScroll);
+            _scrollController.jumpTo(targetOffset);
+          }
+        } else if (prev?.currentPosition != next.currentPosition) {
+          // If seek position jumps offscreen while paused, scroll to reveal it
+          if (playheadX < currentOffset ||
+              playheadX > currentOffset + viewportWidth - 40) {
+            final targetOffset =
+                (playheadX - viewportWidth * 0.5).clamp(0.0, maxScroll);
+            _scrollController.jumpTo(targetOffset);
+          }
+        }
+      }
+    });
+
     final timelineState = ref.watch(timelineProvider);
     final hasItems =
         timelineState.primaryVideoClips.isNotEmpty ||
@@ -127,10 +168,21 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 
   Widget _buildToolbar(TimelineState state) {
-    final hasSelection = state.selectedItemIds.isNotEmpty;
+    final hasMultiSelection = state.selectedItemIds.isNotEmpty;
+    final hasSelection = hasMultiSelection ||
+        state.selectedItemId != null ||
+        state.selectedPrimaryClipId != null;
+    final canGroup = hasMultiSelection && state.selectedItemIds.length > 1;
+    final canUngroup = state.selectedItems.any((e) => e.groupId != null);
+    final canCopy = hasMultiSelection ||
+        state.selectedItemId != null ||
+        state.selectedPrimaryClipId != null;
+    final canPaste =
+        state.copiedItem != null || state.copiedPrimaryClip != null;
+    final canDelete = hasSelection;
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: _dims.paddingS),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
         color: Colors.grey[850],
         border: Border(
@@ -141,8 +193,8 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
         children: [
           // Marker toggle
           SizedBox(
-            width: 20,
-            height: 20,
+            width: 18,
+            height: 18,
             child: IconButton(
               icon: Icon(
                 Icons.flag,
@@ -157,74 +209,51 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
               tooltip: 'Add/remove marker',
             ),
           ),
-          SizedBox(width: _dims.paddingXS),
+          const SizedBox(width: 2),
 
-          // Group / ungroup for multi-selection
-          if (hasSelection) ...[
-            IconButton(
+          // Razor / blade tool toggle
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: IconButton(
               icon: Icon(
-                Icons.group,
-                size: _dims.iconS,
-                color: Colors.grey[300],
+                Icons.content_cut,
+                size: _dims.iconXS,
+                color: ref.watch(videoEditorProvider).currentTool == EditorTool.razor
+                    ? Colors.redAccent
+                    : Colors.grey[400],
               ),
               onPressed: () {
-                ref.read(timelineProvider.notifier).groupSelectedItems();
+                final current = ref.read(videoEditorProvider).currentTool;
+                ref.read(videoEditorProvider.notifier).selectTool(
+                      current == EditorTool.razor ? EditorTool.none : EditorTool.razor,
+                    );
                 HapticFeedback.selectionClick();
               },
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
-              tooltip: 'Group selected',
+              tooltip: 'Razor / blade tool',
             ),
-            IconButton(
-              icon: Icon(
-                Icons.group_off,
-                size: _dims.iconS,
-                color: Colors.grey[300],
-              ),
-              onPressed: () {
-                ref.read(timelineProvider.notifier).ungroupSelectedItems();
-                HapticFeedback.selectionClick();
-              },
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              tooltip: 'Ungroup selected',
-            ),
-          ],
-
-          // Delete selected
-          if (hasSelection)
-            IconButton(
-              icon: Icon(
-                Icons.delete_outline,
-                size: _dims.iconS,
-                color: Colors.red[300],
-              ),
-              onPressed: () {
-                ref.read(timelineProvider.notifier).deleteSelectedItems();
-                HapticFeedback.mediumImpact();
-              },
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              tooltip: 'Delete selected',
-            ),
+          ),
+          const SizedBox(width: 4),
 
           // Zoom controls - compact
           SizedBox(
-            width: 20,
-            height: 20,
+            width: 16,
+            height: 16,
             child: IconButton(
-              icon: Icon(Icons.remove, size: _dims.iconXS),
+              icon: Icon(Icons.remove, size: _dims.iconXS - 1),
               onPressed: () => _adjustZoom(-0.2),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
           ),
           SizedBox(
-            width: 50,
+            width: 40,
             child: SliderTheme(
               data: SliderThemeData(
                 trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 3.5),
                 overlayShape: SliderComponentShape.noOverlay,
               ),
               child: Slider(
@@ -237,28 +266,151 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
             ),
           ),
           SizedBox(
-            width: 20,
-            height: 20,
+            width: 16,
+            height: 16,
             child: IconButton(
-              icon: Icon(Icons.add, size: _dims.iconXS),
+              icon: Icon(Icons.add, size: _dims.iconXS - 1),
               onPressed: () => _adjustZoom(0.2),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
           ),
+          const SizedBox(width: 2),
           Text(
             '${(state.zoomLevel * 100).toInt()}%',
             style: TextStyle(fontSize: _dims.fontXS, color: Colors.grey[400]),
           ),
           const Spacer(),
 
+          // Group button
+          if (canGroup) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                icon: Icon(
+                  Icons.group,
+                  size: _dims.iconS,
+                  color: Colors.grey[300],
+                ),
+                onPressed: () {
+                  ref.read(timelineProvider.notifier).groupSelectedItems();
+                  HapticFeedback.selectionClick();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'Group selected',
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+
+          // Ungroup button
+          if (canUngroup) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                icon: Icon(
+                  Icons.group_off,
+                  size: _dims.iconS,
+                  color: Colors.grey[300],
+                ),
+                onPressed: () {
+                  ref.read(timelineProvider.notifier).ungroupSelectedItems();
+                  HapticFeedback.selectionClick();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'Ungroup selected',
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+
+          // Delete button (visible when selection active)
+          if (canDelete) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: _dims.iconS,
+                  color: Colors.red[300],
+                ),
+                onPressed: () {
+                  ref.read(timelineProvider.notifier).deleteSelected();
+                  HapticFeedback.mediumImpact();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'Delete',
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+
+          // Copy button (visible when selection active)
+          if (canCopy) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                icon: Icon(
+                  Icons.copy_rounded,
+                  size: _dims.iconXS + 1,
+                  color: Colors.white70,
+                ),
+                onPressed: () {
+                  ref.read(timelineProvider.notifier).copySelected();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Item copied'),
+                      duration: Duration(milliseconds: 700),
+                    ),
+                  );
+                  HapticFeedback.selectionClick();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'Copy',
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+
+          // Paste button (visible when clipboard has item/clip)
+          if (canPaste) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                icon: Icon(
+                  Icons.paste_rounded,
+                  size: _dims.iconXS + 1,
+                  color: Colors.white70,
+                ),
+                onPressed: () {
+                  ref.read(timelineProvider.notifier).pasteCopied();
+                  HapticFeedback.selectionClick();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'Paste',
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+          const SizedBox(width: 2),
+
           // Add button - compact
           GestureDetector(
             onTap: _showAddItemDialog,
             child: Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: _dims.paddingM,
-                vertical: _dims.paddingXS,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 5,
+                vertical: 2,
               ),
               decoration: BoxDecoration(
                 color: Colors.blue.withValues(alpha: 0.2),
@@ -268,7 +420,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.add, size: _dims.iconXS, color: Colors.blue),
-                  SizedBox(width: _dims.paddingXS),
+                  const SizedBox(width: 2),
                   Text(
                     'Add',
                     style: TextStyle(
@@ -284,6 +436,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
       ),
     );
   }
+
 
   Widget _buildTracks(TimelineState state) {
     return LayoutBuilder(
@@ -348,12 +501,46 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                           itemType: TimelineItemType.audio,
                           selectedIds: state.selectedItemIds,
                         ),
+
+                      // Video overlay track (PiP layers)
+                      if (state.videoOverlayItems.isNotEmpty)
+                        _buildTrack(
+                          label: 'Vid Layer',
+                          icon: Icons.layers,
+                          color: const Color(0xFFE040FB),
+                          items: state.videoOverlayItems,
+                          itemType: TimelineItemType.video,
+                          selectedIds: state.selectedItemIds,
+                        ),
+
+                      // Solid color layer track
+                      if (state.solidColorItems.isNotEmpty)
+                        _buildTrack(
+                          label: 'Color',
+                          icon: Icons.color_lens,
+                          color: Colors.teal,
+                          items: state.solidColorItems,
+                          itemType: TimelineItemType.solidColor,
+                          selectedIds: state.selectedItemIds,
+                        ),
                     ],
                   ),
                 ),
 
                 // Playhead
                 _buildPlayhead(state.currentPosition),
+
+                // Snap indicator line
+                if (_snapLineX != null)
+                  Positioned(
+                    left: _snapLineX,
+                    top: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 1,
+                      color: const Color(0xFF00E5FF),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -363,24 +550,42 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 
   Widget _buildTimeRuler() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.grey[850],
-        border: Border(
-          bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (details) => _seekFromRulerX(details.localPosition.dx),
+      onHorizontalDragUpdate: (details) =>
+          _seekFromRulerX(details.localPosition.dx),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey[850],
+          border: Border(
+            bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
+          ),
         ),
-      ),
-      child: CustomPaint(
-        size: Size(_totalWidth + _dims.trackLabelWidth, _dims.rulerHeight),
-        painter: _TimeRulerPainter(
-          pixelsPerSecond: _pixelsPerSecond,
-          totalDuration: widget.totalDuration,
-          trackLabelWidth: _dims.trackLabelWidth,
-          fontSize: _dims.fontXS,
-          markers: ref.watch(timelineProvider).markers,
+        child: CustomPaint(
+          size: Size(_totalWidth + _dims.trackLabelWidth, _dims.rulerHeight),
+          painter: _TimeRulerPainter(
+            pixelsPerSecond: _pixelsPerSecond,
+            totalDuration: widget.totalDuration,
+            trackLabelWidth: _dims.trackLabelWidth,
+            fontSize: _dims.fontXS,
+            markers: ref.watch(timelineProvider).markers,
+          ),
         ),
       ),
     );
+  }
+
+  void _seekFromRulerX(double localX) {
+    final x = localX - _dims.trackLabelWidth;
+    if (x < 0) return;
+    final ms = (x / _pixelsPerSecond * 1000).toInt();
+    final newPos = Duration(milliseconds: ms);
+    final clamped = newPos < Duration.zero
+        ? Duration.zero
+        : (newPos > widget.totalDuration ? widget.totalDuration : newPos);
+    ref.read(timelineProvider.notifier).setCurrentPosition(clamped);
+    widget.onSeek?.call(clamped);
   }
 
   // ═══════════════════════════════════════════════════════
@@ -389,6 +594,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
 
   Widget _buildPrimaryMagneticTrack(List<PrimaryVideoClip> clips) {
     Duration offset = Duration.zero;
+    final selectedId = ref.watch(timelineProvider).selectedPrimaryClipId;
 
     return Container(
       height: _dims.trackHeight + 6,
@@ -456,6 +662,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                   }
 
                   final isLast = index == clips.length - 1;
+                  final isSelected = clip.id == selectedId;
 
                   return Positioned(
                     left: startX,
@@ -463,46 +670,95 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Magnetic video clip block
-                        Container(
-                          width: width,
-                          height: _dims.trackHeight + 6,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.blueAccent.withValues(alpha: 0.55),
-                                Colors.indigo.withValues(alpha: 0.45),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: Colors.blueAccent,
-                              width: 1.0,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 4),
-                              Icon(
-                                Icons.movie_outlined,
-                                size: _dims.iconXS,
-                                color: Colors.white70,
+                        // Magnetic video clip block (tap to select or razor split)
+                        GestureDetector(
+                          onTap: () {
+                            final tool = ref.read(videoEditorProvider).currentTool;
+                            if (tool == EditorTool.razor) {
+                              final pos = ref.read(timelineProvider).currentPosition;
+                              ref.read(timelineProvider.notifier).splitPrimaryClipAt(
+                                    clip.id,
+                                    pos,
+                                  );
+                            } else {
+                              ref
+                                  .read(timelineProvider.notifier)
+                                  .selectPrimaryClip(clip.id);
+                            }
+                          },
+                          child: Container(
+                            width: width,
+                            height: _dims.trackHeight + 6,
+                            decoration: BoxDecoration(
+                              color: Colors.blueGrey[900],
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.blueAccent.withValues(alpha: 0.8),
+                                width: isSelected ? 2.0 : 1.0,
                               ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  'Clip ${index + 1}',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: _dims.fontXS,
-                                    fontWeight: FontWeight.bold,
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(3),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  // Frame Filmstrip / Thumbnails directly inside the clip
+                                  _buildPrimaryClipThumbnails(clip, width),
+
+                                  // Contrast gradient overlay for label visibility
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.black.withValues(alpha: 0.5),
+                                          Colors.transparent,
+                                          Colors.black.withValues(alpha: 0.6),
+                                        ],
+                                      ),
+                                    ),
                                   ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+
+                                  // Clip info
+                                  Row(
+                                    children: [
+                                      const SizedBox(width: 4),
+                                      Icon(
+                                        Icons.movie_outlined,
+                                        size: _dims.iconXS,
+                                        color: Colors.white,
+                                        shadows: const [
+                                          Shadow(blurRadius: 3, color: Colors.black),
+                                        ],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          'Clip ${index + 1}',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: _dims.fontXS,
+                                            fontWeight: FontWeight.bold,
+                                            shadows: const [
+                                              Shadow(blurRadius: 3, color: Colors.black),
+                                              Shadow(blurRadius: 6, color: Colors.black),
+                                            ],
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
+                        // Speed keyframe dots on primary clip
+                        ..._buildPrimaryClipSpeedDots(clip, width),
 
                         // Inter-clip transition (+) button
                         if (!isLast)
@@ -562,26 +818,95 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     required TimelineItemType itemType,
     required Set<String> selectedIds,
   }) {
+    final tl = ref.watch(timelineProvider);
+    final isMuted = tl.mutedTracks.contains(label);
+    final isSolo = tl.soloTracks.contains(label);
+    final isLocked = tl.lockedTracks.contains(label);
+    final hasSolo = tl.soloTracks.isNotEmpty;
+    final effectivelyMuted = isMuted || (hasSolo && !isSolo);
+
     return Container(
       height: _dims.trackHeight,
       margin: EdgeInsets.only(top: _dims.trackSpacing),
       child: Row(
         children: [
-          // Track label
-          Container(
-            width: _dims.trackLabelWidth,
-            padding: EdgeInsets.symmetric(horizontal: _dims.paddingXS),
+          // Track label + controls
+          SizedBox(
+            width: _dims.trackLabelWidth + 36,
             child: Row(
               children: [
-                Icon(icon, size: _dims.iconXS, color: color),
                 SizedBox(width: _dims.paddingXS),
+                Icon(icon, size: _dims.iconXS, color: color),
+                SizedBox(width: 2),
                 Expanded(
                   child: Text(
                     label,
-                    style: TextStyle(fontSize: _dims.fontXS, color: color),
+                    style: TextStyle(
+                      fontSize: _dims.fontXS,
+                      color: effectivelyMuted ? Colors.grey[600] : color,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                // Mute button
+                GestureDetector(
+                  onTap: () => ref.read(timelineProvider.notifier).toggleMuteTrack(label),
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: isMuted ? Colors.red[800] : Colors.transparent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    child: Icon(
+                      isMuted ? Icons.volume_off : Icons.volume_up,
+                      size: 9,
+                      color: isMuted ? Colors.white : Colors.grey[500],
+                    ),
+                  ),
+                ),
+                SizedBox(width: 1),
+                // Solo button
+                GestureDetector(
+                  onTap: () => ref.read(timelineProvider.notifier).toggleSoloTrack(label),
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: isSolo ? Colors.amber[800] : Colors.transparent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'S',
+                        style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                          color: isSolo ? Colors.white : Colors.grey[500],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 1),
+                // Lock button
+                GestureDetector(
+                  onTap: () => ref.read(timelineProvider.notifier).toggleLockTrack(label),
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: isLocked ? Colors.blue[800] : Colors.transparent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    child: Icon(
+                      isLocked ? Icons.lock : Icons.lock_open,
+                      size: 9,
+                      color: isLocked ? Colors.white : Colors.grey[500],
+                    ),
+                  ),
+                ),
+                SizedBox(width: _dims.paddingXS),
               ],
             ),
           ),
@@ -595,7 +920,9 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                 Container(
                   height: _dims.trackHeight,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.03),
+                    color: effectivelyMuted
+                        ? Colors.white.withValues(alpha: 0.01)
+                        : Colors.white.withValues(alpha: 0.03),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -604,7 +931,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                 ...items.map(
                   (item) => _buildTrackItem(
                     item: item,
-                    color: color,
+                    color: effectivelyMuted ? Colors.grey[700]! : color,
                     isSelected: selectedIds.contains(item.id),
                     itemType: itemType,
                   ),
@@ -661,6 +988,40 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
           ),
           child: Stack(
             children: [
+              // Audio waveform background
+              if (itemType == TimelineItemType.audio &&
+                  item is AudioTimelineItem &&
+                  item.waveformData != null &&
+                  item.waveformData!.isNotEmpty)
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: WaveformPainter(
+                      peaks: WaveformService.bytesToPeaks(item.waveformData!),
+                      color: color,
+                      playedColor: Colors.white,
+                    ),
+                  ),
+                ),
+
+              // Video Overlay frame thumbnail background
+              if (itemType == TimelineItemType.video &&
+                  item is VideoOverlayTimelineItem &&
+                  item.thumbnail != null)
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: Opacity(
+                      opacity: 0.55,
+                      child: Image.memory(
+                        item.thumbnail!,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+
               // Content - centered
               Center(
                 child: Padding(
@@ -737,11 +1098,163 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     ),
                   ),
                 ),
+              // Keyframe dots
+              if (item.duration.inMilliseconds > 0)
+                ..._buildKeyframeDots(item, width),
             ],
           ),
         ),
       ),
     );
+  }
+
+  List<Widget> _buildKeyframeDots(TimelineItem item, double blockWidth) {
+    final kfs = ref.read(timelineProvider).keyframes[item.id];
+    if (kfs == null || kfs.isEmpty) return [];
+    final durMs = item.duration.inMilliseconds;
+    if (durMs <= 0) return [];
+    return kfs.map((kf) {
+      final dx = (kf.time.inMilliseconds / durMs) * blockWidth;
+      final hasPos = kf.x != null || kf.y != null;
+      final hasScale = kf.scale != null;
+      final hasRot = kf.rotation != null;
+      final hasOp = kf.opacity != null;
+      final hasVol = kf.volume != null;
+      final hasSpd = kf.speed != null;
+      final count = [hasPos, hasScale, hasRot, hasOp, hasVol, hasSpd].where((b) => b).length;
+      final dotColor = count > 1
+          ? Colors.amber
+          : hasPos
+              ? const Color(0xFF00E5FF)
+              : hasScale
+                  ? const Color(0xFF76FF03)
+                  : hasRot
+                      ? const Color(0xFFFF6D00)
+                      : hasOp
+                          ? Colors.white
+                          : hasSpd
+                              ? Colors.orangeAccent
+                              : Colors.orange;
+      return Positioned(
+        left: dx - 3,
+        bottom: 2,
+        child: Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: dotColor,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.black54, width: 0.5),
+          ),
+        ),
+      );
+    }).toList();
+  }
+
+  List<Widget> _buildPrimaryClipSpeedDots(PrimaryVideoClip clip, double blockWidth) {
+    final kfs = ref.read(timelineProvider).keyframes[clip.id];
+    if (kfs == null || kfs.isEmpty) return [];
+    final speedKfs = kfs.where((k) => k.speed != null).toList();
+    if (speedKfs.isEmpty) return [];
+    final durMs = clip.effectiveDuration.inMilliseconds;
+    if (durMs <= 0) return [];
+    return speedKfs.map((kf) {
+      final dx = (kf.time.inMilliseconds / durMs) * blockWidth;
+      final speed = kf.speed ?? 1.0;
+      final dotColor = speed < 1.0
+          ? Colors.blueAccent
+          : speed > 1.0
+              ? Colors.orangeAccent
+              : Colors.grey;
+      return Positioned(
+        left: dx - 3,
+        bottom: 2,
+        child: Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: dotColor,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.black54, width: 0.5),
+          ),
+        ),
+      );
+    }).toList();
+  }
+
+  /// Builds a filmstrip of frame thumbnails directly across the width of the clip.
+  Widget _buildPrimaryClipThumbnails(PrimaryVideoClip clip, double width) {
+    if (width <= 0) return const SizedBox.shrink();
+    final editorState = ref.watch(videoEditorProvider);
+    final globalThumbs = editorState.thumbnails;
+
+    if (clip.thumbnail != null) {
+      final frameWidth = (_dims.trackHeight + 6) * 1.33;
+      final count = math.max(1, (width / frameWidth).ceil());
+
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: SizedBox(
+          width: width,
+          height: double.infinity,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(count, (i) {
+                return SizedBox(
+                  width: frameWidth,
+                  height: double.infinity,
+                  child: Image.memory(
+                    clip.thumbnail!,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (globalThumbs.isNotEmpty) {
+      final frameWidth = (_dims.trackHeight + 6) * 1.33;
+      final count = math.max(1, (width / frameWidth).ceil());
+
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: SizedBox(
+          width: width,
+          height: double.infinity,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(count, (i) {
+                final thumbIdx = i % globalThumbs.length;
+                final thumb = globalThumbs[thumbIdx];
+                return SizedBox(
+                  width: frameWidth,
+                  height: double.infinity,
+                  child: Image.memory(
+                    thumb,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   Widget _buildPlayhead(Duration position) {
@@ -826,14 +1339,29 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 
   // ═══════════════════════════════════════════════════════
-  // DRAG HANDLERS (unchanged)
+  // DRAG HANDLERS
   // ═══════════════════════════════════════════════════════
+
+  String _trackLabelForType(TimelineItemType type) {
+    switch (type) {
+      case TimelineItemType.text: return 'Text';
+      case TimelineItemType.image: return 'Img';
+      case TimelineItemType.audio: return 'Audio';
+      case TimelineItemType.video: return 'Vid Layer';
+      case TimelineItemType.solidColor: return 'Color';
+      default: return '';
+    }
+  }
 
   void _onItemDragStart(
     TimelineItem item,
     DragStartDetails details,
     TimelineItemType type,
   ) {
+    final lockedTracks = ref.read(timelineProvider).lockedTracks;
+    final itemLocked = ref.read(timelineProvider).lockedItems.contains(item.id);
+    if (itemLocked || lockedTracks.contains(_trackLabelForType(type))) return;
+
     _draggingItemId = item.id;
     _draggingItemType = type;
     _dragStartX = details.globalPosition.dx;
@@ -860,13 +1388,15 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
       ref
           .read(timelineProvider.notifier)
           .moveSelectedItems(timeDelta);
+      _snapLineX = null;
       return;
     }
 
-    final newStart = _originalStartTime + timeDelta;
+    var newStart = _originalStartTime + timeDelta;
 
     if (newStart >= Duration.zero &&
         newStart + _originalDuration <= widget.totalDuration) {
+      newStart = _snapTo(newStart, _draggingItemId);
       _updateItemTiming(_draggingItemId!, newStart, _originalDuration);
     }
   }
@@ -877,6 +1407,10 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     TimelineItemType type,
     bool isLeft,
   ) {
+    final lockedTracks = ref.read(timelineProvider).lockedTracks;
+    final itemLocked = ref.read(timelineProvider).lockedItems.contains(item.id);
+    if (itemLocked || lockedTracks.contains(_trackLabelForType(type))) return;
+
     _draggingItemId = item.id;
     _draggingItemType = type;
     _dragStartX = details.globalPosition.dx;
@@ -900,18 +1434,29 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
 
       if (newStart >= Duration.zero &&
           newDuration >= const Duration(milliseconds: 200)) {
-        _updateItemTimingWithDuration(_draggingItemId!, newStart, newDuration);
+        // Snap the new start edge
+        newStart = _snapTo(newStart, _draggingItemId);
+        newDuration = _originalStartTime + _originalDuration - newStart;
+        if (newDuration >= const Duration(milliseconds: 200)) {
+          _updateItemTimingWithDuration(_draggingItemId!, newStart, newDuration);
+        }
       }
     } else {
       var newDuration = _originalDuration + timeDelta;
 
       if (newDuration >= const Duration(milliseconds: 200) &&
           _originalStartTime + newDuration <= widget.totalDuration) {
-        _updateItemTimingWithDuration(
-          _draggingItemId!,
-          _originalStartTime,
-          newDuration,
-        );
+        // Snap the new end edge
+        final candidateEnd = _originalStartTime + newDuration;
+        final snappedEnd = _snapTo(candidateEnd, _draggingItemId);
+        newDuration = snappedEnd - _originalStartTime;
+        if (newDuration >= const Duration(milliseconds: 200)) {
+          _updateItemTimingWithDuration(
+            _draggingItemId!,
+            _originalStartTime,
+            newDuration,
+          );
+        }
       }
     }
   }
@@ -921,8 +1466,86 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     _draggingItemType = null;
     _dragMode = _DragMode.none;
     _isMultiDrag = false;
+    _snapLineX = null;
     HapticFeedback.lightImpact();
   }
+
+  // ═══════════════════════════════════════════════════════
+  // SNAP TO PLAYHEAD + CLIP EDGES
+  // ═══════════════════════════════════════════════════════
+
+  List<Duration> _buildSnapPoints(String? excludeItemId) {
+    final state = ref.read(timelineProvider);
+    final points = <Duration>[];
+
+    // Playhead
+    points.add(state.currentPosition);
+
+    // Total duration boundaries
+    points.add(Duration.zero);
+    points.add(widget.totalDuration);
+
+    // Clip start/end edges (all item types)
+    for (final item in state.textItems) {
+      if (item.id == excludeItemId) continue;
+      points.add(item.startTime);
+      points.add(item.endTime);
+    }
+    for (final item in state.imageItems) {
+      if (item.id == excludeItemId) continue;
+      points.add(item.startTime);
+      points.add(item.endTime);
+    }
+    for (final item in state.audioItems) {
+      if (item.id == excludeItemId) continue;
+      points.add(item.startTime);
+      points.add(item.endTime);
+    }
+    for (final item in state.videoOverlayItems) {
+      if (item.id == excludeItemId) continue;
+      points.add(item.startTime);
+      points.add(item.endTime);
+    }
+    // Primary clip edges
+    for (final clip in state.primaryVideoClips) {
+      if (clip.id == excludeItemId) continue;
+      // primary clips are sequential; compute their absolute positions
+      // (handled by object_timeline_editor's _calcStartTimeAt)
+    }
+
+    return points;
+  }
+
+  Duration _snapTo(Duration candidate, String? excludeItemId) {
+    final points = _buildSnapPoints(excludeItemId);
+    final thresholdMs = (_snapThresholdPx / _pixelsPerSecond * 1000).toInt();
+    final threshold = Duration(milliseconds: thresholdMs);
+
+    Duration best = candidate;
+    double bestDist = double.infinity;
+    double? bestLineX;
+
+    for (final pt in points) {
+      final dist = (candidate - pt).inMilliseconds.abs().toDouble();
+      if (dist < threshold.inMilliseconds && dist < bestDist) {
+        bestDist = dist;
+        best = pt;
+        bestLineX = _durationToPx(pt);
+      }
+    }
+
+    if (bestLineX != null && bestLineX != _snapLineX) {
+      _snapLineX = bestLineX;
+      HapticFeedback.selectionClick();
+    } else if (bestLineX == null) {
+      _snapLineX = null;
+    }
+
+    return best;
+  }
+
+  double _durationToPx(Duration d) =>
+      d.inMilliseconds / 1000 * _pixelsPerSecond + _dims.trackLabelWidth;
 
   void _updateItemTiming(String itemId, Duration newStart, Duration duration) {
     final newEnd = newStart + duration;
@@ -949,6 +1572,13 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
         ref
             .read(timelineProvider.notifier)
             .updateAudioItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
+        break;
+      case TimelineItemType.video:
+        final item = _findItemInList(state.videoOverlayItems, itemId);
+        if (item == null) return;
+        ref
+            .read(timelineProvider.notifier)
+            .updateVideoOverlayItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       default:
         break;
@@ -984,6 +1614,13 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
         ref
             .read(timelineProvider.notifier)
             .updateAudioItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
+        break;
+      case TimelineItemType.video:
+        final item = _findItemInList(state.videoOverlayItems, itemId);
+        if (item == null) return;
+        ref
+            .read(timelineProvider.notifier)
+            .updateVideoOverlayItem(itemId, item.copyWith(startTime: newStart, endTime: newEnd));
         break;
       default:
         break;
@@ -1037,6 +1674,24 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _buildCompactAddButton(
+                    icon: Icons.video_library_rounded,
+                    label: 'Video',
+                    color: Colors.blueAccent,
+                    onTap: () {
+                      Navigator.pop(context);
+                      LocalVideoBrowserSheet.show(context);
+                    },
+                  ),
+                  _buildCompactAddButton(
+                    icon: Icons.movie_creation,
+                    label: 'Stock Vid',
+                    color: const Color(0xFF6C63FF),
+                    onTap: () {
+                      Navigator.pop(context);
+                      PixabayVideoPickerSheet.show(context);
+                    },
+                  ),
+                  _buildCompactAddButton(
                     icon: Icons.text_fields,
                     label: 'Text',
                     color: Colors.orange,
@@ -1054,15 +1709,12 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                       _pickAndAddImage(currentPosition);
                     },
                   ),
-                  _buildCompactAddButton(
-                    icon: Icons.movie_creation,
-                    label: 'Stock Video',
-                    color: const Color(0xFF6C63FF),
-                    onTap: () {
-                      Navigator.pop(context);
-                      PixabayVideoPickerSheet.show(context);
-                    },
-                  ),
+                ],
+              ),
+              SizedBox(height: _dims.paddingS),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
                   _buildCompactAddButton(
                     icon: Icons.audiotrack,
                     label: 'Audio',
@@ -1070,6 +1722,24 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     onTap: () {
                       Navigator.pop(context);
                       _pickAndAddAudio(currentPosition);
+                    },
+                  ),
+                  _buildCompactAddButton(
+                    icon: Icons.color_lens,
+                    label: 'Blank',
+                    color: Colors.teal,
+                    onTap: () {
+                      Navigator.pop(context);
+                      SolidColorSheet.show(context);
+                    },
+                  ),
+                  _buildCompactAddButton(
+                    icon: Icons.auto_awesome,
+                    label: 'AI Gen',
+                    color: Colors.pinkAccent,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showAiSheet(currentPosition);
                     },
                   ),
                 ],
@@ -1179,9 +1849,51 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     );
   }
 
+  void _showAiSheet(Duration currentPosition) {
+    final totalDuration = widget.totalDuration > Duration.zero
+        ? widget.totalDuration
+        : const Duration(seconds: 10);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.45,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) {
+          return ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: AiTab(
+              videoDuration: totalDuration,
+              currentPosition: currentPosition,
+              onImageGenerated: (ImageTimelineItem item) {
+                ref.read(timelineProvider.notifier).addImageItem(
+                      imagePath: item.imagePath,
+                      startTime: item.startTime,
+                      duration: item.endTime - item.startTime,
+                      x: item.x,
+                      y: item.y,
+                      scale: item.scale,
+                      width: item.width,
+                      height: item.height,
+                    );
+                HapticFeedback.mediumImpact();
+                if (Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _pickAndAddImage(Duration startTime) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.image,
         withData: true,
       );
@@ -1206,7 +1918,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
 
   Future<void> _pickAndAddAudio(Duration startTime) async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+      final result = await FilePickerService.pickFiles(type: FileType.audio);
       if (result == null || result.files.isEmpty) return;
       final path = result.files.single.path;
       if (path == null || path.isEmpty) {
@@ -1311,6 +2023,23 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   // ═══════════════════════════════════════════════════════
 
   void _selectItem(String id, TimelineItemType type) {
+    final tool = ref.read(videoEditorProvider).currentTool;
+    if (tool == EditorTool.razor) {
+      final pos = ref.read(timelineProvider).currentPosition;
+      final notifier = ref.read(timelineProvider.notifier);
+      if (type == TimelineItemType.audio) {
+        notifier.splitAudioItemAt(id, pos);
+      } else if (type == TimelineItemType.video) {
+        notifier.splitVideoOverlayAt(id, pos);
+      } else if (type == TimelineItemType.text) {
+        notifier.splitTextItemAt(id, pos);
+      } else if (type == TimelineItemType.image) {
+        notifier.splitImageItemAt(id, pos);
+      } else if (type == TimelineItemType.solidColor) {
+        notifier.splitSolidColorItemAt(id, pos);
+      }
+      return;
+    }
     ref.read(timelineProvider.notifier).selectGroup(id);
     widget.onItemSelect?.call(id);
     HapticFeedback.selectionClick();
@@ -1354,6 +2083,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
           : item.text;
     }
     if (item is ImageTimelineItem) return 'Img';
+    if (item is VideoOverlayTimelineItem) return 'Vid';
     if (item is AudioTimelineItem) {
       return item.title.isEmpty ? 'Audio' : item.title;
     }

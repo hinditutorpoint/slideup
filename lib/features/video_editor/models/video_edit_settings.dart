@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 // ✅ ENUMS
 // ═══════════════════════════════════════════════════════
 
-enum TimelineItemType { text, image, audio, video, sticker }
+enum TimelineItemType { text, image, audio, video, sticker, solidColor }
 
 enum TextAlignCustom { left, center, right }
 
@@ -599,6 +599,13 @@ class PrimaryVideoClip {
   final ClipTransition transitionOut;
   final Uint8List? thumbnail;
 
+  // ── Per-clip edit properties ──
+  final double volume;
+  final double speed;
+  final double rotation;
+  final bool flipH;
+  final bool flipV;
+
   const PrimaryVideoClip({
     required this.id,
     required this.videoPath,
@@ -607,6 +614,11 @@ class PrimaryVideoClip {
     Duration? trimEnd,
     this.transitionOut = ClipTransition.none,
     this.thumbnail,
+    this.volume = 1.0,
+    this.speed = 1.0,
+    this.rotation = 0.0,
+    this.flipH = false,
+    this.flipV = false,
   }) : trimEnd = trimEnd ?? sourceDuration;
 
   Duration get effectiveDuration {
@@ -628,6 +640,11 @@ class PrimaryVideoClip {
     Duration? trimEnd,
     ClipTransition? transitionOut,
     Uint8List? thumbnail,
+    double? volume,
+    double? speed,
+    double? rotation,
+    bool? flipH,
+    bool? flipV,
   }) {
     return PrimaryVideoClip(
       id: id ?? this.id,
@@ -637,17 +654,27 @@ class PrimaryVideoClip {
       trimEnd: trimEnd ?? this.trimEnd,
       transitionOut: transitionOut ?? this.transitionOut,
       thumbnail: thumbnail ?? this.thumbnail,
+      volume: volume ?? this.volume,
+      speed: speed ?? this.speed,
+      rotation: rotation ?? this.rotation,
+      flipH: flipH ?? this.flipH,
+      flipV: flipV ?? this.flipV,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'videoPath': videoPath,
-    'sourceDuration': sourceDuration.inMilliseconds,
-    'trimStart': trimStart.inMilliseconds,
-    'trimEnd': trimEnd.inMilliseconds,
-    'transitionOut': transitionOut.toJson(),
-  };
+        'id': id,
+        'videoPath': videoPath,
+        'sourceDuration': sourceDuration.inMilliseconds,
+        'trimStart': trimStart.inMilliseconds,
+        'trimEnd': trimEnd.inMilliseconds,
+        'transitionOut': transitionOut.toJson(),
+        'volume': volume,
+        'speed': speed,
+        'rotation': rotation,
+        'flipH': flipH,
+        'flipV': flipV,
+      };
 
   factory PrimaryVideoClip.fromJson(Map<String, dynamic>? json) {
     if (json == null) {
@@ -679,6 +706,11 @@ class PrimaryVideoClip {
         transitionOut: ClipTransition.fromJson(
           json['transitionOut'] as Map<String, dynamic>?,
         ),
+        volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
+        speed: (json['speed'] as num?)?.toDouble() ?? 1.0,
+        rotation: (json['rotation'] as num?)?.toDouble() ?? 0.0,
+        flipH: json['flipH'] as bool? ?? false,
+        flipV: json['flipV'] as bool? ?? false,
       );
     } catch (e) {
       debugPrint('❌ PrimaryVideoClip.fromJson error: $e');
@@ -1633,6 +1665,141 @@ class TextOverlayStyle {
 }
 
 // ═══════════════════════════════════════════════════════
+// ✅ KEYFRAME DATA
+// ═══════════════════════════════════════════════════════
+
+@immutable
+class KeyframeData {
+  final String id;
+  final Duration time;
+  final double? x;
+  final double? y;
+  final double? scale;
+  final double? rotation;
+  final double? opacity;
+  final double? volume;
+  final double? speed;
+
+  const KeyframeData({
+    required this.id,
+    required this.time,
+    this.x,
+    this.y,
+    this.scale,
+    this.rotation,
+    this.opacity,
+    this.volume,
+    this.speed,
+  });
+
+  KeyframeData copyWith({
+    String? id,
+    Duration? time,
+    double? x,
+    double? y,
+    double? scale,
+    double? rotation,
+    double? opacity,
+    double? volume,
+    double? speed,
+    bool clearX = false,
+    bool clearY = false,
+    bool clearScale = false,
+    bool clearRotation = false,
+    bool clearOpacity = false,
+    bool clearVolume = false,
+    bool clearSpeed = false,
+  }) {
+    return KeyframeData(
+      id: id ?? this.id,
+      time: time ?? this.time,
+      x: clearX ? null : (x ?? this.x),
+      y: clearY ? null : (y ?? this.y),
+      scale: clearScale ? null : (scale ?? this.scale),
+      rotation: clearRotation ? null : (rotation ?? this.rotation),
+      opacity: clearOpacity ? null : (opacity ?? this.opacity),
+      volume: clearVolume ? null : (volume ?? this.volume),
+      speed: clearSpeed ? null : (speed ?? this.speed),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'time': time.inMilliseconds,
+    'x': x,
+    'y': y,
+    'scale': scale,
+    'rotation': rotation,
+    'opacity': opacity,
+    'volume': volume,
+    'speed': speed,
+  };
+
+  factory KeyframeData.fromJson(Map<String, dynamic> json) {
+    return KeyframeData(
+      id: json['id'] as String? ?? '',
+      time: Duration(milliseconds: json['time'] as int? ?? 0),
+      x: (json['x'] as num?)?.toDouble(),
+      y: (json['y'] as num?)?.toDouble(),
+      scale: (json['scale'] as num?)?.toDouble(),
+      rotation: (json['rotation'] as num?)?.toDouble(),
+      opacity: (json['opacity'] as num?)?.toDouble(),
+      volume: (json['volume'] as num?)?.toDouble(),
+      speed: (json['speed'] as num?)?.toDouble(),
+    );
+  }
+
+  static KeyframeData lerp(KeyframeData a, KeyframeData b, double t) {
+    return KeyframeData(
+      id: a.id,
+      time: Duration(
+        milliseconds: (a.time.inMilliseconds +
+                (b.time.inMilliseconds - a.time.inMilliseconds) * t)
+            .toInt(),
+      ),
+      x: a.x != null && b.x != null ? a.x! + (b.x! - a.x!) * t : b.x ?? a.x,
+      y: a.y != null && b.y != null ? a.y! + (b.y! - a.y!) * t : b.y ?? a.y,
+      scale: a.scale != null && b.scale != null
+          ? a.scale! + (b.scale! - a.scale!) * t
+          : b.scale ?? a.scale,
+      rotation: a.rotation != null && b.rotation != null
+          ? a.rotation! + (b.rotation! - a.rotation!) * t
+          : b.rotation ?? a.rotation,
+      opacity: a.opacity != null && b.opacity != null
+          ? a.opacity! + (b.opacity! - a.opacity!) * t
+          : b.opacity ?? a.opacity,
+      volume: a.volume != null && b.volume != null
+          ? a.volume! + (b.volume! - a.volume!) * t
+          : b.volume ?? a.volume,
+      speed: a.speed != null && b.speed != null
+          ? a.speed! + (b.speed! - a.speed!) * t
+          : b.speed ?? a.speed,
+    );
+  }
+
+  static KeyframeData interpolate(
+      List<KeyframeData> sorted, Duration position) {
+    if (sorted.isEmpty) return KeyframeData(id: '', time: position);
+    if (sorted.length == 1) return sorted.first;
+    if (position <= sorted.first.time) return sorted.first;
+    if (position >= sorted.last.time) return sorted.last;
+
+    for (var i = 0; i < sorted.length - 1; i++) {
+      final a = sorted[i];
+      final b = sorted[i + 1];
+      if (position >= a.time && position <= b.time) {
+        final range = (b.time - a.time).inMilliseconds;
+        final t = range > 0
+            ? (position - a.time).inMilliseconds / range
+            : 0.0;
+        return lerp(a, b, t.clamp(0.0, 1.0));
+      }
+    }
+    return sorted.last;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // ✅ BASE TIMELINE ITEM
 // ═══════════════════════════════════════════════════════
 
@@ -2138,6 +2305,330 @@ class ImageTimelineItem extends TimelineItem {
         startTime: Duration.zero,
         endTime: const Duration(seconds: 3),
         imagePath: '',
+      );
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ VIDEO OVERLAY TIMELINE ITEM (picture-in-picture layer)
+// ═══════════════════════════════════════════════════════
+
+@immutable
+class VideoOverlayTimelineItem extends TimelineItem {
+  final String videoPath;
+  final Uint8List? thumbnail;
+  final Duration sourceDuration;
+  final double volume;
+  final double opacity;
+
+  const VideoOverlayTimelineItem({
+    required super.id,
+    required super.startTime,
+    required super.endTime,
+    super.layer,
+    super.x = 0.7,
+    super.y = 0.7,
+    super.scale = 0.3,
+    super.rotation = 0.0,
+    super.isLocked,
+    super.isVisible,
+    super.groupId,
+    required this.videoPath,
+    this.thumbnail,
+    this.sourceDuration = Duration.zero,
+    this.volume = 1.0,
+    this.opacity = 1.0,
+  }) : super(type: TimelineItemType.video);
+
+  Duration get effectiveSourceDuration =>
+      sourceDuration > Duration.zero ? sourceDuration : duration;
+
+  factory VideoOverlayTimelineItem.create({
+    String? id,
+    required String videoPath,
+    required Duration startTime,
+    required Duration endTime,
+    int layer = 0,
+    double x = 0.7,
+    double y = 0.7,
+    double scale = 0.3,
+    double rotation = 0.0,
+    bool isLocked = false,
+    bool isVisible = true,
+    String? groupId,
+    Uint8List? thumbnail,
+    Duration sourceDuration = Duration.zero,
+    double volume = 1.0,
+    double opacity = 1.0,
+  }) {
+    return VideoOverlayTimelineItem(
+      id: id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      startTime: startTime,
+      endTime: endTime > startTime
+          ? endTime
+          : startTime + const Duration(seconds: 5),
+      layer: layer,
+      x: x.clamp(0.0, 1.0),
+      y: y.clamp(0.0, 1.0),
+      scale: scale.clamp(0.05, 3.0),
+      rotation: rotation % 360,
+      isLocked: isLocked,
+      isVisible: isVisible,
+      groupId: groupId,
+      videoPath: videoPath,
+      thumbnail: thumbnail,
+      sourceDuration: sourceDuration,
+      volume: volume.clamp(0.0, 1.0),
+      opacity: opacity.clamp(0.0, 1.0),
+    );
+  }
+
+  @override
+  VideoOverlayTimelineItem copyWith({
+    String? id,
+    TimelineItemType? type,
+    Duration? startTime,
+    Duration? endTime,
+    int? layer,
+    double? x,
+    double? y,
+    double? scale,
+    double? rotation,
+    bool? isLocked,
+    bool? isVisible,
+    String? groupId,
+    String? videoPath,
+    Uint8List? thumbnail,
+    Duration? sourceDuration,
+    double? volume,
+    double? opacity,
+  }) {
+    return VideoOverlayTimelineItem(
+      id: id ?? this.id,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      layer: layer ?? this.layer,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      scale: scale ?? this.scale,
+      rotation: rotation ?? this.rotation,
+      isLocked: isLocked ?? this.isLocked,
+      isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
+      videoPath: videoPath ?? this.videoPath,
+      thumbnail: thumbnail ?? this.thumbnail,
+      sourceDuration: sourceDuration ?? this.sourceDuration,
+      volume: volume ?? this.volume,
+      opacity: opacity ?? this.opacity,
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'videoPath': videoPath,
+        'thumbnail': thumbnail,
+        'sourceDuration': sourceDuration.inMilliseconds,
+        'volume': volume,
+        'opacity': opacity,
+      };
+
+  factory VideoOverlayTimelineItem.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return VideoOverlayTimelineItem(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        startTime: Duration.zero,
+        endTime: const Duration(seconds: 5),
+        videoPath: '',
+      );
+    }
+
+    try {
+      return VideoOverlayTimelineItem(
+        id: json.safeGet<String>(
+          'id',
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        )!,
+        startTime: json.safeDuration('startTime'),
+        endTime: json.safeDuration('endTime', const Duration(seconds: 5)),
+        layer: json.safeGet<int>('layer', 0)!,
+        x: json.safeGet<double>('x', 0.7)!,
+        y: json.safeGet<double>('y', 0.7)!,
+        scale: json.safeGet<double>('scale', 0.3)!,
+        rotation: json.safeGet<double>('rotation', 0.0)!,
+        isLocked: json.safeGet<bool>('isLocked', false)!,
+        isVisible: json.safeGet<bool>('isVisible', true)!,
+        groupId: json.safeGet<String>('groupId'),
+        videoPath: json.safeGet<String>('videoPath', '')!,
+        thumbnail: json['thumbnail'] as Uint8List?,
+        sourceDuration: json.safeDuration(
+          'sourceDuration',
+          const Duration(seconds: 5),
+        ),
+        volume: json.safeGet<double>('volume', 1.0)!,
+        opacity: json.safeGet<double>('opacity', 1.0)!,
+      );
+    } catch (e) {
+      debugPrint('❌ VideoOverlayTimelineItem.fromJson error: $e');
+      return VideoOverlayTimelineItem(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        startTime: Duration.zero,
+        endTime: const Duration(seconds: 5),
+        videoPath: '',
+      );
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ✅ SOLID COLOR / BLANK LAYER TIMELINE ITEM
+// ═══════════════════════════════════════════════════════
+
+class SolidColorTimelineItem extends TimelineItem {
+  final int colorValue; // ARGB int
+  final double opacity;
+  final double width;   // 0..1 normalized
+  final double height;  // 0..1 normalized
+
+  const SolidColorTimelineItem({
+    required super.id,
+    required super.startTime,
+    required super.endTime,
+    super.layer,
+    super.x = 0.5,
+    super.y = 0.5,
+    super.scale = 1.0,
+    super.rotation = 0.0,
+    super.isLocked,
+    super.isVisible,
+    super.groupId,
+    this.colorValue = 0xFF000000,
+    this.opacity = 1.0,
+    this.width = 1.0,
+    this.height = 1.0,
+  }) : super(type: TimelineItemType.solidColor);
+
+  int get color => colorValue;
+
+  factory SolidColorTimelineItem.create({
+    String? id,
+    required Duration startTime,
+    Duration? endTime,
+    int layer = 0,
+    double x = 0.5,
+    double y = 0.5,
+    double scale = 1.0,
+    double rotation = 0.0,
+    bool isLocked = false,
+    bool isVisible = true,
+    String? groupId,
+    int colorValue = 0xFF000000,
+    double opacity = 1.0,
+    double width = 1.0,
+    double height = 1.0,
+  }) {
+    return SolidColorTimelineItem(
+      id: id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      startTime: startTime,
+      endTime: endTime ?? startTime + const Duration(seconds: 5),
+      layer: layer,
+      x: x.clamp(0.0, 1.0),
+      y: y.clamp(0.0, 1.0),
+      scale: scale.clamp(0.05, 5.0),
+      rotation: rotation % 360,
+      isLocked: isLocked,
+      isVisible: isVisible,
+      groupId: groupId,
+      colorValue: colorValue,
+      opacity: opacity.clamp(0.0, 1.0),
+      width: width.clamp(0.05, 2.0),
+      height: height.clamp(0.05, 2.0),
+    );
+  }
+
+  @override
+  SolidColorTimelineItem copyWith({
+    String? id,
+    TimelineItemType? type,
+    Duration? startTime,
+    Duration? endTime,
+    int? layer,
+    double? x,
+    double? y,
+    double? scale,
+    double? rotation,
+    bool? isLocked,
+    bool? isVisible,
+    String? groupId,
+    int? colorValue,
+    double? opacity,
+    double? width,
+    double? height,
+  }) {
+    return SolidColorTimelineItem(
+      id: id ?? this.id,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      layer: layer ?? this.layer,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      scale: scale ?? this.scale,
+      rotation: rotation ?? this.rotation,
+      isLocked: isLocked ?? this.isLocked,
+      isVisible: isVisible ?? this.isVisible,
+      groupId: groupId ?? this.groupId,
+      colorValue: colorValue ?? this.colorValue,
+      opacity: opacity ?? this.opacity,
+      width: width ?? this.width,
+      height: height ?? this.height,
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'colorValue': colorValue,
+        'opacity': opacity,
+        'width': width,
+        'height': height,
+      };
+
+  factory SolidColorTimelineItem.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return SolidColorTimelineItem(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        startTime: Duration.zero,
+        endTime: const Duration(seconds: 5),
+      );
+    }
+    try {
+      return SolidColorTimelineItem(
+        id: json.safeGet<String>(
+          'id',
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        )!,
+        startTime: json.safeDuration('startTime'),
+        endTime: json.safeDuration('endTime', const Duration(seconds: 5)),
+        layer: json.safeGet<int>('layer', 0)!,
+        x: json.safeGet<double>('x', 0.5)!,
+        y: json.safeGet<double>('y', 0.5)!,
+        scale: json.safeGet<double>('scale', 1.0)!,
+        rotation: json.safeGet<double>('rotation', 0.0)!,
+        isLocked: json.safeGet<bool>('isLocked', false)!,
+        isVisible: json.safeGet<bool>('isVisible', true)!,
+        groupId: json.safeGet<String>('groupId'),
+        colorValue: json.safeGet<int>('colorValue', 0xFF000000)!,
+        opacity: json.safeGet<double>('opacity', 1.0)!,
+        width: json.safeGet<double>('width', 1.0)!,
+        height: json.safeGet<double>('height', 1.0)!,
+      );
+    } catch (e) {
+      debugPrint('❌ SolidColorTimelineItem.fromJson error: $e');
+      return SolidColorTimelineItem(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        startTime: Duration.zero,
+        endTime: const Duration(seconds: 5),
       );
     }
   }
@@ -2941,6 +3432,8 @@ class VideoProject {
   final List<TextTimelineItem> textItems;
   final List<ImageTimelineItem> imageItems;
   final List<AudioTimelineItem> audioItems;
+  final List<VideoOverlayTimelineItem> videoOverlayItems;
+  final List<SolidColorTimelineItem> solidColorItems;
   final ColorGradeSettings colorGrade;
   final VideoAudioSettings videoAudioSettings;
   final ExportPreset exportPreset;
@@ -2964,6 +3457,8 @@ class VideoProject {
     this.textItems = const [],
     this.imageItems = const [],
     this.audioItems = const [],
+    this.videoOverlayItems = const [],
+    this.solidColorItems = const [],
     this.colorGrade = const ColorGradeSettings(),
     this.videoAudioSettings = const VideoAudioSettings(),
     this.exportPreset = const ExportPreset(id: 'high_1080p', name: '1080p HD'),
@@ -3049,7 +3544,7 @@ class VideoProject {
 
   List<TimelineItem> get allItems {
     try {
-      return [...textItems, ...imageItems, ...audioItems]
+      return [...textItems, ...imageItems, ...audioItems, ...videoOverlayItems, ...solidColorItems]
         ..sort((a, b) => a.layer.compareTo(b.layer));
     } catch (e) {
       return [];
@@ -3057,7 +3552,7 @@ class VideoProject {
   }
 
   int get totalOverlayCount =>
-      textItems.length + imageItems.length + audioItems.length;
+      textItems.length + imageItems.length + audioItems.length + videoOverlayItems.length + solidColorItems.length;
 
   bool get hasModifications =>
       textItems.isNotEmpty ||
@@ -3085,6 +3580,8 @@ class VideoProject {
     List<TextTimelineItem>? textItems,
     List<ImageTimelineItem>? imageItems,
     List<AudioTimelineItem>? audioItems,
+    List<VideoOverlayTimelineItem>? videoOverlayItems,
+    List<SolidColorTimelineItem>? solidColorItems,
     ColorGradeSettings? colorGrade,
     VideoAudioSettings? videoAudioSettings,
     ExportPreset? exportPreset,
@@ -3104,6 +3601,8 @@ class VideoProject {
       textItems: textItems ?? this.textItems,
       imageItems: imageItems ?? this.imageItems,
       audioItems: audioItems ?? this.audioItems,
+      videoOverlayItems: videoOverlayItems ?? this.videoOverlayItems,
+      solidColorItems: solidColorItems ?? this.solidColorItems,
       colorGrade: colorGrade ?? this.colorGrade,
       videoAudioSettings: videoAudioSettings ?? this.videoAudioSettings,
       exportPreset: exportPreset ?? this.exportPreset,
@@ -3125,6 +3624,8 @@ class VideoProject {
     'textItems': textItems.map((e) => e.toJson()).toList(),
     'imageItems': imageItems.map((e) => e.toJson()).toList(),
     'audioItems': audioItems.map((e) => e.toJson()).toList(),
+    'videoOverlayItems': videoOverlayItems.map((e) => e.toJson()).toList(),
+    'solidColorItems': solidColorItems.map((e) => e.toJson()).toList(),
     'colorGrade': colorGrade.toJson(),
     'videoAudioSettings': videoAudioSettings.toJson(),
     'exportPreset': exportPreset.toJson(),
@@ -3168,6 +3669,14 @@ class VideoProject {
         audioItems: _parseList<AudioTimelineItem>(
           json['audioItems'],
           AudioTimelineItem.fromJson,
+        ),
+        videoOverlayItems: _parseList<VideoOverlayTimelineItem>(
+          json['videoOverlayItems'],
+          VideoOverlayTimelineItem.fromJson,
+        ),
+        solidColorItems: _parseList<SolidColorTimelineItem>(
+          json['solidColorItems'],
+          SolidColorTimelineItem.fromJson,
         ),
         colorGrade: ColorGradeSettings.fromJson(
           json['colorGrade'] as Map<String, dynamic>?,
@@ -3290,20 +3799,38 @@ class MusicTrack {
         duration: Duration.zero,
         previewUrl: '',
         downloadUrl: '',
+        category: MusicCategory.all,
       );
     }
 
     try {
+      final audioUrl =
+          json.safeGet<String>('audioURL') ??
+          json.safeGet<String>('audio_url') ??
+          json.safeGet<String>('previewURL') ??
+          json.safeGet<String>('preview_url') ??
+          json.safeGet<String>('downloadURL') ??
+          json.safeGet<String>('download_url') ??
+          json.safeGet<String>('audio') ??
+          json.safeGet<String>('url') ??
+          '';
+      final parsedTags = _parseTags(json['tags']);
+      final title =
+          json.safeGet<String>('audioName') ??
+          json.safeGet<String>('title') ??
+          (parsedTags.isNotEmpty ? parsedTags.first : 'Unknown Track');
+
       return MusicTrack(
         id:
             json['id']?.toString() ??
             DateTime.now().millisecondsSinceEpoch.toString(),
-        title: json.safeGet<String>('title', 'Untitled')!,
+        title: title,
         artist: json.safeGet<String>('user', 'Unknown Artist')!,
-        albumArt: json.safeGet<String>('user_image_url'),
+        albumArt: json.safeGet<String>('userImageURL') ??
+            json.safeGet<String>('user_image_url'),
         duration: Duration(seconds: json.safeGet<int>('duration', 0)!),
-        previewUrl: json.safeGet<String>('audio', '')!,
-        downloadUrl: json.safeGet<String>('audio', '')!,
+        previewUrl: audioUrl,
+        downloadUrl: audioUrl,
         downloads: json.safeGet<int>('downloads', 0)!,
         tags: _parseTags(json['tags']),
       );

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../../services/file_picker_service.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart';
@@ -872,7 +873,7 @@ class AudioTab extends ConsumerWidget {
     AudioTabNotifier notifier,
   ) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.audio,
         allowMultiple: false,
       );

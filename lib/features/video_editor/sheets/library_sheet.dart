@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
+import '../../../services/file_picker_service.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:path/path.dart' as path;
 
 import '../models/video_edit_settings.dart';
@@ -40,6 +41,14 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
   List<LocalMediaItem> _images = [];
   List<LocalMediaItem> _audio = [];
 
+  // Albums (device galleries)
+  List<AssetPathEntity> _albums = [];
+  AssetPathEntity? _selectedAlbum;
+  int _currentPage = 0;
+  bool _hasMore = false;
+  bool _isLoadingMore = false;
+  static const int _pageSize = 60;
+
   // Selection state
   final Set<String> _selectedIds = {};
 
@@ -74,41 +83,157 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
     });
 
     try {
-      // Request permissions
-      final status = await Permission.storage.request();
-      if (!status.isGranted) {
-        final photos = await Permission.photos.request();
-        if (!photos.isGranted) {
-          setState(() {
-            _isLoading = false;
-            _error = 'Storage permission denied';
-          });
-          return;
-        }
-      }
-
-      // Load from file picker (simulated local scan)
-      // In production, you might use photo_manager or similar package
-      await _scanLocalMedia();
-
-      setState(() => _isLoading = false);
+      await _scanLocalMedia(reset: true);
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Failed to load media: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Failed to load media: $e';
+        });
+      }
     }
   }
 
-  Future<void> _scanLocalMedia() async {
-    // For demo purposes, we'll show empty state with option to pick files
-    // In production, use packages like photo_manager to scan device media
-    setState(() {
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore || _selectedAlbum == null) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      await _scanLocalMedia(reset: false);
+    } catch (e) {
+      debugPrint('❌ Load more error: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  void _selectAlbum(AssetPathEntity album) {
+    if (_selectedAlbum?.id == album.id) return;
+    _selectedAlbum = album;
+    _loadMedia();
+  }
+
+  Future<void> _scanLocalMedia({bool reset = true}) async {
+    if (reset) {
       _videos = [];
       _images = [];
       _audio = [];
       _allMedia = [];
-    });
+      _currentPage = 0;
+      _hasMore = false;
+      try {
+        final perm = await PhotoManager.requestPermissionExtend();
+        if (!perm.isAuth) {
+          if (mounted) setState(() {});
+          return;
+        }
+        _albums = await PhotoManager.getAssetPathList(type: RequestType.all);
+        _selectedAlbum ??= _albums.firstWhere(
+          (a) => a.isAll,
+          orElse: () => _albums.first,
+        );
+      } catch (e) {
+        debugPrint('❌ Fetch albums error: $e');
+        _albums = [];
+        _selectedAlbum = null;
+      }
+    }
+
+    final album = _selectedAlbum;
+    if (album == null) {
+      if (mounted) setState(() => _allMedia = []);
+      return;
+    }
+
+    try {
+      final assets = await album.getAssetListPaged(
+        page: _currentPage,
+        size: _pageSize,
+      );
+
+      for (final asset in assets) {
+        final file = await asset.file;
+        if (file == null) continue;
+
+        final type = _assetType(asset.type);
+        final duration = type == MediaType.video
+            ? asset.videoDuration
+            : type == MediaType.audio
+            ? Duration(milliseconds: asset.duration)
+            : null;
+
+        Uint8List? thumb;
+        if (type != MediaType.audio) {
+          thumb = await asset.thumbnailDataWithOption(
+            ThumbnailOption(
+              size: const ThumbnailSize(240, 240),
+              quality: 80,
+              format: ThumbnailFormat.jpeg,
+            ),
+          );
+        }
+
+        final assetTitle = asset.title ?? '';
+        final item = LocalMediaItem(
+          id: asset.id,
+          name: assetTitle.isNotEmpty
+              ? assetTitle
+              : path.basename(file.path),
+          path: file.path,
+          type: type,
+          size: await _safeFileSize(file),
+          addedAt: DateTime.now(),
+          duration: duration,
+          thumbnail: thumb,
+        );
+
+        switch (type) {
+          case MediaType.video:
+            _videos.add(item);
+            break;
+          case MediaType.image:
+            _images.add(item);
+            break;
+          case MediaType.audio:
+            _audio.add(item);
+            break;
+          default:
+            break;
+        }
+      }
+
+      _currentPage++;
+      _hasMore = assets.length >= _pageSize;
+
+      if (mounted) {
+        setState(() {
+          _allMedia = [..._videos, ..._images, ..._audio];
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Scan local media error: $e');
+    }
+  }
+
+  MediaType _assetType(AssetType type) {
+    switch (type) {
+      case AssetType.video:
+        return MediaType.video;
+      case AssetType.image:
+        return MediaType.image;
+      case AssetType.audio:
+        return MediaType.audio;
+      default:
+        return MediaType.video;
+    }
+  }
+
+  Future<int> _safeFileSize(File file) async {
+    try {
+      return await file.length();
+    } catch (_) {
+      return 0;
+    }
   }
 
   Future<void> _pickFiles(MediaType type) async {
@@ -147,7 +272,7 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
           ];
       }
 
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: fileType,
         allowMultiple: widget.allowMultiple,
         allowedExtensions: allowedExtensions,
@@ -270,6 +395,9 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
           // Header
           _buildHeader(),
 
+          // Album selector
+          if (_albums.isNotEmpty) _buildAlbumSelector(),
+
           // Tab bar (if showing all types)
           if (widget.filterType == null) _buildTabBar(),
 
@@ -375,6 +503,52 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
   // ═══════════════════════════════════════════════════════
   // ✅ TAB BAR
   // ═══════════════════════════════════════════════════════
+
+  Widget _buildAlbumSelector() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            isExpanded: true,
+            dropdownColor: const Color(0xFF2A2A2A),
+            value: _selectedAlbum?.id,
+            icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+            hint: const Text(
+              'Select album',
+              style: TextStyle(color: Colors.white54),
+            ),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            onChanged: (id) {
+              final match = _albums.cast<AssetPathEntity?>().firstWhere(
+                (a) => a?.id == id,
+                orElse: () => null,
+              );
+              if (match != null) _selectAlbum(match);
+            },
+            items: _albums
+                .map(
+                  (a) => DropdownMenuItem<String>(
+                    value: a.id,
+                    child: Text(
+                      a.name,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildTabBar() {
     return Container(
@@ -487,20 +661,44 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
           crossAxisSpacing: 8,
           childAspectRatio: 1,
         ),
-        itemCount: items.length,
+        itemCount: items.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
+          if (index >= items.length) return _buildLoadMoreFooter();
           return _buildGridItem(items[index]);
         },
       );
     } else {
       return ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: items.length,
+        itemCount: items.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
+          if (index >= items.length) return _buildLoadMoreFooter();
           return _buildListItem(items[index]);
         },
       );
     }
+  }
+
+  Widget _buildLoadMoreFooter() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: _isLoadingMore
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : TextButton.icon(
+                onPressed: _loadMore,
+                icon: const Icon(Icons.refresh, size: 16, color: Colors.white70),
+                label: const Text(
+                  'Load more',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ),
+      ),
+    );
   }
 
   Widget _buildGridItem(LocalMediaItem item) {
@@ -901,60 +1099,63 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.folder_open,
-                size: 50,
-                color: const Color(0xFF4CAF50).withValues(alpha: 0.5),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'No media files',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tap the button below to add\nmedia from your device',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () => _showAddOptions(),
-              icon: const Icon(Icons.add),
-              label: const Text('Add Media'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF50),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 14,
+    return SingleChildScrollView(
+      physics: const NeverScrollableScrollPhysics(),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                child: Icon(
+                  Icons.folder_open,
+                  size: 50,
+                  color: const Color(0xFF4CAF50).withValues(alpha: 0.5),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+              const Text(
+                'No media files',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tap the button below to add\nmedia from your device',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () => _showAddOptions(),
+                icon: const Icon(Icons.add),
+                label: const Text('Add Media'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4CAF50),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -967,11 +1168,12 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
   void _showAddOptions() {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: const Color(0xFF2D2D2D),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => SafeArea(
+      builder: (context) => SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -1097,11 +1299,12 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
   void _showItemOptions(LocalMediaItem item) {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: const Color(0xFF2D2D2D),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => SafeArea(
+      builder: (context) => SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -1394,14 +1597,14 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
           break;
 
         case MediaType.video:
-          // For video, you might want to merge or overlay
-          // This is a placeholder - implement based on your needs
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Video insertion coming soon'),
-              backgroundColor: Colors.blue,
-            ),
-          );
+          ref.read(timelineProvider.notifier).addPrimaryClip(
+                PrimaryVideoClip(
+                  id: item.id,
+                  videoPath: item.path,
+                  sourceDuration: item.duration ?? const Duration(seconds: 10),
+                  thumbnail: item.thumbnail,
+                ),
+              );
           break;
 
         default:

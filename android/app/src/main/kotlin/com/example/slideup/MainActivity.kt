@@ -21,6 +21,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Rational
+import android.webkit.MimeTypeMap
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -28,6 +29,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugins.GeneratedPluginRegistrant
 import cl.puntito.simple_pip_mode.PipCallbackHelper
 import java.io.File
+import java.io.FileNotFoundException
 
 class MainActivity : AudioServiceActivity() {
 
@@ -308,8 +310,11 @@ class MainActivity : AudioServiceActivity() {
                     }
                     try {
                         val treeUri = Uri.parse(treeUriStr)
-                        val docUri = DocumentsContract.buildDocumentUri(
-                            treeUri.authority,
+                        // Must build the document URI *using the tree* — a
+                        // plain buildDocumentUri carries no permission grant
+                        // and throws SecurityException on delete.
+                        val docUri = DocumentsContract.buildDocumentUriUsingTree(
+                            treeUri,
                             documentIdForPath(filePath, rootId)
                         )
                         val deleted = DocumentsContract.deleteDocument(contentResolver, docUri)
@@ -368,6 +373,30 @@ class MainActivity : AudioServiceActivity() {
                         result.error("STORE_ERROR", e.message, null)
                     }
                 }
+                // Returns true when a persisted tree grant already exists
+                // for the removable volume containing [path], so Dart can
+                // reuse it instead of re-opening the picker.
+                "hasTree" -> {
+                    val filePath = call.argument<String>("path")
+                    if (filePath == null) {
+                        result.error("INVALID_PATH", "File path is null", null)
+                        return@setMethodCallHandler
+                    }
+                    val rootId = removableRootIdForPath(filePath)
+                    result.success(
+                        rootId != null &&
+                            safPrefs.getString("tree_$rootId", null) != null
+                    )
+                }
+                // Returns volume root ids that have a persisted tree grant,
+                // so Dart can route removable-volume I/O through SAF after
+                // an app restart.
+                "getStoredTrees" -> {
+                    val roots = safPrefs.all.keys
+                        .filter { it.startsWith("tree_") }
+                        .map { it.removePrefix("tree_") }
+                    result.success(roots)
+                }
                 // Writes bytes to a file through SAF (removable) or direct I/O (emulated).
                 // Returns "ok" | "needs_tree" | "error".
                 "writeFile" -> {
@@ -387,12 +416,30 @@ class MainActivity : AudioServiceActivity() {
                         }
                         try {
                             val treeUri = Uri.parse(treeUriStr)
-                            val docUri = DocumentsContract.buildDocumentUri(
-                                treeUri.authority,
+                            // SAF cannot open a stream for a document that
+                            // doesn't exist — make sure parent directories
+                            // are there, then create the file if missing.
+                            val parentUri = ensureSafParentDir(filePath, rootId)
+                            val docUri = DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
                                 documentIdForPath(filePath, rootId)
                             )
-                            contentResolver.openOutputStream(docUri, "w")?.use { stream ->
-                                stream.write(bytes)
+                            try {
+                                contentResolver.openOutputStream(docUri, "w")?.use { stream ->
+                                    stream.write(bytes)
+                                }
+                            } catch (e: FileNotFoundException) {
+                                val fileName = filePath.substringAfterLast('/')
+                                val ext = fileName.substringAfterLast('.', "").lowercase()
+                                val mime = MimeTypeMap.getSingleton()
+                                    .getMimeTypeFromExtension(ext)
+                                    ?: "application/octet-stream"
+                                val createdUri = DocumentsContract.createDocument(
+                                    contentResolver, parentUri, mime, fileName
+                                ) ?: throw IllegalStateException("SAF createDocument failed for $fileName")
+                                contentResolver.openOutputStream(createdUri, "w")?.use { stream ->
+                                    stream.write(bytes)
+                                }
                             }
                             Log.d(TAG, "📝 SAF write $filePath (${bytes.size} bytes)")
                             result.success("ok")
@@ -462,6 +509,52 @@ class MainActivity : AudioServiceActivity() {
             filePath.removePrefix("/storage/$rootId")
         }
         return "$rootId:$relative"
+    }
+
+    /** True when a SAF document exists (a query probes the provider). */
+    private fun safDocumentExists(docUri: Uri): Boolean = try {
+        contentResolver.query(
+            docUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+            null, null, null
+        )?.use { it.count > 0 } == true
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * Ensures every directory segment of [filePath] exists on the removable
+     * volume, creating missing ones via SAF. Returns the parent directory's
+     * document URI so the file itself can be created with createDocument().
+     */
+    private fun ensureSafParentDir(filePath: String, rootId: String): Uri {
+        val treeUri = Uri.parse(safPrefs.getString("tree_$rootId", null))
+        val segments = filePath
+            .removePrefix("/storage/$rootId/")
+            .trim('/')
+            .split('/')
+            .filter { it.isNotEmpty() }
+            .dropLast(1)
+
+        var parentId = "$rootId:"
+        var parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentId)
+        for (seg in segments) {
+            val childDocId = if (parentId.endsWith(":")) parentId + seg else "$parentId/$seg"
+            val childUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId)
+            parentUri = if (safDocumentExists(childUri)) {
+                childUri
+            } else {
+                DocumentsContract.createDocument(
+                    contentResolver,
+                    parentUri,
+                    DocumentsContract.Document.MIME_TYPE_DIR,
+                    seg
+                ) ?: throw IllegalStateException("SAF could not create directory: $seg")
+            }
+            // The provider may normalize ids — always read back the real one.
+            parentId = DocumentsContract.getDocumentId(parentUri)
+        }
+        return parentUri
     }
 
     /** Extracts the volume id from a picked tree URI (…/tree/01A6-5A72%3A). */

@@ -65,6 +65,34 @@ class SafService {
     }
   }
 
+  /// True when a persisted tree grant already exists for [filePath]'s
+  /// removable volume, so callers can reuse it instead of re-prompting.
+  Future<bool> hasTree(String filePath) async {
+    if (!_isAndroid) return false;
+    try {
+      return await _channel.invokeMethod<bool>('hasTree', {
+            'path': filePath,
+          }) ??
+          false;
+    } catch (e) {
+      debugPrint('❌ SAF hasTree error: $e');
+      return false;
+    }
+  }
+
+  /// Returns volume root ids (e.g. `XXXX-XXXX`) that have a persisted tree
+  /// grant, so Dart-side routing can use SAF after an app restart.
+  Future<Set<String>> getStoredTrees() async {
+    if (!_isAndroid) return {};
+    try {
+      final roots = await _channel.invokeListMethod<String>('getStoredTrees');
+      return roots?.toSet() ?? {};
+    } catch (e) {
+      debugPrint('❌ SAF getStoredTrees error: $e');
+      return {};
+    }
+  }
+
   /// Writes [bytes] to [filePath] through SAF (removable) or direct I/O (emulated).
   ///
   /// Returns one of:

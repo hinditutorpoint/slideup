@@ -1,6 +1,7 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -14,12 +15,13 @@ import 'package:uuid/uuid.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models/video_edit_settings.dart';
+import 'thumbnail_service.dart';
 import 'package:slideup/core/utils/safe_async.dart';
 import 'package:slideup/core/utils/isolate_helper.dart';
 
-// ═══════════════════════════════════════════════════════
-// ✅ CONSTANTS
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… CONSTANTS
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const String kExportTaskName = 'video_export_task';
 const String kExportChannelId = 'video_export_channel';
@@ -28,9 +30,9 @@ const int kExportNotificationId = 1001;
 const int kExportCompleteNotificationId = 1002;
 const String kExportJobsBox = 'export_jobs_box';
 
-// ═══════════════════════════════════════════════════════
-// ✅ BACKGROUND CALLBACK
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… BACKGROUND CALLBACK
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -42,15 +44,15 @@ void callbackDispatcher() {
         return true;
       }
     } catch (e) {
-      debugPrint('❌ Background task error: $e');
+      debugPrint('âŒ Background task error: $e');
     }
     return false;
   });
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ EXPORT JOB ERROR
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… EXPORT JOB ERROR
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 enum ExportJobErrorType {
   invalidProject,
@@ -98,9 +100,9 @@ class ExportJobError implements Exception {
   );
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ EXPORT JOB
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… EXPORT JOB
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class ExportJob {
   final String id;
@@ -176,9 +178,9 @@ class ExportJob {
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ BACKGROUND EXPORT SERVICE
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… BACKGROUND EXPORT SERVICE
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class BackgroundExportService {
   static final BackgroundExportService _instance =
@@ -209,9 +211,9 @@ class BackgroundExportService {
       _currentJob != null && _currentJob!.status == ExportJobStatus.running;
   bool get isInitialized => _isInitialized;
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ INITIALIZATION
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… INITIALIZATION
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<Result<void>> initialize() async {
     if (_isInitialized) return Result.success(null);
@@ -222,7 +224,7 @@ class BackgroundExportService {
       await Workmanager().initialize(callbackDispatcher);
 
       _isInitialized = true;
-      debugPrint('✅ BackgroundExportService initialized');
+      debugPrint('âœ… BackgroundExportService initialized');
     }, operationName: 'BackgroundExportService.initialize');
   }
 
@@ -230,7 +232,7 @@ class BackgroundExportService {
     try {
       _jobsBox = await Hive.openBox<String>(kExportJobsBox);
     } catch (e) {
-      debugPrint('❌ Hive init error: $e');
+      debugPrint('âŒ Hive init error: $e');
     }
   }
 
@@ -276,7 +278,7 @@ class BackgroundExportService {
 
       await _requestNotificationPermissions();
     } catch (e) {
-      debugPrint('❌ Notification init error: $e');
+      debugPrint('âŒ Notification init error: $e');
     }
   }
 
@@ -300,17 +302,17 @@ class BackgroundExportService {
         );
       }
     } catch (e) {
-      debugPrint('❌ Permission request error: $e');
+      debugPrint('âŒ Permission request error: $e');
     }
   }
 
   void _onNotificationTapped(NotificationResponse response) {
-    debugPrint('📱 Notification tapped: ${response.payload}');
+    debugPrint('ðŸ“± Notification tapped: ${response.payload}');
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ START EXPORT
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… START EXPORT
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<Result<String>> startExport({
     required VideoProject project,
@@ -376,9 +378,9 @@ class BackgroundExportService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ EXECUTE EXPORT
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… EXECUTE EXPORT
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<String> _executeExport({
     required ExportJob job,
@@ -390,10 +392,30 @@ class BackgroundExportService {
     job.status = ExportJobStatus.running;
     await _saveJob(job);
 
+    // Probe base video dimensions for overlay scaling
+    int baseWidth = 1280;
+    int baseHeight = 720;
+    try {
+      final firstClip = project.primaryVideoClips.isNotEmpty
+          ? project.primaryVideoClips.first
+          : null;
+      final probePath = firstClip?.videoPath ?? project.videoPath;
+      if (probePath.isNotEmpty) {
+        final info = await ThumbnailService().getVideoInfo(probePath);
+        baseWidth = (info?['width'] as int?) ?? 1280;
+        baseHeight = (info?['height'] as int?) ?? 720;
+      }
+    } catch (_) {}
+
     // Build command in isolate
     final commandResult = await IsolateHelper.instance.compute(
       _buildFFmpegCommandIsolate,
-      _CommandParams(project: project, outputPath: job.outputPath),
+      _CommandParams(
+        project: project,
+        outputPath: job.outputPath,
+        baseWidth: baseWidth,
+        baseHeight: baseHeight,
+      ),
     );
 
     final command = commandResult.getOrElse('');
@@ -401,7 +423,7 @@ class BackgroundExportService {
       throw ExportJobError.processingFailed('Failed to build FFmpeg command');
     }
 
-    debugPrint('📹 FFmpeg command: $command');
+    debugPrint('ðŸ“¹ FFmpeg command: $command');
 
     final totalDuration = project.effectiveDuration;
     final completer = Completer<bool>();
@@ -441,7 +463,7 @@ class BackgroundExportService {
           );
         }
       } catch (e) {
-        debugPrint('❌ Statistics callback error: $e');
+        debugPrint('âŒ Statistics callback error: $e');
       }
     });
 
@@ -474,7 +496,7 @@ class BackgroundExportService {
     final success = await completer.future.timeout(
       const Duration(hours: 1),
       onTimeout: () {
-        debugPrint('⚠️ Export timeout');
+        debugPrint('âš ï¸ Export timeout');
         return false;
       },
     );
@@ -521,9 +543,9 @@ class BackgroundExportService {
     return 'Export failed - check video file';
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ EXPORT STATE HANDLERS
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… EXPORT STATE HANDLERS
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<void> _handleExportSuccess(
     ExportJob job,
@@ -550,7 +572,7 @@ class BackgroundExportService {
   }
 
   Future<void> _handleExportFailure(String error) async {
-    debugPrint('❌ Export failed: $error');
+    debugPrint('âŒ Export failed: $error');
 
     if (_currentJob != null) {
       _currentJob!.status = ExportJobStatus.failed;
@@ -592,9 +614,9 @@ class BackgroundExportService {
     _currentSessionId = null;
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ CANCEL EXPORT
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… CANCEL EXPORT
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<Result<void>> cancelExport() async {
     _isCancelled = true;
@@ -625,9 +647,9 @@ class BackgroundExportService {
     }, operationName: 'cancelExport');
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ NOTIFICATIONS
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… NOTIFICATIONS
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<void> _showProgressNotification(int progress, String message) async {
     try {
@@ -666,7 +688,7 @@ class BackgroundExportService {
         payload: 'export_progress',
       );
     } catch (e) {
-      debugPrint('❌ Show progress notification error: $e');
+      debugPrint('âŒ Show progress notification error: $e');
     }
   }
 
@@ -702,7 +724,7 @@ class BackgroundExportService {
 
       await _notifications.show(
         kExportCompleteNotificationId,
-        success ? 'Export Complete! ✅' : 'Export Failed ❌',
+        success ? 'Export Complete! âœ…' : 'Export Failed âŒ',
         success
             ? 'Your video is ready'
             : (error ?? 'An error occurred during export'),
@@ -710,7 +732,7 @@ class BackgroundExportService {
         payload: success ? outputPath : null,
       );
     } catch (e) {
-      debugPrint('❌ Show completion notification error: $e');
+      debugPrint('âŒ Show completion notification error: $e');
     }
   }
 
@@ -718,20 +740,20 @@ class BackgroundExportService {
     try {
       await _notifications.cancel(kExportNotificationId);
     } catch (e) {
-      debugPrint('❌ Cancel notification error: $e');
+      debugPrint('âŒ Cancel notification error: $e');
     }
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ BACKGROUND EXECUTION
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… BACKGROUND EXECUTION
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<void> _executeExportInBackground(
     Map<String, dynamic> inputData,
   ) async {
     try {
       final job = ExportJob.fromJson(inputData);
-      debugPrint('🔄 Resuming export in background: ${job.id}');
+      debugPrint('ðŸ”„ Resuming export in background: ${job.id}');
 
       await _showProgressNotification(
         (job.progress * 100).toInt(),
@@ -750,14 +772,14 @@ class BackgroundExportService {
         }
       }
     } catch (e) {
-      debugPrint('❌ Background export error: $e');
+      debugPrint('âŒ Background export error: $e');
       await _showCompletionNotification(false, error: e.toString());
     }
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ PERSISTENCE WITH HIVE
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… PERSISTENCE WITH HIVE
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Future<void> _saveJob(ExportJob job) async {
     try {
@@ -765,7 +787,7 @@ class BackgroundExportService {
       await _jobsBox?.put(job.id, jsonStr);
       _notifyJobsChanged();
     } catch (e) {
-      debugPrint('❌ Save job error: $e');
+      debugPrint('âŒ Save job error: $e');
     }
   }
 
@@ -774,7 +796,7 @@ class BackgroundExportService {
       await _jobsBox?.delete(jobId);
       _notifyJobsChanged();
     } catch (e) {
-      debugPrint('❌ Delete job error: $e');
+      debugPrint('âŒ Delete job error: $e');
     }
   }
 
@@ -794,7 +816,7 @@ class BackgroundExportService {
       jobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return jobs;
     } catch (e) {
-      debugPrint('❌ Get all jobs error: $e');
+      debugPrint('âŒ Get all jobs error: $e');
       return [];
     }
   }
@@ -807,7 +829,7 @@ class BackgroundExportService {
         return ExportJob.fromJson(json);
       }
     } catch (e) {
-      debugPrint('❌ Get job error: $e');
+      debugPrint('âŒ Get job error: $e');
     }
     return null;
   }
@@ -819,9 +841,9 @@ class BackgroundExportService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ HELPERS
-  // ═══════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // âœ… HELPERS
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   Map<String, dynamic> _buildExportSettings(VideoProject project) {
     return {
@@ -851,7 +873,7 @@ class BackgroundExportService {
         await file.delete();
       }
     } catch (e) {
-      debugPrint('❌ Cleanup error: $e');
+      debugPrint('âŒ Cleanup error: $e');
     }
   }
 
@@ -868,18 +890,46 @@ class BackgroundExportService {
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// ✅ ISOLATE FUNCTIONS
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… ISOLATE FUNCTIONS
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _CommandParams {
   final VideoProject project;
   final String outputPath;
+  final int baseWidth;
+  final int baseHeight;
 
-  _CommandParams({required this.project, required this.outputPath});
+  _CommandParams({
+    required this.project,
+    required this.outputPath,
+    this.baseWidth = 1280,
+    this.baseHeight = 720,
+  });
 }
 
 String _buildFFmpegCommandIsolate(_CommandParams params) {
+  final p = params.project;
+  final hasOverlays = p.videoOverlayItems.isNotEmpty;
+  final hasAudio = p.audioItems.isNotEmpty;
+  final hasMultiClip = p.primaryVideoClips.length > 1;
+  final hasText = p.textItems.isNotEmpty;
+  final hasImages = p.imageItems.isNotEmpty;
+  final hasSolidColor = p.solidColorItems.isNotEmpty;
+
+  // Fast path: single clip, no overlays, no extra audio
+  if (!hasOverlays && !hasAudio && !hasMultiClip && !hasText && !hasImages && !hasSolidColor) {
+    return _buildSimpleFFmpegCommand(params);
+  }
+
+  // Layered path
+  return _buildLayeredFFmpegCommand(params);
+}
+
+// âœ… SIMPLE COMMAND (single clip, no overlays)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+String _buildSimpleFFmpegCommand(_CommandParams params) {
   final project = params.project;
   final outputPath = params.outputPath;
 
@@ -950,48 +1000,395 @@ String _buildFFmpegCommandIsolate(_CommandParams params) {
   return parts.join(' ');
 }
 
-String _buildColorFilterIsolate(ColorGradeSettings settings) {
-  final filters = <String>[];
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// âœ… LAYERED COMMAND (multi-clip trim + xfade transitions
+//    + overlay PiP + audio mix)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-  final eqParts = <String>[];
-  if (settings.brightness != 0.0) {
-    eqParts.add('brightness=${settings.brightness}');
+String _buildLayeredFFmpegCommand(_CommandParams params) {
+  final project = params.project;
+  final outputPath = params.outputPath;
+  final baseW = params.baseWidth;
+  final baseH = params.baseHeight;
+  final clips = project.primaryVideoClips;
+  final overlays = project.videoOverlayItems;
+  final audioItems = project.audioItems;
+  final preset = project.exportPreset;
+  final hasAudio = !preset.removeAudio && audioItems.isNotEmpty;
+  final n = clips.length;
+
+  final inputs = <String>[];
+  final videoFilters = <String>[];
+  final audioFilters = <String>[];
+
+  // â”€â”€ Per-clip durations & total (accounting for speed & transitions) â”€â”€
+  final clipDurSec = <double>[];
+  final clipSpeedDurSec = <double>[];
+  var totalSec = 0.0;
+  for (final c in clips) {
+    final raw = (c.trimEnd - c.trimStart).inMilliseconds / 1000.0;
+    final sped = c.speed != 1.0 ? raw / c.speed : raw;
+    clipDurSec.add(raw);
+    clipSpeedDurSec.add(sped);
+    totalSec += sped;
   }
-  if (settings.contrast != 1.0) {
-    eqParts.add('contrast=${settings.contrast}');
-  }
-  if (settings.saturation != 1.0) {
-    eqParts.add('saturation=${settings.saturation}');
+  // Subtract transition durations (all overlap between consecutive clips)
+  var xfadeCount = 0;
+  for (final c in clips) {
+    if (c.transitionOut.hasTransition) {
+      totalSec -= c.transitionOut.duration.inMilliseconds / 1000.0;
+      xfadeCount++;
+    }
   }
 
-  if (eqParts.isNotEmpty) {
-    filters.add('eq=${eqParts.join(':')}');
+  // â”€â”€ Step 1: Per-clip input options + scale filter â”€â”€
+  for (var i = 0; i < n; i++) {
+    final clip = clips[i];
+    final dur = clipDurSec[i];
+
+    // Input options: -ss trimStart -t effectiveDuration
+    final inputOpts = <String>[];
+    if (clip.trimStart.inMilliseconds > 0) {
+      inputOpts.add('-ss ${_fmtNum(clip.trimStart.inMilliseconds / 1000.0)}');
+    }
+    inputOpts.add('-t ${_fmtNum(dur)}');
+    if (clip.speed != 1.0) {
+      inputOpts.add('-r ${_fmtNum((preset.fps ?? 30).toDouble())}');
+    }
+    inputs.add('${inputOpts.join(' ')} -i ${_escapePathForShellIsolate(clip.videoPath)}');
+
+    // Video filter chain for this clip
+    final vf = <String>[];
+    vf.add('scale=$baseW:$baseH:force_original_aspect_ratio=decrease');
+    vf.add('pad=$baseW:$baseH:(ow-iw)/2:(oh-ih)/2');
+    vf.add('setsar=1');
+
+    // Speed adjustment
+    if (clip.speed != 1.0) {
+      vf.add('setpts=${_fmtNum(1.0 / clip.speed)}*PTS');
+    }
+
+    // Rotation
+    if (clip.rotation != 0.0) {
+      final rad = clip.rotation * math.pi / 180.0;
+      vf.add('rotate=${_fmtNum(rad)}:c=none');
+    }
+
+    // Flip
+    if (clip.flipH) vf.add('hflip');
+    if (clip.flipV) vf.add('vflip');
+
+    videoFilters.add('[$i:v]${vf.join(',')}[vc$i]');
+
+    // Audio filter chain for this clip
+    audioFilters.add('[$i:a]aresample=44100,volume=${_fmtNum(clip.volume)}[ac$i]');
   }
 
-  if (settings.hue != 0.0) {
-    filters.add('hue=h=${settings.hue}');
+  // â”€â”€ Step 2: Build xfade chain or simple concat â”€â”€
+  String vBuilt;
+
+  if (n == 1) {
+    // Single clip: no concat needed
+    vBuilt = '[vc0]';
+  } else if (xfadeCount > 0) {
+    // xfade transitions: chain pairwise
+    // offset[i] = sum of durations of clips 0..i minus sum of transitions 0..i-1
+    var offset = clipSpeedDurSec[0];
+    var prevLabel = '[vc0]';
+
+    for (var i = 1; i < n; i++) {
+      final transType = clips[i - 1].transitionOut;
+      final transDur = transType.hasTransition
+          ? transType.duration.inMilliseconds / 1000.0
+          : 0.0;
+
+      final isLast = i == n - 1;
+      final outLabel = isLast ? '[vxout]' : '[vxf$i]';
+
+      if (transType.hasTransition) {
+        final ffmpegName = transType.type.ffmpegName;
+        videoFilters.add(
+          '$prevLabel[vc$i]xfade=transition=$ffmpegName:duration=${_fmtNum(transDur)}:offset=${_fmtNum(offset - transDur)}$outLabel',
+        );
+      } else {
+        // No transition: simple concat
+        videoFilters.add(
+          '$prevLabel[vc$i]concat=n=2:v=1:a=0$outLabel',
+        );
+      }
+
+      offset += clipSpeedDurSec[i];
+      prevLabel = outLabel;
+    }
+    vBuilt = prevLabel;
+  } else {
+    // No transitions: simple concat
+    final clipLabels = List.generate(n, (i) => '[vc$i]').join('');
+    videoFilters.add('${clipLabels}concat=n=$n:v=1:a=0[vconcat]');
+    vBuilt = '[vconcat]';
   }
 
-  if (settings.chromaKeyEnabled) {
-    filters.add('chromakey=color=0x${_rgbHexIsolate(settings.chromaKeyColor)}:similarity=${settings.chromaKeySimilarity}');
+  // â”€â”€ Audio concat (no transitions on audio) â”€â”€
+  final aConcatLabel = '[aconcat]';
+  if (n > 1) {
+    final clipALabels = List.generate(n, (i) => '[ac$i]').join('');
+    audioFilters.add('${clipALabels}concat=n=$n:v=0:a=1$aConcatLabel');
+  }
+  var audioLabel = n > 1 ? aConcatLabel : '[ac0]';
+
+  // â”€â”€ Color grade â”€â”€
+  final vColorLabel = '[vcolor]';
+  if (!project.colorGrade.isDefault) {
+    final cf = _buildColorFilterIsolate(project.colorGrade);
+    if (cf != 'null') {
+      videoFilters.add('$vBuilt$cf$vColorLabel');
+    } else {
+      videoFilters.add('${vBuilt}null$vColorLabel');
+    }
+  } else {
+    videoFilters.add('${vBuilt}null$vColorLabel');
   }
 
-  return filters.isEmpty ? 'null' : filters.join(',');
+  // â”€â”€ Overlay PiP layers â”€â”€
+  var currentVideoLabel = vColorLabel;
+  for (var i = 0; i < overlays.length; i++) {
+    final ov = overlays[i];
+    inputs.add('-i ${_escapePathForShellIsolate(ov.videoPath)}');
+    final inputIdx = n + overlays.indexOf(ov);
+    final ovIn = '[$inputIdx:v]';
+    final ovScaled = '[ovs$i]';
+    final ovReady = '[ovr$i]';
+
+    final lw = (baseW * ov.scale).round().clamp(32, baseW);
+    final lh = (lw * 9 / 16).round().clamp(24, baseH);
+
+    // Scale overlay
+    videoFilters.add('${ovIn}scale=$lw:$lh$ovScaled');
+
+    // Rotate if needed
+    if (ov.rotation != 0.0) {
+      final radians = ov.rotation * math.pi / 180.0;
+      videoFilters.add(
+        '${ovScaled}format=rgba,colorchannelmixer=aa=${_fmtNum(ov.opacity)},rotate=${_fmtNum(radians)}:c=none$ovReady',
+      );
+    } else {
+      videoFilters.add(
+        '${ovScaled}format=rgba,colorchannelmixer=aa=${_fmtNum(ov.opacity)}$ovReady',
+      );
+    }
+
+    // Compute overlay position (centered at x,y in normalized coords)
+    final posX = ((baseW - lw) * ov.x).round();
+    final posY = ((baseH - lh) * ov.y).round();
+
+    final ovOutLabel = '[ov${i}out]';
+    final startSec = ov.startTime.inMilliseconds / 1000.0;
+    final endSec = ov.endTime.inMilliseconds / 1000.0;
+    videoFilters.add(
+      '$currentVideoLabel$ovReady overlay=$posX:$posY:enable=\'between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})\'$ovOutLabel',
+    );
+    currentVideoLabel = ovOutLabel;
+  }
+
+
+
+  // Text overlays (drawtext)
+  final textItems = project.textItems;
+  for (var i = 0; i < textItems.length; i++) {
+    final ti = textItems[i];
+    if (ti.text.isEmpty || !ti.isVisible) continue;
+
+    final posPx = ((ti.x) * baseW).round();
+    final posPy = ((ti.y) * baseH).round();
+    final startSec = ti.startTime.inMilliseconds / 1000.0;
+    final endSec = ti.endTime.inMilliseconds / 1000.0;
+    final fontSize = (ti.style.fontSize * ti.scale).round().clamp(8, 200);
+    final fontColorHex = ti.style.color.toRadixString(16).substring(2);
+
+    final escapedText = ti.text.replaceAll("'", "\u2019").replaceAll(":", "\\:");
+
+    final drawText = "drawtext=text='$escapedText'"
+        ":fontsize=$fontSize"
+        ":fontcolor=0x$fontColorHex"
+        ":x=$posPx"
+        ":y=$posPy"
+        ":enable='between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})'";
+
+    videoFilters.add("$currentVideoLabel$drawText[txt$i]");
+    currentVideoLabel = '[txt$i]';
+  }
+
+  // Image overlays
+  final imageItems = project.imageItems;
+  final totalInputBeforeImages = n + overlays.length;
+  for (var i = 0; i < imageItems.length; i++) {
+    final img = imageItems[i];
+    if (img.imagePath.isEmpty || !img.isVisible) continue;
+
+    inputs.add('-i ${_escapePathForShellIsolate(img.imagePath)}');
+    final inputIdx = totalInputBeforeImages + i;
+    final imgIn = '[$inputIdx:v]';
+
+    final lw = (baseW * img.scale).round().clamp(32, baseW);
+    final lh = (lw / img.aspectRatio).round().clamp(24, baseH);
+    final posX = ((baseW - lw) * img.x).round();
+    final posY = ((baseH - lh) * img.y).round();
+    final startSec = img.startTime.inMilliseconds / 1000.0;
+    final endSec = img.endTime.inMilliseconds / 1000.0;
+
+    videoFilters.add('${imgIn}scale=$lw:$lh[imgs$i]');
+
+    if (img.opacity < 1.0) {
+      videoFilters.add('[imgs$i]format=rgba,colorchannelmixer=aa=${_fmtNum(img.opacity)}[imgr$i]');
+      videoFilters.add('$currentVideoLabel[imgr$i] overlay=$posX:$posY:enable=\'between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})\'[imgo$i]');
+    } else {
+      videoFilters.add('$currentVideoLabel[imgs$i] overlay=$posX:$posY:enable=\'between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})\'[imgo$i]');
+    }
+    currentVideoLabel = '[imgo$i]';
+  }
+
+  // Solid color layer overlays
+  final solidItems = project.solidColorItems;
+  final totalInputBeforeSolid = totalInputBeforeImages + imageItems.length;
+  for (var i = 0; i < solidItems.length; i++) {
+    final sc = solidItems[i];
+    if (!sc.isVisible) continue;
+
+    final lw = (baseW * sc.scale * sc.width).round().clamp(32, baseW);
+    final lh = (baseH * sc.scale * sc.height).round().clamp(24, baseH);
+    final posX = ((baseW - lw) * sc.x).round();
+    final posY = ((baseH - lh) * sc.y).round();
+    final startSec = sc.startTime.inMilliseconds / 1000.0;
+    final endSec = sc.endTime.inMilliseconds / 1000.0;
+    final hexColor = '#${sc.colorValue.toRadixString(16).substring(2)}';
+
+    inputs.add('-f lavfi -i "color=c=$hexColor:s=${lw}x$lh:d=${_fmtNum(endSec - startSec)}:r=${_fmtNum((preset.fps ?? 30).toDouble())}"');
+    final inputIdx = totalInputBeforeSolid + i;
+    final scIn = '[$inputIdx:v]';
+
+    if (sc.opacity < 1.0) {
+      videoFilters.add('${scIn}format=rgba,colorchannelmixer=aa=${_fmtNum(sc.opacity)}[scf$i]');
+      videoFilters.add('$currentVideoLabel[scf$i] overlay=$posX:$posY:enable=\'between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})\'[sco$i]');
+    } else {
+      videoFilters.add('$currentVideoLabel$scIn overlay=$posX:$posY:enable=\'between(t,${_fmtNum(startSec)},${_fmtNum(endSec)})\'[sco$i]');
+    }
+    currentVideoLabel = '[sco$i]';
+  }
+  // â”€â”€ Audio mix: background music on top â”€â”€
+  final audioMixLabel = '[amixout]';
+  if (hasAudio) {
+    for (var i = 0; i < audioItems.length; i++) {
+      final ai = audioItems[i];
+      inputs.add('-i ${_escapePathForShellIsolate(ai.audioPath)}');
+      final adelayMs = ai.startTime.inMilliseconds;
+      final vol = ai.volume;
+      audioFilters.add(
+        '[${n + overlays.length + imageItems.length + solidItems.length + i}:a]adelay=$adelayMs|$adelayMs,volume=${_fmtNum(vol)}[am$i]',
+      );
+    }
+    final amixInputs = List.generate(
+      audioItems.length,
+      (i) => '[am$i]',
+    ).join('');
+    audioFilters.add(
+      '$amixInputs${audioLabel}amix=inputs=${audioItems.length + 1}:normalize=0$audioMixLabel',
+    );
+    audioLabel = audioMixLabel;
+  }
+
+  // â”€â”€ Build filter_complex â”€â”€
+  final videoOutLabel = currentVideoLabel;
+  final allFilters = [...videoFilters, ...audioFilters];
+  final filterComplex = allFilters.join(';');
+
+  // â”€â”€ Build command â”€â”€
+  final parts = <String>['-y'];
+  parts.addAll(inputs);
+  parts.add('-filter_complex ${_escapePathForShellIsolate(filterComplex)}');
+  parts.add('-map $videoOutLabel');
+  if (hasAudio) {
+    parts.add('-map $audioLabel');
+  } else if (!preset.removeAudio) {
+    parts.add('-map $aConcatLabel');
+  }
+
+  // Video encoding
+  if (preset.quality != VideoQuality.original) {
+    parts.add('-c:v libx264');
+    parts.add('-preset medium');
+    parts.add('-crf 23');
+    if (preset.bitrate != null) parts.add('-b:v ${preset.bitrate}k');
+    if (preset.fps != null) parts.add('-r ${preset.fps}');
+  } else {
+    parts.add('-c:v copy');
+  }
+
+  // Audio encoding
+  if (preset.removeAudio) {
+    parts.add('-an');
+  } else {
+    parts.add('-c:a aac');
+    parts.add('-b:a ${preset.audioBitrate ?? 128}k');
+  }
+
+  // Duration + output
+  parts.add('-t ${_fmtNum(totalSec)}');
+  parts.add('-movflags +faststart');
+  parts.add(_escapePathForShellIsolate(outputPath));
+
+  return parts.join(' ');
 }
 
-String _rgbHexIsolate(int argb) {
-  final rgb = argb & 0xFFFFFF;
-  return rgb.toRadixString(16).padLeft(6, '0').toUpperCase();
+String _fmtNum(double v) => v.toStringAsFixed(3);
+
+String _formatDurationIsolate(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes.remainder(60);
+  final s = d.inSeconds.remainder(60);
+  final ms = d.inMilliseconds.remainder(1000);
+  if (h > 0) {
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
+  }
+  return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
 }
 
 String _escapePathForShellIsolate(String path) {
-  return '"${path.replaceAll('"', '\\"').replaceAll("'", "\\'")}"';
+  return "'${path.replaceAll("'", "'\\''")}'";
 }
 
-String _formatDurationIsolate(Duration d) {
-  final h = d.inHours.toString().padLeft(2, '0');
-  final m = (d.inMinutes % 60).toString().padLeft(2, '0');
-  final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-  final ms = (d.inMilliseconds % 1000).toString().padLeft(3, '0');
-  return '$h:$m:$s.$ms';
+String _buildColorFilterIsolate(ColorGradeSettings s) {
+  final filters = <String>[];
+  if (s.brightness != 0.0) {
+    filters.add('eq=brightness=${_fmtNum(s.brightness * 0.1)}');
+  }
+  if (s.contrast != 1.0) {
+    filters.add('eq=contrast=${_fmtNum(s.contrast)}');
+  }
+  if (s.saturation != 1.0) {
+    filters.add('eq=saturation=${_fmtNum(s.saturation)}');
+  }
+  if (s.hue != 0.0) {
+    filters.add('hue=h=${_fmtNum(s.hue)}');
+  }
+  if (s.red != 1.0 || s.green != 1.0 || s.blue != 1.0) {
+    filters.add(
+      'colorchannelmixer=rr=${_fmtNum(s.red)}:gg=${_fmtNum(s.green)}:bb=${_fmtNum(s.blue)}',
+    );
+  }
+  if (s.temperature != 0.0) {
+    final temp = s.temperature;
+    if (temp > 0) {
+      filters.add('colortemperature=temperature=${_fmtNum(6500 + temp * 3500)}');
+    } else {
+      filters.add('colortemperature=temperature=${_fmtNum(6500 + temp * 2500)}');
+    }
+  }
+  if (s.chromaKeyEnabled) {
+    filters.add(
+      'chromakey=color=${'#${s.chromaKeyColor.toRadixString(16).padLeft(8, '0')}'}:similarity=${_fmtNum(s.chromaKeySimilarity)}:blend=0.1',
+    );
+  }
+  return filters.isNotEmpty ? filters.join(',') : 'null';
 }
+

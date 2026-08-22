@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/video_edit_settings.dart';
 import '../providers/timeline_provider.dart';
 import '../services/pixabay_api_service.dart';
+import 'local_video_browser_sheet.dart';
 import 'package:slideup/features/video_player/video_player_launcher.dart';
 
 // ═══════════════════════════════════════════════════════
@@ -95,7 +96,10 @@ class _PixabayVideoPickerSheetState
     });
   }
 
-  Future<void> _insertVideoToTimeline(StockVideo video) async {
+  Future<void> _insertVideoToTimeline(
+    StockVideo video, {
+    bool asLayer = false,
+  }) async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
 
@@ -124,21 +128,38 @@ class _PixabayVideoPickerSheetState
       });
 
       if (downloaded != null && downloaded.localPath != null) {
-        // Insert onto primary magnetic timeline
-        ref.read(timelineProvider.notifier).addPrimaryClip(
-              PrimaryVideoClip(
-                id: DateTime.now().millisecondsSinceEpoch.toString(),
-                videoPath: downloaded.localPath!,
-                sourceDuration: downloaded.duration,
-              ),
-            );
+        final notifier = ref.read(timelineProvider.notifier);
+        if (asLayer) {
+          // Picture-in-picture overlay layer
+          notifier.addVideoOverlayItem(
+            videoPath: downloaded.localPath!,
+            sourceDuration: downloaded.duration,
+          );
+          notifier.selectItem(
+            ref.read(timelineProvider).videoOverlayItems.last.id,
+            TimelineItemType.video,
+          );
+        } else {
+          // Insert onto primary magnetic timeline
+          notifier.addPrimaryClip(
+            PrimaryVideoClip(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              videoPath: downloaded.localPath!,
+              sourceDuration: downloaded.duration,
+            ),
+          );
+        }
 
         HapticFeedback.heavyImpact();
         navigator.pop(); // Close sheet
 
         messenger.showSnackBar(
           SnackBar(
-            content: Text('Inserted "${video.title}" to Magnetic Timeline'),
+            content: Text(
+              asLayer
+                  ? 'Added "${video.title}" as Overlay Layer'
+                  : 'Inserted "${video.title}" to Magnetic Timeline',
+            ),
             behavior: SnackBarBehavior.floating,
             backgroundColor: const Color(0xFF6C63FF),
           ),
@@ -339,6 +360,20 @@ class _PixabayVideoPickerSheetState
             icon: const Icon(Icons.play_circle_outline, size: 16),
             label: const Text('Stream Preview'),
           ),
+          OutlinedButton.icon(
+            onPressed: isDownloading
+                ? null
+                : () {
+                    Navigator.pop(context); // Close modal
+                    _insertVideoToTimeline(video, asLayer: true);
+                  },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFE040FB),
+              side: const BorderSide(color: Color(0xFFE040FB)),
+            ),
+            icon: const Icon(Icons.layers, size: 16),
+            label: const Text('Add as Layer'),
+          ),
           ElevatedButton.icon(
             onPressed: isDownloading
                 ? null
@@ -439,6 +474,41 @@ class _PixabayVideoPickerSheetState
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+
+          // Browse device storage button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: InkWell(
+              onTap: () => LocalVideoBrowserSheet.show(context),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2196F3), Color(0xFF00E0FF)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.sd_storage_rounded, color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Browse Device Storage (Internal / SD / USB)',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

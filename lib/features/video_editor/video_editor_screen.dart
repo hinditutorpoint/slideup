@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
+import '../../services/file_picker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +12,10 @@ import 'providers/video_editor_provider.dart';
 import 'providers/timeline_provider.dart';
 import 'providers/project_provider.dart';
 import 'components/preview_component.dart';
-import 'components/timeline_thumbnails.dart';
+import 'components/object_canvas_overlay.dart';
+import 'components/sync_text_field.dart';
+import 'services/preview_audio_mixer.dart';
+
 import 'components/object_timeline_editor.dart';
 import 'sheets/trim_sheet.dart';
 import 'sheets/text_sheet.dart';
@@ -23,6 +27,7 @@ import 'sheets/effects_sheet.dart';
 import 'sheets/image_picker_sheet.dart';
 import 'sheets/image_edit_sheet.dart';
 import 'sheets/merge_sheet.dart';
+import 'sheets/transition_sheet.dart';
 import 'sheets/pixabay_video_picker_sheet.dart';
 import 'tabs/ai_tab.dart';
 
@@ -95,26 +100,41 @@ class VideoEditorScreen extends ConsumerStatefulWidget {
 }
 
 class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey<PreviewComponentState> _previewKey = GlobalKey();
   late AnimationController _animationController;
   Timer? _positionTimer;
+  DateTime? _lastTickTime;
+  late final PreviewAudioMixer _audioMixer;
 
   // Fixed heights
   static const double _topBarHeight = 38.0;
   static const double _bottomToolbarHeight = 60.0;
   static const double _playbackControlsHeight = 34.0;
-  static const double _thumbnailTimelineHeight = 48.0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _audioMixer = PreviewAudioMixer();
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initialize());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState appState) {
+    super.didChangeAppLifecycleState(appState);
+    if (appState == AppLifecycleState.resumed) {
+      WakelockPlus.enable();
+    } else if (appState == AppLifecycleState.paused ||
+        appState == AppLifecycleState.inactive ||
+        appState == AppLifecycleState.detached) {
+      WakelockPlus.disable();
+    }
   }
 
   Future<void> _initialize() async {
@@ -147,18 +167,199 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     );
   }
 
+  Duration _getTotalTimelineDuration(TimelineState tl, VideoProject? project) {
+    if (tl.primaryVideoClips.isNotEmpty) {
+      if (tl.totalDuration > Duration.zero) return tl.totalDuration;
+      final mag = project?.magneticTrackDuration;
+      if (mag != null && mag > Duration.zero) return mag;
+    }
+    return project?.effectiveDuration ??
+        project?.videoDuration ??
+        Duration.zero;
+  }
+
   void _startPositionTracking() {
     _positionTimer?.cancel();
-    _positionTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+    _lastTickTime = null;
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       final editorState = ref.read(videoEditorProvider);
+      final tl = ref.read(timelineProvider);
+      final project = ref.read(currentProjectProvider);
+      final totalDuration = _getTotalTimelineDuration(tl, project);
+      final isLooping = ref.read(isLoopingProvider);
+
       if (editorState.isPreviewPlaying) {
-        final position = _previewKey.currentState?.getCurrentPosition();
-        if (position != null) {
-          ref.read(videoEditorProvider.notifier).setPreviewPosition(position);
-          ref.read(timelineProvider.notifier).setCurrentPosition(position);
+        final now = DateTime.now();
+        final elapsed = _lastTickTime == null
+            ? const Duration(milliseconds: 50)
+            : now.difference(_lastTickTime!);
+        _lastTickTime = now;
+
+        final currentPos = tl.currentPosition;
+        final clips = tl.primaryVideoClips;
+        final activeClip = _activePrimaryClip(clips, currentPos);
+        final rate = (activeClip?.speed ?? 1.0).clamp(0.1, 8.0);
+        final advancedMs =
+            (elapsed.inMicroseconds / 1000.0 * rate).round();
+        var nextPos = currentPos + Duration(milliseconds: advancedMs);
+
+        if (totalDuration > Duration.zero && nextPos >= totalDuration) {
+          if (isLooping) {
+            nextPos = Duration.zero;
+            _seekToTimelinePosition(Duration.zero);
+          } else {
+            nextPos = totalDuration;
+            ref.read(timelineProvider.notifier).setPlaying(false);
+            ref
+                .read(videoEditorProvider.notifier)
+                .setPreviewPlaying(false);
+            _previewKey.currentState?.pause();
+          }
+        } else {
+          // Sync preview player with active clip's trimmed video file position
+          if (clips.isNotEmpty && activeClip != null) {
+            final clipStart = _clipTimelineStart(clips, activeClip.id);
+            final local = nextPos - clipStart;
+            final targetFilePos = activeClip.trimStart + local;
+            final playerPos =
+                _previewKey.currentState?.getCurrentPosition();
+            if (playerPos != null &&
+                (playerPos - targetFilePos).inMilliseconds.abs() > 350) {
+              _previewKey.currentState?.seekTo(targetFilePos);
+            }
+          }
         }
+
+        ref.read(videoEditorProvider.notifier).setPreviewPosition(nextPos);
+        ref.read(timelineProvider.notifier).setCurrentPosition(nextPos);
+        _applySpeedRamping(nextPos);
+      } else {
+        _lastTickTime = null;
       }
+      _syncAudio();
     });
+  }
+
+  void _seekToTimelinePosition(Duration seekPos) {
+    final tl = ref.read(timelineProvider);
+    final project = ref.read(currentProjectProvider);
+    final totalDuration = _getTotalTimelineDuration(tl, project);
+    final clamped = seekPos < Duration.zero
+        ? Duration.zero
+        : (totalDuration > Duration.zero && seekPos > totalDuration
+            ? totalDuration
+            : seekPos);
+
+    ref.read(timelineProvider.notifier).setCurrentPosition(clamped);
+    ref.read(videoEditorProvider.notifier).setPreviewPosition(clamped);
+
+    final clips = tl.primaryVideoClips;
+    if (clips.isNotEmpty) {
+      PrimaryVideoClip? activeClip;
+      Duration clipStart = Duration.zero;
+      for (final clip in clips) {
+        if (clamped < clipStart + clip.effectiveDuration) {
+          activeClip = clip;
+          break;
+        }
+        clipStart += clip.effectiveDuration;
+      }
+      activeClip ??= clips.last;
+      final local = clamped - clipStart;
+      final filePos = activeClip.trimStart + local;
+      _previewKey.currentState?.seekTo(filePos);
+    } else {
+      final start = project?.trimStart ?? Duration.zero;
+      _previewKey.currentState?.seekTo(start + clamped);
+    }
+    _syncAudio();
+  }
+
+  /// Apply speed ramping from keyframes during playback.
+  void _applySpeedRamping(Duration position) {
+    final tl = ref.read(timelineProvider);
+    final clips = tl.primaryVideoClips;
+    if (clips.isEmpty) return;
+
+    final activeClip = _activePrimaryClip(clips, position);
+    if (activeClip == null) return;
+
+    final kfs = tl.keyframes[activeClip.id];
+    if (kfs == null || kfs.isEmpty) {
+      // No speed keyframes — use clip's base speed
+      _previewKey.currentState?.setPlaybackSpeed(activeClip.speed);
+      return;
+    }
+
+    // Find speed keyframes
+    final speedKfs = kfs.where((k) => k.speed != null).toList();
+    if (speedKfs.isEmpty) {
+      _previewKey.currentState?.setPlaybackSpeed(activeClip.speed);
+      return;
+    }
+
+    // Compute position relative to the active clip start
+    final clipStart = _clipTimelineStart(clips, activeClip.id);
+    final relativePos = position - clipStart;
+
+    // Interpolate speed
+    final interpolated = KeyframeData.interpolate(speedKfs, relativePos);
+    final speed = interpolated.speed ?? activeClip.speed;
+    _previewKey.currentState?.setPlaybackSpeed(speed.clamp(0.1, 8.0));
+  }
+
+  /// Keeps background-music items in sync with the playhead.
+  Future<void> _syncAudio() async {
+    final tl = ref.read(timelineProvider);
+    final editor = ref.read(videoEditorProvider);
+    final audioTrackMuted = tl.mutedTracks.contains('Audio');
+    final hasSolo = tl.soloTracks.isNotEmpty;
+    final audioTrackSolo = tl.soloTracks.contains('Audio');
+
+    final sources = tl.audioItems
+        .map(
+          (a) => PreviewMixSource(
+            id: a.id,
+            path: a.audioPath,
+            start: a.startTime,
+            duration: a.audioDuration,
+            volume: a.volume,
+            isTrackMuted: audioTrackMuted || (hasSolo && !audioTrackSolo),
+          ),
+        )
+        .toList();
+
+    await _audioMixer.sync(
+      sources: sources,
+      playhead: tl.currentPosition,
+      isPlaying: tl.isPlaying,
+      masterVolume: editor.isMuted ? 0 : editor.volume,
+      muted: editor.isMuted,
+    );
+  }
+
+  Duration _clipTimelineStart(List<PrimaryVideoClip> clips, String clipId) {
+    var offset = Duration.zero;
+    for (final clip in clips) {
+      if (clip.id == clipId) return offset;
+      offset += clip.effectiveDuration;
+    }
+    return Duration.zero;
+  }
+
+  /// The primary clip that should be shown/played at the current playhead.
+  PrimaryVideoClip? _activePrimaryClip(
+    List<PrimaryVideoClip> clips,
+    Duration position,
+  ) {
+    if (clips.isEmpty) return null;
+    var offset = Duration.zero;
+    for (final clip in clips) {
+      final dur = clip.effectiveDuration;
+      if (dur > Duration.zero && position < offset + dur) return clip;
+      offset += dur;
+    }
+    return clips.last;
   }
 
   void _showError(String message) {
@@ -183,8 +384,10 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _positionTimer?.cancel();
     _animationController.dispose();
+    _audioMixer.dispose();
     WakelockPlus.disable();
     _setImmersiveMode(false);
     super.dispose();
@@ -234,10 +437,9 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                   final remainingHeight =
                       availableHeight -
                       previewHeight -
-                      _playbackControlsHeight -
-                      _thumbnailTimelineHeight;
+                      _playbackControlsHeight;
 
-                  final editorHeight = remainingHeight;
+                  final editorHeight = remainingHeight < 0 ? 0.0 : remainingHeight;
 
                   return Column(
                     children: [
@@ -252,13 +454,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                         height: _playbackControlsHeight,
                         child: _buildPlaybackControls(state),
                       ),
-
-                      // THUMBNAIL TIMELINE
-                      if (project != null)
-                        SizedBox(
-                          height: _thumbnailTimelineHeight,
-                          child: _buildTimeline(state, project),
-                        ),
 
                       // OBJECT TIMELINE EDITOR
                       if (project != null)
@@ -275,13 +470,11 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                               ),
                             ),
                             child: ObjectTimelineEditor(
-                              totalDuration: project.videoDuration,
-                              onSeek: (position) {
-                                _previewKey.currentState?.seekTo(position);
-                                ref
-                                    .read(timelineProvider.notifier)
-                                    .setCurrentPosition(position);
-                              },
+                              totalDuration: _getTotalTimelineDuration(
+                                ref.watch(timelineProvider),
+                                project,
+                              ),
+                              onSeek: _seekToTimelinePosition,
                               onItemSelect: (itemId) {
                                 ref
                                     .read(videoEditorProvider.notifier)
@@ -470,16 +663,40 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
           Center(
             child: AspectRatio(
               aspectRatio: 16 / 9,
-              child: PreviewComponent(
-                key: _previewKey,
-                videoPath: project.videoPath,
-                showControls: false,
-                showOverlays: true,
-                enableInteraction: true,
-                colorGrade: state.previewColorGrade,
-                volume: state.isMuted ? 0 : state.volume,
-                showGrid: state.showGrid,
-                showSafeArea: state.showSafeArea,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Builder(
+                    builder: (context) {
+                      final tlState = ref.watch(timelineProvider);
+                      final clips = tlState.primaryVideoClips;
+                      final clip = _activePrimaryClip(
+                        clips,
+                        tlState.currentPosition,
+                      );
+                      final v = clip ??
+                          (clips.isNotEmpty ? clips.first : null);
+                      return PreviewComponent(
+                        key: _previewKey,
+                        videoPath: v?.videoPath ?? project.videoPath,
+                        showControls: false,
+                        showOverlays: true,
+                        enableInteraction: true,
+                        colorGrade: state.previewColorGrade,
+                        volume: state.isMuted ? 0 : state.volume,
+                        showGrid: state.showGrid,
+                        showSafeArea: state.showSafeArea,
+                        clipVolume: v?.volume ?? 1,
+                        speed: v?.speed ?? 1,
+                        rotation: v?.rotation ?? 0,
+                        flipH: v?.flipH ?? false,
+                        flipV: v?.flipV ?? false,
+                      );
+                    },
+                  ),
+                  // On-canvas drag / pinch-resize / rotate for overlays
+                  const ObjectCanvasOverlay(),
+                ],
               ),
             ),
           ),
@@ -586,163 +803,110 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
           bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
         ),
       ),
-      child: Row(
-        children: [
-          // Play/Pause
-          IconButton(
-            icon: Icon(
-              timelineState.isPlaying ? Icons.pause : Icons.play_arrow,
-              size: 22,
-              color: Colors.white,
-            ),
-            onPressed: _togglePlayPause,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36),
-          ),
-
-          // Time display
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _formatTime(timelineState.currentPosition),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
-                  ),
-                ),
-                Text(
-                  ' / ',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                ),
-                if (project != null)
-                  Text(
-                    _formatTime(project.effectiveDuration),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: Colors.grey[400],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Frame navigation
-          IconButton(
-            icon: const Icon(
-              Icons.skip_previous,
-              size: 18,
-              color: Colors.white,
-            ),
-            onPressed: _previousFrame,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32),
-          ),
-          IconButton(
-            icon: const Icon(Icons.skip_next, size: 18, color: Colors.white),
-            onPressed: _nextFrame,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32),
-          ),
-
-          // Loop toggle
-          IconButton(
-            icon: Icon(
-              Icons.repeat,
-              size: 18,
-              color: isLooping ? Colors.blue : Colors.grey[400],
-            ),
-            onPressed: () =>
-                ref.read(isLoopingProvider.notifier).state = !isLooping,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32),
-          ),
-
-          // Zoom slider
-          SizedBox(
-            width: 60,
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                overlayShape: SliderComponentShape.noOverlay,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            // Play/Pause
+            IconButton(
+              icon: Icon(
+                timelineState.isPlaying ? Icons.pause : Icons.play_arrow,
+                size: 22,
+                color: Colors.white,
               ),
-              child: Slider(
-                value: timelineState.zoomLevel,
-                min: 0.5,
-                max: 3.0,
-                onChanged: (v) =>
-                    ref.read(timelineProvider.notifier).setZoomLevel(v),
-                activeColor: Colors.grey[400],
-                inactiveColor: Colors.grey[700],
-              ),
+              onPressed: _togglePlayPause,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36),
             ),
-          ),
-          Icon(Icons.zoom_in, size: 14, color: Colors.grey[500]),
-        ],
-      ),
-    );
-  }
 
-  // ═══════════════════════════════════════════════════════
-  // ✅ TIMELINE
-  // ═══════════════════════════════════════════════════════
-
-  Widget _buildTimeline(VideoEditorState state, VideoProject? project) {
-    if (project == null) return const SizedBox.shrink();
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.grey[900],
-        border: Border(
-          bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
-        ),
-      ),
-      child: Stack(
-        children: [
-          if (state.thumbnails.isNotEmpty)
-            TimelineThumbnails(
-              project: project,
-              thumbnails: state.thumbnails,
-              trimStart: project.trimStart,
-              trimEnd: project.trimEnd,
-              onSeek: (position) {
-                _previewKey.currentState?.seekTo(position);
-                ref
-                    .read(timelineProvider.notifier)
-                    .setCurrentPosition(position);
-                ref
-                    .read(videoEditorProvider.notifier)
-                    .setPreviewPosition(position);
-              },
-              onTrimChange: (start, end) {
-                ref.read(projectProvider.notifier).updateTrim(start, end);
-              },
-            )
-          else
-            Center(
+            // Time display
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
-                  ),
-                  const SizedBox(width: 8),
                   Text(
-                    'Loading...',
-                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                    _formatTime(timelineState.currentPosition),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
                   ),
+                  Text(
+                    ' / ',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  ),
+                  if (project != null)
+                    Text(
+                      _formatTime(
+                        _getTotalTimelineDuration(timelineState, project),
+                      ),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: Colors.grey[400],
+                      ),
+                    ),
                 ],
               ),
             ),
-        ],
+
+            // Zoom slider
+            SizedBox(
+              width: 60,
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                  overlayShape: SliderComponentShape.noOverlay,
+                ),
+                child: Slider(
+                  value: timelineState.zoomLevel,
+                  min: 0.5,
+                  max: 3.0,
+                  onChanged: (v) =>
+                      ref.read(timelineProvider.notifier).setZoomLevel(v),
+                  activeColor: Colors.grey[400],
+                  inactiveColor: Colors.grey[700],
+                ),
+              ),
+            ),
+            Icon(Icons.zoom_in, size: 14, color: Colors.grey[500]),
+
+            // Frame navigation
+            IconButton(
+              icon: const Icon(
+                Icons.skip_previous,
+                size: 18,
+                color: Colors.white,
+              ),
+              onPressed: _previousFrame,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32),
+            ),
+            IconButton(
+              icon: const Icon(Icons.skip_next, size: 18, color: Colors.white),
+              onPressed: _nextFrame,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32),
+            ),
+
+            // Loop toggle
+            IconButton(
+              icon: Icon(
+                Icons.repeat,
+                size: 18,
+                color: isLooping ? Colors.blue : Colors.grey[400],
+              ),
+              onPressed: () =>
+                  ref.read(isLoopingProvider.notifier).state = !isLooping,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -952,6 +1116,11 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
   }
 
   Widget _buildPropertiesPanel() {
+    final selectedPrimary = ref.watch(selectedPrimaryClipProvider);
+    if (selectedPrimary != null) {
+      return _buildVideoProperties(selectedPrimary);
+    }
+
     final selectedItem = ref.watch(selectedItemProvider);
 
     if (selectedItem == null) {
@@ -981,12 +1150,323 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     return const SizedBox.shrink();
   }
 
+  Widget _buildVideoProperties(PrimaryVideoClip clip) {
+    final notifier = ref.read(timelineProvider.notifier);
+    void update(PrimaryVideoClip c) =>
+        notifier.updatePrimaryClip(clip.id, c);
+
+    final sourceSec = clip.sourceDuration.inSeconds.toDouble();
+    final state = ref.watch(timelineProvider);
+    final clipIndex = state.primaryVideoClips.indexWhere((c) => c.id == clip.id);
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        _sectionTitle('Video · Clip', Icons.movie_outlined, Colors.blueAccent),
+        const SizedBox(height: 8),
+
+        // Trim In
+        _labeledSlider(
+          label: 'Trim In',
+          value: clip.trimStart.inSeconds.toDouble(),
+          min: 0,
+          max: sourceSec,
+          display: _fmt(clip.trimStart),
+          onChanged: (v) {
+            final ts = Duration(seconds: v.round());
+            update(clip.copyWith(
+              trimStart: ts,
+              trimEnd: clip.trimEnd < ts ? ts : clip.trimEnd,
+            ));
+          },
+        ),
+
+        // Trim Out
+        _labeledSlider(
+          label: 'Trim Out',
+          value: clip.trimEnd.inSeconds.toDouble(),
+          min: 0,
+          max: sourceSec,
+          display: _fmt(clip.trimEnd),
+          onChanged: (v) {
+            final te = Duration(seconds: v.round());
+            update(clip.copyWith(
+              trimEnd: te < clip.trimStart ? clip.trimStart : te,
+            ));
+          },
+        ),
+
+        const SizedBox(height: 8),
+        _sectionTitle('Audio & Playback', Icons.tune, Colors.blueAccent),
+        const SizedBox(height: 8),
+
+        // Volume
+        _labeledSlider(
+          label: 'Volume',
+          value: clip.volume,
+          min: 0,
+          max: 1,
+          display: '${(clip.volume * 100).round()}%',
+          onChanged: (v) => update(clip.copyWith(volume: v)),
+        ),
+
+        // Speed
+        _labeledSlider(
+          label: 'Speed',
+          value: clip.speed,
+          min: 0.25,
+          max: 4,
+          display: '${clip.speed.toStringAsFixed(2)}x',
+          onChanged: (v) => update(clip.copyWith(speed: v)),
+        ),
+
+        const SizedBox(height: 8),
+        _sectionTitle('Transform', Icons.crop_rotate, Colors.blueAccent),
+        const SizedBox(height: 8),
+
+        // Rotation
+        _labeledSlider(
+          label: 'Rotation',
+          value: clip.rotation,
+          min: -180,
+          max: 180,
+          display: '${clip.rotation.round()}°',
+          onChanged: (v) => update(clip.copyWith(rotation: v)),
+        ),
+
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _toggleChip(
+                label: 'Flip H',
+                active: clip.flipH,
+                onTap: () => update(clip.copyWith(flipH: !clip.flipH)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _toggleChip(
+                label: 'Flip V',
+                active: clip.flipV,
+                onTap: () => update(clip.copyWith(flipV: !clip.flipV)),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+
+        // ── Speed Ramping ──
+        _sectionTitle('Speed Ramping', Icons.speed, Colors.orangeAccent),
+        const SizedBox(height: 6),
+        _buildSpeedRampSection(clip),
+
+        const SizedBox(height: 12),
+        // Transition out
+        if (clipIndex >= 0 && clipIndex < state.primaryVideoClips.length - 1)
+          OutlinedButton.icon(
+            onPressed: () => TransitionSheet.show(
+              context,
+              ref,
+              clipIndex: clipIndex,
+              current: clip.transitionOut,
+            ),
+            icon: const Icon(Icons.bolt, size: 16),
+            label: const Text('Transition Out'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white70,
+              side: const BorderSide(color: Colors.white24),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(String title, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _labeledSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label, style: const TextStyle(fontSize: 11)),
+            const Spacer(),
+            Text(
+              display,
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          activeColor: Colors.blueAccent,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+
+  Widget _toggleChip({
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? Colors.blueAccent : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: active ? Colors.blueAccent : Colors.white24,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? Colors.white : Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes;
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Widget _buildSpeedRampSection(PrimaryVideoClip clip) {
+    final tl = ref.watch(timelineProvider);
+    final kfs = tl.keyframes[clip.id] ?? [];
+    final speedKfs = kfs.where((k) => k.speed != null).toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+
+    // Compute clip start position for relative time display
+    var clipStart = Duration.zero;
+    for (final c in tl.primaryVideoClips) {
+      if (c.id == clip.id) break;
+      clipStart += c.effectiveDuration;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (speedKfs.isEmpty)
+          Text(
+            'No speed ramps. Add keyframes to create variable speed.',
+            style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+          )
+        else
+          ...speedKfs.map((kf) {
+            final relTime = kf.time;
+            final speed = kf.speed ?? 1.0;
+            final color = speed < 1.0
+                ? Colors.blueAccent
+                : speed > 1.0
+                    ? Colors.orangeAccent
+                    : Colors.grey;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Row(
+                children: [
+                  Icon(Icons.speed, size: 10, color: color),
+                  const SizedBox(width: 4),
+                  Text(
+                    _fmt(relTime),
+                    style: TextStyle(fontSize: 9, color: Colors.grey[400]),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(
+                      '${speed.toStringAsFixed(1)}x',
+                      style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () {
+                      ref.read(timelineProvider.notifier).removeKeyframe(clip.id, kf.id);
+                    },
+                    child: Icon(Icons.close, size: 10, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            );
+          }),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  final pos = ref.read(timelineProvider).currentPosition;
+                  final relativePos = pos - clipStart;
+                  final kf = KeyframeData(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    time: relativePos < Duration.zero ? Duration.zero : relativePos,
+                    speed: clip.speed,
+                  );
+                  ref.read(timelineProvider.notifier).addKeyframe(clip.id, kf);
+                },
+                icon: const Icon(Icons.add, size: 12),
+                label: const Text('Add Speed Keyframe', style: TextStyle(fontSize: 10)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orangeAccent,
+                  side: const BorderSide(color: Colors.orangeAccent, width: 0.5),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildTextProperties(TextTimelineItem item) {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        TextField(
-          controller: TextEditingController(text: item.text),
+        SyncTextField(
+          text: item.text,
           decoration: const InputDecoration(
             labelText: 'Text',
             border: OutlineInputBorder(),
@@ -1013,7 +1493,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
           ],
         ),
         Slider(
-          value: item.style.fontSize,
+          value: item.style.fontSize.clamp(12.0, 72.0),
           min: 12,
           max: 72,
           onChanged: (value) {
@@ -1053,7 +1533,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
           ],
         ),
         Slider(
-          value: item.scale,
+          value: item.scale.clamp(0.1, 2.0),
           min: 0.1,
           max: 2.0,
           onChanged: (value) {
@@ -1074,7 +1554,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
           ],
         ),
         Slider(
-          value: item.opacity,
+          value: item.opacity.clamp(0.0, 1.0),
           min: 0.0,
           max: 1.0,
           onChanged: (value) {
@@ -1547,8 +2027,10 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
             style: TextStyle(fontSize: 13, color: Colors.grey[400]),
           ),
           const SizedBox(height: 28),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 12,
             children: [
               // Start Blank Canvas Project
               ElevatedButton.icon(
@@ -1575,7 +2057,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
-              const SizedBox(width: 12),
 
               // Import Video Clip
               OutlinedButton.icon(
@@ -1594,7 +2075,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                 icon: const Icon(Icons.video_call, size: 20),
                 label: const Text('Import Video'),
               ),
-              const SizedBox(width: 12),
 
               // Stock Pixabay Video
               OutlinedButton.icon(
@@ -1812,7 +2292,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
         _extractAudioFromVideo();
         break;
       case EditorTool.aiImage:
-        _showAiImageTab();
+        _showAiImageSheet();
         break;
       case EditorTool.aiVideo:
         _showSuccess('AI Video coming soon');
@@ -1828,6 +2308,53 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => sheet,
+    );
+  }
+
+  void _showAiImageSheet() {
+    final tl = ref.read(timelineProvider);
+    final project = ref.read(currentProjectProvider);
+    final totalDuration = _getTotalTimelineDuration(tl, project);
+    final currentPos = tl.currentPosition;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) {
+          return ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: Container(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              child: AiTab(
+                videoDuration: totalDuration,
+                currentPosition: currentPos,
+                onImageGenerated: (ImageTimelineItem item) {
+                  ref.read(timelineProvider.notifier).addImageItem(
+                        imagePath: item.imagePath,
+                        startTime: item.startTime,
+                        duration: item.endTime - item.startTime,
+                        x: item.x,
+                        y: item.y,
+                        scale: item.scale,
+                        width: item.width,
+                        height: item.height,
+                      );
+                  HapticFeedback.mediumImpact();
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop();
+                  }
+                  _showSuccess('AI image added to timeline');
+                },
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1891,7 +2418,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
 
   Future<void> _pickMusicFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.audio,
         allowMultiple: false,
       );
@@ -1934,66 +2461,14 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     }
 
     try {
-        final result = await ref
-            .read(videoEditServiceProvider)
-            .extractAudio(inputPath: project.videoPath, format: AudioFormat.mp3);
-      if (!mounted) return;
-
-      if (result.isFailure) {
-        _showError('Extract failed: ${result.error}');
-        return;
-      }
-
-      final audioPath = result.requireData;
-      final infoResult = await ref
-          .read(audioEditServiceProvider)
-          .getAudioInfo(audioPath);
-      if (!mounted) return;
-
-      ref
-          .read(timelineProvider.notifier)
-          .addAudioItem(
-            audioPath: audioPath,
-            title: 'Extracted audio',
-            startTime: ref.read(currentPositionProvider),
-            audioDuration:
-                infoResult.isSuccess ? infoResult.requireData.duration : project.videoDuration,
-          );
-      HapticFeedback.mediumImpact();
-      _showSuccess('Audio extracted and added to timeline');
-    } catch (e) {
-      if (mounted) _showError('Extract failed: $e');
-    }
-  }
-
-  void _showAiImageTab() {
-    final videoDuration = ref.read(currentProjectProvider)?.videoDuration ??
-        const Duration(seconds: 30);
-    final currentPosition = ref.read(currentPositionProvider);
-
-    _showSheet(
-      AiTab(
-        videoDuration: videoDuration,
-        currentPosition: currentPosition,
-        onImageGenerated: (item) {
-          ref.read(timelineProvider.notifier).addGeneratedImage(item);
-          HapticFeedback.mediumImpact();
-          _showSuccess('AI image added to timeline');
-        },
-      ),
-    );
-  }
-
-  Future<void> _saveProject() async {
-    try {
-      await ref.read(projectProvider.notifier).saveProject();
-      if (mounted) {
-        _showSuccess('Project saved successfully');
+      final result = await ref
+          .read(videoEditServiceProvider)
+          .extractAudio(inputPath: project.videoPath, format: AudioFormat.mp3);
+      if (result.isSuccess) {
+        _showSuccess('Audio extracted');
       }
     } catch (e) {
-      if (mounted) {
-        _showError('Failed to save project: $e');
-      }
+      _showError('Failed to extract audio: $e');
     }
   }
 
@@ -2041,36 +2516,36 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
   }
 
   void _togglePlayPause() {
-    final isPlaying = ref.read(timelineProvider).isPlaying;
-    ref.read(timelineProvider.notifier).setPlaying(!isPlaying);
-    ref.read(videoEditorProvider.notifier).setPreviewPlaying(!isPlaying);
-
+    final tl = ref.read(timelineProvider);
+    final project = ref.read(currentProjectProvider);
+    final totalDuration = _getTotalTimelineDuration(tl, project);
+    final isPlaying = tl.isPlaying;
     if (!isPlaying) {
+      if (totalDuration > Duration.zero &&
+          tl.currentPosition >= totalDuration) {
+        _seekToTimelinePosition(Duration.zero);
+      }
+      ref.read(timelineProvider.notifier).setPlaying(true);
+      ref.read(videoEditorProvider.notifier).setPreviewPlaying(true);
       _previewKey.currentState?.play();
     } else {
+      ref.read(timelineProvider.notifier).setPlaying(false);
+      ref.read(videoEditorProvider.notifier).setPreviewPlaying(false);
       _previewKey.currentState?.pause();
     }
+    _syncAudio();
   }
 
   void _previousFrame() {
     final current = ref.read(timelineProvider).currentPosition;
-    final newPosition = current - const Duration(milliseconds: 33);
-    if (newPosition >= Duration.zero) {
-      _previewKey.currentState?.seekTo(newPosition);
-      ref.read(timelineProvider.notifier).setCurrentPosition(newPosition);
-    }
+    _seekToTimelinePosition(current - const Duration(milliseconds: 33));
+
+
   }
 
   void _nextFrame() {
     final current = ref.read(timelineProvider).currentPosition;
-    final project = ref.read(currentProjectProvider);
-    if (project == null) return;
-
-    final newPosition = current + const Duration(milliseconds: 33);
-    if (newPosition <= project.videoDuration) {
-      _previewKey.currentState?.seekTo(newPosition);
-      ref.read(timelineProvider.notifier).setCurrentPosition(newPosition);
-    }
+    _seekToTimelinePosition(current + const Duration(milliseconds: 33));
   }
 
   void _undo() {
@@ -2091,7 +2566,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
 
   Future<void> _pickVideo() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.video,
       );
       if (result == null || result.files.isEmpty) return;
@@ -2146,6 +2621,17 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
     }
 
     if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _saveProject() async {
+    final result = await ref.read(projectProvider.notifier).saveProject();
+    if (mounted) {
+      if (result.isSuccess) {
+        _showSuccess('Project saved');
+      } else {
+        _showError('Failed to save project: ${result.error}');
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════

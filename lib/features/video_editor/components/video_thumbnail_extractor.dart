@@ -15,6 +15,11 @@ class VideoThumbnailProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Only show a spinner during the initial extraction phase (no thumbnails
+    // yet). Once at least one frame exists, missing slots render as a neutral
+    // placeholder so the UI never appears stuck in a perpetual loading state.
+    final isExtracting = thumbnails.isEmpty;
+
     return SizedBox(
       height: 60,
       child: Row(
@@ -30,16 +35,19 @@ class VideoThumbnailProgress extends StatelessWidget {
               ),
               child: hasThumbnail
                   ? Image.memory(thumbnails[index], fit: BoxFit.cover)
-                  : Center(
-                      child: SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(Colors.grey[600]),
-                        ),
-                      ),
-                    ),
+                  : isExtracting
+                      ? Center(
+                          child: SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation(Colors.grey[600]),
+                            ),
+                          ),
+                        )
+                      : null,
             ),
           );
         }),

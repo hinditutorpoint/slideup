@@ -209,7 +209,8 @@ class _TextTabState extends ConsumerState<TextTab> {
   ) {
     final startX = (item.startTime.inMilliseconds / totalMs) * width;
     final endX = (item.endTime.inMilliseconds / totalMs) * width;
-    final barWidth = (endX - startX).clamp(16.0, width - startX);
+    final maxW = (width - startX).clamp(0.0, double.infinity);
+    final barWidth = (endX - startX).clamp(16.0, maxW < 16.0 ? 16.0 : maxW);
 
     return Positioned(
       left: startX.clamp(0, width - 16),

@@ -1,4 +1,5 @@
 import 'package:file_picker/file_picker.dart';
+import '../../../services/file_picker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,7 +27,7 @@ class _MergeSheetState extends ConsumerState<MergeSheet> {
 
   Future<void> _addVideo() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.video,
         allowMultiple: false,
       );
@@ -63,7 +64,7 @@ class _MergeSheetState extends ConsumerState<MergeSheet> {
 
   Future<void> _addImage() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePickerService.pickFiles(
         type: FileType.image,
         allowMultiple: false,
       );

@@ -18,6 +18,7 @@ import 'package:slideup/core/utils/safe_async.dart';
 enum EditorTool {
   none,
   trim,
+  razor,
   colorGrade,
   text,
   image,

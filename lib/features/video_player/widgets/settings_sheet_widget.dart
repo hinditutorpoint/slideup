@@ -6,7 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../models/video_player_state.dart';
 import '../providers/video_player_provider.dart';
-import '../../reel_editor/ui/reel_editor_screen.dart';
+import '../../../widgets/editor_chooser_dialog.dart';
 
 class SettingsSheetWidget extends ConsumerWidget {
   const SettingsSheetWidget({super.key});
@@ -114,12 +114,7 @@ class SettingsSheetWidget extends ConsumerWidget {
     final notifier = ref.read(videoPlayerProvider.notifier);
     final videoPath = playerState.currentUrl;
     notifier.pause();
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ReelEditorScreen(mode: EditorMode.video, videoPath: videoPath),
-      ),
-    );
+    showEditorChooser(context, videoPath);
   }
 
   // ═══════════════════════════════════════════════════════

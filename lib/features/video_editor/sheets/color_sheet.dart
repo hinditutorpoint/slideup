@@ -1026,40 +1026,45 @@ class _ColorSheetState extends ConsumerState<ColorSheet>
 
           const SizedBox(height: 24),
 
-          // Color wheel (placeholder)
-          Container(
-            width: double.infinity,
-            height: 200,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          // ═══════════════════════════════════════════════════
+          // ✅ COLOR WHEEL (real, drives RGB channels)
+          // ═══════════════════════════════════════════════════
+          const Text(
+            'Color Wheel',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.color_lens,
-                  size: 48,
-                  color: Colors.white.withValues(alpha: 0.2),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Color Wheel',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 14,
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ColorWheelWidget(
+              initialColor: Color.fromRGBO(
+                (settings.red * 127.5).clamp(0, 255).toInt(),
+                (settings.green * 127.5).clamp(0, 255).toInt(),
+                (settings.blue * 127.5).clamp(0, 255).toInt(),
+                1.0,
+              ),
+              wheelSize: 200,
+              onColorChanged: (color) {
+                final newRed = (color.r * 2.0).clamp(0.0, 2.0);
+                final newGreen = (color.g * 2.0).clamp(0.0, 2.0);
+                final newBlue = (color.b * 2.0).clamp(0.0, 2.0);
+                _updateSettings(
+                  settings.copyWith(
+                    red: newRed,
+                    green: newGreen,
+                    blue: newBlue,
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Coming soon',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.3),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+                );
+              },
             ),
           ),
         ],

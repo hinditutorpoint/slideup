@@ -5,12 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/player_media.dart';
 import '../providers/video_player_provider.dart';
+import '../../../services/thumbnail_service.dart';
 
 /// YouTube-style "Up Next" button: the next item's thumbnail inside a rounded
 /// pill with a 10-second circular countdown ring. Tap to skip to the next
 /// video quickly. Shown only when controls are hidden (or locked) and the
-/// current video is within its last 10 seconds.
-class UpNextButtonWidget extends ConsumerWidget {
+/// current video is within its last lead-time seconds.
+class UpNextButtonWidget extends ConsumerStatefulWidget {
   final PlayerMedia nextMedia;
   final double progress;
   final double rightOffset;
@@ -25,17 +26,62 @@ class UpNextButtonWidget extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<UpNextButtonWidget> createState() => _UpNextButtonWidgetState();
+}
+
+class _UpNextButtonWidgetState extends ConsumerState<UpNextButtonWidget> {
+  String? _thumbnailPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumbnail();
+  }
+
+  @override
+  void didUpdateWidget(UpNextButtonWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nextMedia != widget.nextMedia) {
+      _loadThumbnail();
+    }
+  }
+
+  Future<void> _loadThumbnail() async {
+    final preset = widget.nextMedia.thumbnailPath;
+    if (preset != null && preset.isNotEmpty) {
+      if (mounted) setState(() => _thumbnailPath = preset);
+      return;
+    }
+
+    // Local files usually have no precomputed thumbnail — generate one lazily
+    // (mirrors how FileThumbnailWidget resolves missing thumbnails).
+    final url = widget.nextMedia.url;
+    if (url.startsWith('http')) return;
+
+    if (!mounted) return;
+    try {
+      final path = await ThumbnailService.instance.getThumbnail(url);
+      if (!mounted) return;
+      setState(() {
+        _thumbnailPath = path;
+      });
+    } catch (e) {
+      debugPrint('⚠️ UpNext thumbnail generation failed: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return SafeArea(
       child: Align(
         alignment: Alignment.topRight,
         child: Padding(
-          padding: EdgeInsets.only(right: rightOffset, top: 12),
+          padding: EdgeInsets.only(right: widget.rightOffset, top: 12),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: onTap ??
+            onTap: widget.onTap ??
                 () {
                   try {
                     ref.read(videoPlayerProvider.notifier).playNext();
@@ -59,7 +105,7 @@ class UpNextButtonWidget extends ConsumerWidget {
                     height: 36,
                     child: CustomPaint(
                       painter: _CountdownRingPainter(
-                        progress: progress.clamp(0.0, 1.0),
+                        progress: widget.progress.clamp(0.0, 1.0),
                         color: colorScheme.primary,
                         backgroundColor: Colors.white24,
                       ),
@@ -87,7 +133,7 @@ class UpNextButtonWidget extends ConsumerWidget {
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 110),
                           child: Text(
-                            nextMedia.title ?? 'Next video',
+                            widget.nextMedia.title ?? 'Next video',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -109,22 +155,22 @@ class UpNextButtonWidget extends ConsumerWidget {
   }
 
   Widget _buildThumbnail() {
-    final path = nextMedia.thumbnailPath;
-    if (path == null || path.isEmpty) {
-      return _buildPlaceholder();
-    }
-    if (path.startsWith('http')) {
-      return Image.network(
-        path,
+    final path = _thumbnailPath;
+    if (path != null && path.isNotEmpty) {
+      if (path.startsWith('http')) {
+        return Image.network(
+          path,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildPlaceholder(),
+        );
+      }
+      return Image.file(
+        File(path),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _buildPlaceholder(),
       );
     }
-    return Image.file(
-      File(path),
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _buildPlaceholder(),
-    );
+    return _buildPlaceholder();
   }
 
   Widget _buildPlaceholder() {

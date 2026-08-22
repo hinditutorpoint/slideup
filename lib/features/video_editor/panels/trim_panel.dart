@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/providers.dart';
+import '../components/sync_text_field.dart';
 
 // ═══════════════════════════════════════════════════════
 // ✅ TRIM PANEL - Compact Panel Version
@@ -672,10 +673,8 @@ class _TrimPanelState extends ConsumerState<TrimPanel> {
     required Duration time,
     required Function(Duration) onChanged,
   }) {
-    final controller = TextEditingController(text: _formatDuration(time));
-
-    return TextField(
-      controller: controller,
+    return SyncTextField(
+      text: _formatDuration(time),
       style: const TextStyle(color: Colors.white, fontSize: 12),
       decoration: InputDecoration(
         labelText: label,

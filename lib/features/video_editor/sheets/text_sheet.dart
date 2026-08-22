@@ -1045,7 +1045,8 @@ class _TextSheetState extends ConsumerState<TextSheet>
   ) {
     final startX = (item.startTime.inMilliseconds / totalMs) * width;
     final endX = (item.endTime.inMilliseconds / totalMs) * width;
-    final barWidth = (endX - startX).clamp(20.0, width - startX);
+    final maxW = (width - startX).clamp(0.0, double.infinity);
+    final barWidth = (endX - startX).clamp(20.0, maxW < 20.0 ? 20.0 : maxW);
     final color = _getItemColor(index);
 
     return Positioned(
