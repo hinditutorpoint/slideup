@@ -799,6 +799,11 @@ class PixabayApiService {
 
   static const String _videoBaseUrl = 'https://pixabay.com/api/videos/';
 
+  /// True when the last [fetchVideos] fell back to the local sample list
+  /// (missing API key, network error, or non-200 response) so UIs can tell
+  /// real Pixabay results from placeholders.
+  bool lastVideoFetchUsedFallback = false;
+
   Future<List<StockVideo>> fetchVideos({
     String query = '',
     int page = 1,
@@ -807,6 +812,7 @@ class PixabayApiService {
     try {
       if (!Api.isConfigured || Api.pixaBayKey.isEmpty) {
         debugPrint('⚠️ Pixabay key missing; returning development stock videos');
+        lastVideoFetchUsedFallback = true;
         return _getMockStockVideos(query);
       }
 
@@ -839,13 +845,20 @@ class PixabayApiService {
             .whereType<StockVideo>()
             .toList();
 
+        if (videos.isEmpty) {
+          lastVideoFetchUsedFallback = true;
+          return _getMockStockVideos(query);
+        }
+        lastVideoFetchUsedFallback = false;
         return await _updateVideosDownloadStatus(videos);
       } else {
         debugPrint('❌ Pixabay Video API error: ${response.statusCode}');
+        lastVideoFetchUsedFallback = true;
         return _getMockStockVideos(query);
       }
     } catch (e) {
       debugPrint('❌ Fetch videos error: $e');
+      lastVideoFetchUsedFallback = true;
       return _getMockStockVideos(query);
     }
   }
@@ -900,6 +913,7 @@ class PixabayApiService {
     StockVideo video, {
     Function(double)? onProgress,
   }) async {
+    File? partFile;
     try {
       final dir = await _getVideosDirectory();
       final fileName = 'pixabay_vid_${video.id}.mp4';
@@ -910,38 +924,93 @@ class PixabayApiService {
         return video.copyWith(localPath: filePath, isDownloaded: true);
       }
 
+      // Write to "<name>.part" and only rename after a verified, complete
+      // transfer. Previously a dropped connection left a truncated file at
+      // the final path, which then poisoned exports with
+      // "could not find codec parameters".
+      partFile = File('$filePath.part');
+
       final request = http.Request('GET', Uri.parse(video.videoUrl));
-      final response = await http.Client().send(request);
+      final response =
+          await http.Client().send(request).timeout(const Duration(seconds: 30));
+      if (response.statusCode != 200) {
+        debugPrint(
+          '❌ Download video asset: HTTP ${response.statusCode} for "${video.videoUrl}"',
+        );
+        return null;
+      }
 
       final contentLength = response.contentLength ?? 0;
       int received = 0;
 
-      final sink = file.openWrite();
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (contentLength > 0) {
-          onProgress?.call(received / contentLength);
+      final sink = partFile.openWrite();
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          if (contentLength > 0) {
+            onProgress?.call(received / contentLength);
+          }
         }
+        await sink.flush();
+      } finally {
+        await sink.close();
       }
-      await sink.close();
+
+      // Truncated / empty transfer guard (contentLength unknown => require
+      // at least a small header-sized payload).
+      if (received == 0 ||
+          (contentLength > 0 && received < contentLength)) {
+        debugPrint(
+          '❌ Download video asset incomplete: $received / $contentLength bytes',
+        );
+        await partFile.delete();
+        return null;
+      }
+
+      await partFile.rename(filePath);
+      partFile = null;
 
       final updated = video.copyWith(localPath: filePath, isDownloaded: true);
       return updated;
     } catch (e) {
       debugPrint('❌ Download video asset error: $e');
+      try {
+        await partFile?.delete();
+      } catch (_) {}
       return null;
     }
   }
 
+  /// Files smaller than this cannot be playable video content (truncated
+  /// transfer or an HTML error page saved as .mp4).
+  static const int _minValidVideoBytes = 10 * 1024;
+
   Future<bool> isVideoDownloaded(String videoId) async {
-    final path = await getVideoLocalPath(videoId);
-    return File(path).existsSync();
+    final localPath = await getVideoLocalPath(videoId);
+    return localPath != null;
   }
 
-  Future<String> getVideoLocalPath(String videoId) async {
+  /// Returns the cached path only when the file looks like a complete video.
+  /// Invalid leftovers (from the pre-verified downloader era) are deleted so
+  /// the asset re-downloads cleanly instead of poisoning exports.
+  Future<String?> getVideoLocalPath(String videoId) async {
     final dir = await _getVideosDirectory();
-    return p.join(dir.path, 'pixabay_vid_$videoId.mp4');
+    final path = p.join(dir.path, 'pixabay_vid_$videoId.mp4');
+    final f = File(path);
+    if (!await f.exists()) return null;
+
+    final length = await f.length();
+    if (length < _minValidVideoBytes) {
+      debugPrint(
+        '🗑️ Removing invalid cached stock video ($length B): $path',
+      );
+      try {
+        await f.delete();
+      } catch (_) {}
+      return null;
+    }
+    return path;
   }
 
   Future<Directory> _getVideosDirectory() async {
@@ -950,6 +1019,21 @@ class PixabayApiService {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
+
+    // One-time hygiene: legacy sample-video downloads were saved under the
+    // doubled prefix "pixabay_vid_pixabay_vid_N.mp4" and some are truncated
+    // (they broke exports with "could not find codec parameters"). They are
+    // freely re-downloadable, so drop them on sight.
+    try {
+      final legacy = RegExp(r'pixabay_vid_pixabay_vid_\d+\.mp4$');
+      await for (final e in dir.list()) {
+        if (e is File && legacy.hasMatch(e.path)) {
+          debugPrint('🗑️ Removing legacy stock sample: ${p.basename(e.path)}');
+          await e.delete();
+        }
+      }
+    } catch (_) {}
+
     return dir;
   }
 

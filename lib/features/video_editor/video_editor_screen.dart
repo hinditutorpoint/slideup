@@ -475,11 +475,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen>
                                 project,
                               ),
                               onSeek: _seekToTimelinePosition,
-                              onItemSelect: (itemId) {
-                                ref
-                                    .read(videoEditorProvider.notifier)
-                                    .togglePanel(EditorPanel.properties);
-                              },
                             ),
                           ),
                         ),

@@ -81,10 +81,179 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   Duration _originalStartTime = Duration.zero;
   Duration _originalDuration = Duration.zero;
   bool _isMultiDrag = false;
+  int _multiDropDelta = 0;
+
+  // Vertical (Premiere-style) lane reassignment while dragging.
+  double _dragStartY = 0;
+  int _dragOriginRow = 0;
+  List<int> _dragLaneLayers = const [];
+  int? _dropRowIndex; // -1 = new top row, rows.length = new bottom row
+
+  // Primary magnetic track: horizontal drag-to-reorder.
+  int? _dragClipIndex;
+  double _clipDragStartX = 0;
+  int? _clipDropIndex;
+
+  // Primary magnetic track: trim handles (in/out points).
+  int? _trimClipIndex;
+  double _trimStartX = 0;
+  Duration _origTrimStart = Duration.zero;
+  Duration _origTrimEnd = Duration.zero;
 
   // Snap state
   static const double _snapThresholdPx = 6.0;
   double? _snapLineX;
+
+  List<TimelineItem> _itemsForType(TimelineState s, TimelineItemType t) {
+    switch (t) {
+      case TimelineItemType.text:
+        return s.textItems;
+      case TimelineItemType.image:
+        return s.imageItems;
+      case TimelineItemType.audio:
+        return s.audioItems;
+      case TimelineItemType.video:
+        return s.videoOverlayItems;
+      case TimelineItemType.solidColor:
+        return s.solidColorItems;
+      default:
+        return const [];
+    }
+  }
+
+  /// Distinct sorted layer values that define the lane rows of a track.
+  List<int> _laneRows(List<TimelineItem> items) {
+    final layers = items.map((e) => e.layer).toSet().toList()..sort();
+    return layers.isEmpty ? const [0] : layers;
+  }
+
+  /// Sequential start X of each primary clip on the magnetic track.
+  /// Mirrors the layout math used in _buildPrimaryMagneticTrack, including
+  /// transition overlap shortening.
+  List<double> _primaryClipOffsets(List<PrimaryVideoClip> clips) {
+    final offsets = <double>[];
+    Duration off = Duration.zero;
+    for (var i = 0; i < clips.length; i++) {
+      offsets.add(off.inMilliseconds / 1000 * _pixelsPerSecond);
+      off += clips[i].effectiveDuration;
+      final t = clips[i].transitionOut;
+      if (t.hasTransition && i < clips.length - 1) {
+        off -= t.duration;
+      }
+    }
+    return offsets;
+  }
+
+  List<double> _primaryClipWidths(List<PrimaryVideoClip> clips) {
+    final pps = _pixelsPerSecond;
+    return clips
+        .map((c) => math.max(
+              _dims.minItemWidth,
+              c.effectiveDuration.inMilliseconds / 1000 * pps,
+            ))
+        .toList();
+  }
+
+  void _onClipDragStart(int index, DragStartDetails details) {
+    _dragMode = _DragMode.clipReorder;
+    _dragClipIndex = index;
+    _clipDragStartX = details.globalPosition.dx;
+    _clipDropIndex = null;
+    HapticFeedback.lightImpact();
+  }
+
+  void _onClipDragUpdate(int index, DragUpdateDetails details) {
+    if (_dragMode != _DragMode.clipReorder) return;
+    final i = index;
+
+    final clips = ref.read(timelineProvider).primaryVideoClips;
+    if (clips.length < 2 || i >= clips.length) return;
+
+    final offsets = _primaryClipOffsets(clips);
+    final widths = _primaryClipWidths(clips);
+
+    final newX = offsets[i] + (details.globalPosition.dx - _clipDragStartX);
+    final center = newX + widths[i] / 2;
+
+    // Insertion index = how many other clips' midpoints the dragged
+    // center has passed (matches removeAt/insert reorder semantics).
+    var count = 0;
+    for (var j = 0; j < clips.length; j++) {
+      if (j == i) continue;
+      if (center > offsets[j] + widths[j] / 2) count++;
+    }
+
+    if (count != _clipDropIndex) {
+      setState(() => _clipDropIndex = count);
+      HapticFeedback.selectionClick();
+    }
+  }
+
+  void _onClipDragEnd() {
+    final i = _dragClipIndex;
+    final d = _clipDropIndex;
+    if (i != null &&
+        d != null &&
+        d != i &&
+        _dragMode == _DragMode.clipReorder) {
+      ref.read(timelineProvider.notifier).reorderPrimaryClips(i, d);
+      HapticFeedback.mediumImpact();
+    }
+    _dragClipIndex = null;
+    _clipDropIndex = null;
+    _dragMode = _DragMode.none;
+  }
+
+  // ── Primary clip trim handles ──────────────────────────
+
+  void _onClipTrimStart(int index, DragStartDetails details, bool isLeft) {
+    final clips = ref.read(timelineProvider).primaryVideoClips;
+    if (index >= clips.length) return;
+    _dragMode =
+        isLeft ? _DragMode.clipTrimLeft : _DragMode.clipTrimRight;
+    _trimClipIndex = index;
+    _trimStartX = details.globalPosition.dx;
+    _origTrimStart = clips[index].trimStart;
+    _origTrimEnd = clips[index].trimEnd;
+    HapticFeedback.lightImpact();
+  }
+
+  void _onClipTrimUpdate(DragUpdateDetails details) {
+    if (_trimClipIndex == null) return;
+    final isLeft = _dragMode == _DragMode.clipTrimLeft;
+    final clips = ref.read(timelineProvider).primaryVideoClips;
+    if (_trimClipIndex! >= clips.length) return;
+    final clip = clips[_trimClipIndex!];
+
+    final deltaMs =
+        ((details.globalPosition.dx - _trimStartX) / _pixelsPerSecond * 1000)
+            .toInt();
+    final delta = Duration(milliseconds: deltaMs);
+
+    final notifier = ref.read(timelineProvider.notifier);
+    if (isLeft) {
+      var ts = _origTrimStart + delta;
+      if (ts < Duration.zero) ts = Duration.zero;
+      notifier.trimPrimaryClip(clip.id, trimStart: ts, trimEnd: _origTrimEnd);
+    } else {
+      var te = _origTrimEnd + delta;
+      if (te > clip.sourceDuration) te = clip.sourceDuration;
+      notifier.trimPrimaryClip(
+        clip.id,
+        trimStart: _origTrimStart,
+        trimEnd: te,
+      );
+    }
+  }
+
+  void _onClipTrimEnd() {
+    if (_dragMode == _DragMode.clipTrimLeft ||
+        _dragMode == _DragMode.clipTrimRight) {
+      HapticFeedback.mediumImpact();
+    }
+    _trimClipIndex = null;
+    _dragMode = _DragMode.none;
+  }
 
   double get _pixelsPerSecond {
     final zoom = ref.watch(timelineProvider).zoomLevel;
@@ -642,6 +811,35 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                   ),
                 ),
 
+                // Drag-to-reorder insertion indicator
+                if (_dragMode == _DragMode.clipReorder &&
+                    _clipDropIndex != null &&
+                    _dragClipIndex != null &&
+                    _clipDropIndex != _dragClipIndex)
+                  Builder(builder: (_) {
+                    final offsets = _primaryClipOffsets(clips);
+                    final widths = _primaryClipWidths(clips);
+                    final i = _dragClipIndex!;
+                    final d = _clipDropIndex!;
+                    final double x;
+                    if (d < i) {
+                      x = offsets[d];
+                    } else if (d >= clips.length - 1) {
+                      x = offsets.last + widths.last;
+                    } else {
+                      x = offsets[d + 1];
+                    }
+                    return Positioned(
+                      left: x - 1,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 2,
+                        color: const Color(0xFF00E5FF),
+                      ),
+                    );
+                  }),
+
                 // Sequential Clip Blocks & Inter-Clip Transition Node Buttons
                 ...List.generate(clips.length, (index) {
                   final clip = clips[index];
@@ -672,6 +870,11 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                       children: [
                         // Magnetic video clip block (tap to select or razor split)
                         GestureDetector(
+                          onHorizontalDragStart: (details) =>
+                              _onClipDragStart(index, details),
+                          onHorizontalDragUpdate: (details) =>
+                              _onClipDragUpdate(index, details),
+                          onHorizontalDragEnd: (_) => _onClipDragEnd(),
                           onTap: () {
                             final tool = ref.read(videoEditorProvider).currentTool;
                             if (tool == EditorTool.razor) {
@@ -752,6 +955,12 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                                       ),
                                     ],
                                   ),
+
+                                  // Premiere-style trim handles (selected clip only)
+                                  if (isSelected) ...[
+                                    _buildPrimaryClipTrimHandle(index, true),
+                                    _buildPrimaryClipTrimHandle(index, false),
+                                  ],
                                 ],
                               ),
                             ),
@@ -810,6 +1019,40 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     );
   }
 
+  /// Premiere-style in/out trim bracket for a primary clip edge.
+  Widget _buildPrimaryClipTrimHandle(int index, bool isLeft) {
+    return Positioned(
+      left: isLeft ? 0 : null,
+      right: isLeft ? null : 0,
+      top: 0,
+      bottom: 0,
+      width: 18,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (details) =>
+            _onClipTrimStart(index, details, isLeft),
+        onHorizontalDragUpdate: _onClipTrimUpdate,
+        onHorizontalDragEnd: (_) => _onClipTrimEnd(),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeLeftRight,
+          child: Center(
+            child: Container(
+              width: 3,
+              margin: const EdgeInsets.symmetric(vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC400),
+                borderRadius: BorderRadius.circular(2),
+                boxShadow: const [
+                  BoxShadow(blurRadius: 3, color: Colors.black54),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTrack<T extends TimelineItem>({
     required String label,
     required IconData icon,
@@ -825,8 +1068,16 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     final hasSolo = tl.soloTracks.isNotEmpty;
     final effectivelyMuted = isMuted || (hasSolo && !isSolo);
 
+    // Premiere-style lane rows: one row per distinct layer value.
+    // Highest layer renders as the TOP row (V2 above V1); auto-placement
+    // fills the lowest free row first.
+    final rows = _laneRows(items);
+    final laneHeight = _dims.trackHeight;
+    final showDropIndicator =
+        _dragMode == _DragMode.move && _draggingItemType == itemType;
+
     return Container(
-      height: _dims.trackHeight,
+      height: laneHeight * rows.length,
       margin: EdgeInsets.only(top: _dims.trackSpacing),
       child: Row(
         children: [
@@ -916,16 +1167,45 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // Track background
-                Container(
-                  height: _dims.trackHeight,
-                  decoration: BoxDecoration(
-                    color: effectivelyMuted
-                        ? Colors.white.withValues(alpha: 0.01)
-                        : Colors.white.withValues(alpha: 0.03),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                // Track background — one row per layer (highest on top)
+                Column(
+                  children: [
+                    for (final _ in rows.reversed)
+                      Container(
+                        height: laneHeight,
+                        decoration: BoxDecoration(
+                          color: effectivelyMuted
+                              ? Colors.white.withValues(alpha: 0.01)
+                              : Colors.white.withValues(alpha: 0.03),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                  ],
                 ),
+
+                // Vertical drop indicator (Premiere-style insert line).
+                // _dropRowIndex indexes the ascending layer list; convert to
+                // display space (top = highest layer). -1/rows.length are
+                // new-lane targets just outside existing rows.
+                if (showDropIndicator && _dropRowIndex != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: (rows.length - 1 - _dropRowIndex!)
+                            .clamp(0, rows.length) *
+                        laneHeight,
+                    height: laneHeight,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00E5FF).withValues(alpha: 0.15),
+                        border: Border.all(
+                          color: const Color(0xFF00E5FF),
+                          width: 1,
+                        ),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
 
                 // Items
                 ...items.map(
@@ -934,6 +1214,7 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
                     color: effectivelyMuted ? Colors.grey[700]! : color,
                     isSelected: selectedIds.contains(item.id),
                     itemType: itemType,
+                    rows: rows,
                   ),
                 ),
               ],
@@ -949,18 +1230,24 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     required Color color,
     required bool isSelected,
     required TimelineItemType itemType,
+    List<int> rows = const [0],
   }) {
     final startX = item.startTime.inMilliseconds / 1000 * _pixelsPerSecond;
     final width = math.max(
       _dims.minItemWidth,
       item.duration.inMilliseconds / 1000 * _pixelsPerSecond,
     );
+    final row = rows.indexOf(item.layer);
+    // Display order: highest layer on top row (Premiere V-track layout).
+    final top =
+        ((row < 0 ? 0 : rows.length - 1 - row).clamp(0, rows.length)) *
+            _dims.trackHeight;
 
     final label = _getItemLabel(item);
 
     return Positioned(
       left: startX,
-      top: 0,
+      top: top,
       child: GestureDetector(
         onTap: () => _selectItem(item.id, itemType),
         onLongPress: () => _toggleSelectItem(item.id, itemType),
@@ -1369,6 +1656,14 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     _originalDuration = item.duration;
     _dragMode = _DragMode.move;
 
+    // Vertical lane-reassignment context
+    _dragStartY = details.globalPosition.dy;
+    _dragLaneLayers = _laneRows(_itemsForType(ref.read(timelineProvider), type));
+    _dragOriginRow = _dragLaneLayers.indexOf(item.layer);
+    if (_dragOriginRow < 0) _dragOriginRow = 0;
+    _dropRowIndex = null;
+    _multiDropDelta = 0;
+
     final selectedIds = ref.read(timelineProvider).selectedItemIds;
     _isMultiDrag =
         selectedIds.length > 1 && selectedIds.contains(item.id);
@@ -1383,6 +1678,28 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
     final timeDelta = Duration(
       milliseconds: (delta / _pixelsPerSecond * 1000).toInt(),
     );
+
+    // Premiere-style vertical lane targeting. Single-item drags target an
+    // exact row (incl. new-lane rows); multi-select drags track a uniform
+    // row delta applied to every selected item's own type stack.
+    if (!_isMultiDrag) {
+      final stride = _dims.trackHeight + _dims.trackSpacing;
+      final dy = details.globalPosition.dy - _dragStartY;
+      final target =
+          (_dragOriginRow + (dy / stride).round()).clamp(-1, _dragLaneLayers.length);
+      if (target != _dropRowIndex) {
+        setState(() => _dropRowIndex = target);
+      }
+    } else {
+      _dropRowIndex = null;
+      final stride = _dims.trackHeight + _dims.trackSpacing;
+      final dy = details.globalPosition.dy - _dragStartY;
+      final delta = (dy / stride).round();
+      if (delta != _multiDropDelta) {
+        _multiDropDelta = delta;
+        HapticFeedback.selectionClick();
+      }
+    }
 
     if (_isMultiDrag) {
       ref
@@ -1462,11 +1779,43 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 
   void _onItemDragEnd() {
+    // Commit vertical lane reassignment if the drop row differs.
+    if (_dropRowIndex != null &&
+        _draggingItemId != null &&
+        _draggingItemType != null &&
+        !_isMultiDrag) {
+      final target = _dropRowIndex!.clamp(-1, _dragLaneLayers.length);
+      if (target != _dragOriginRow && _dragLaneLayers.isNotEmpty) {
+        final int newLayer;
+        if (target <= -1) {
+          newLayer = _dragLaneLayers.first - 1; // new top lane
+        } else if (target >= _dragLaneLayers.length) {
+          newLayer = _dragLaneLayers.last + 1; // new bottom lane
+        } else {
+          newLayer = _dragLaneLayers[target]; // existing lane
+        }
+        ref
+            .read(timelineProvider.notifier)
+            .setItemLayer(_draggingItemId!, _draggingItemType!, newLayer);
+        HapticFeedback.mediumImpact();
+      }
+    }
+
+    // Commit multi-select group lane move (uniform row delta, per type).
+    if (_isMultiDrag && _multiDropDelta != 0) {
+      ref
+          .read(timelineProvider.notifier)
+          .moveSelectedItemsByRows(_multiDropDelta);
+      HapticFeedback.mediumImpact();
+    }
+
     _draggingItemId = null;
     _draggingItemType = null;
     _dragMode = _DragMode.none;
     _isMultiDrag = false;
+    _multiDropDelta = 0;
     _snapLineX = null;
+    _dropRowIndex = null;
     HapticFeedback.lightImpact();
   }
 
@@ -2097,7 +2446,15 @@ class _ObjectTimelineEditorState extends ConsumerState<ObjectTimelineEditor> {
   }
 }
 
-enum _DragMode { none, move, resizeLeft, resizeRight }
+enum _DragMode {
+  none,
+  move,
+  resizeLeft,
+  resizeRight,
+  clipReorder,
+  clipTrimLeft,
+  clipTrimRight,
+}
 
 class _TimeRulerPainter extends CustomPainter {
   final double pixelsPerSecond;

@@ -233,9 +233,14 @@ class _ObjectCanvasOverlayState extends ConsumerState<ObjectCanvasOverlay> {
     );
 
     if (!isSelected) {
-      // Tap to select + open the properties panel
+      // Tap selects only; double-tap selects and opens the properties panel.
       return GestureDetector(
         onTap: () {
+          ref
+              .read(timelineProvider.notifier)
+              .selectItem(item.id, item.type);
+        },
+        onDoubleTap: () {
           ref
               .read(timelineProvider.notifier)
               .selectItem(item.id, item.type);
@@ -250,9 +255,17 @@ class _ObjectCanvasOverlayState extends ConsumerState<ObjectCanvasOverlay> {
       );
     }
 
-    // Selected → drag to move / pinch
+    // Selected → drag to move / pinch; double-tap opens the properties panel.
     return editable
         ? GestureDetector(
+            onDoubleTap: () {
+              if (ref.read(videoEditorProvider).currentPanel !=
+                  EditorPanel.properties) {
+                ref
+                    .read(videoEditorProvider.notifier)
+                    .togglePanel(EditorPanel.properties);
+              }
+            },
             onScaleStart: (d) {
               _startScale = item.scale;
               _startRotation = item.rotation;

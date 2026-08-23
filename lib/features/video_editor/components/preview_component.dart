@@ -19,20 +19,59 @@ class PreviewComponentState extends State<PreviewComponent> {
   late final VideoController _controller;
   bool _initialized = false;
 
-@override
+  // Source-swap coordination: serializes open() calls, preserves playing
+  // state across clip switches and defers seeks until the new source is
+  // ready (otherwise they land on the outgoing file or get reset).
+  String? _loadedPath;
+  int _gen = 0;
+  bool _loading = false;
+  Duration? _pendingSeek;
+  Future<void> _loadChain = Future<void>.value();
+
+  @override
   void initState() {
     super.initState();
     // MediaKit must be initialized before any Player/Video usage.
     MediaKit.ensureInitialized();
     _player = Player();
     _controller = VideoController(_player);
-    _player.open(Media(widget.videoPath), play: false);
+    _openSource(widget.videoPath);
     // Mark as initialized after a microtask so the player has time to prepare
     _initialized = true;
     // Note: the fade-in effect is handled by the Opacity widget;
     // if the player takes time to start, the video will still be visible.
     _applyVolume();
     _applySpeed();
+  }
+
+  void _openSource(String path) {
+    if (path.isEmpty || path == _loadedPath) return;
+    _loadedPath = path;
+    final gen = ++_gen;
+    // Keep playback continuous across clip boundaries.
+    final wasPlaying = _player.state.playing;
+    final prev = _loadChain;
+    _loading = true;
+    _loadChain = () async {
+      await prev;
+      if (gen != _gen || !mounted) return;
+      try {
+        await _player.open(Media(path), play: wasPlaying);
+      } catch (_) {}
+      if (gen != _gen || !mounted) return;
+      try {
+        _applyVolume();
+        _applySpeed();
+      } catch (_) {}
+      final seek = _pendingSeek;
+      _pendingSeek = null;
+      if (seek != null) {
+        try {
+          await _player.seek(seek);
+        } catch (_) {}
+      }
+      if (gen == _gen) _loading = false;
+    }();
   }
 
   void _applyVolume() {
@@ -46,7 +85,13 @@ class PreviewComponentState extends State<PreviewComponent> {
   // ── Playback control API (used by VideoEditorScreen via GlobalKey) ──
   Duration getCurrentPosition() => _player.state.position;
 
-  Future<void> seekTo(Duration p) => _player.seek(p);
+  Future<void> seekTo(Duration p) {
+    if (_loading) {
+      _pendingSeek = p;
+      return Future<void>.value();
+    }
+    return _player.seek(p);
+  }
 
   Future<void> play() => _player.play();
 
@@ -67,7 +112,7 @@ class PreviewComponentState extends State<PreviewComponent> {
   void didUpdateWidget(covariant PreviewComponent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoPath != widget.videoPath) {
-      _player.open(Media(widget.videoPath), play: false);
+      _openSource(widget.videoPath);
     }
     if (oldWidget.volume != widget.volume ||
         oldWidget.clipVolume != widget.clipVolume) {

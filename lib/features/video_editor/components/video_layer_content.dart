@@ -22,6 +22,11 @@ class _VideoLayerContentState extends ConsumerState<VideoLayerContent> {
   late final VideoController _controller;
   bool _opened = false;
 
+  /// Re-entrancy guard: [_sync] is triggered from a post-frame callback on
+  /// every rebuild while earlier runs may still be awaiting seek/pause/play.
+  /// Overlapping runs fight each other (pause vs play, duplicated seeks).
+  bool _syncing = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,6 +92,8 @@ class _VideoLayerContentState extends ConsumerState<VideoLayerContent> {
   }
 
   Future<void> _sync(bool shouldPlay, Duration localPos, double volume) async {
+    if (_syncing) return;
+    _syncing = true;
     try {
       await _player.setVolume((volume * 100).clamp(0.0, 100.0));
 
@@ -101,6 +108,9 @@ class _VideoLayerContentState extends ConsumerState<VideoLayerContent> {
         await _player.seek(localPos);
       }
       if (!_player.state.playing) await _player.play();
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _syncing = false;
+    }
   }
 }

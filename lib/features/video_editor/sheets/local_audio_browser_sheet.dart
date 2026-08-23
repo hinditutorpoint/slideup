@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:saf/saf.dart';
@@ -54,6 +55,36 @@ class _LocalAudioBrowserSheetState
   bool _isLoading = false;
   bool _needsFolder = true;
   String? _error;
+
+  /// Last SAF folder the user granted, persisted in the settings box so the
+  /// picker is skipped on later sessions (grant itself survives restarts).
+  static const String _lastDirKey = 'saf_last_dir_audio';
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreLastFolder();
+  }
+
+  Future<void> _restoreLastFolder() async {
+    try {
+      final saved = Hive.box('settingsBox').get(_lastDirKey) as String?;
+      if (saved == null || saved.isEmpty) return;
+      // Reuse only while the OS still holds the persisted grant.
+      final grants = await _saf.persistedPermissions();
+      if (!grants.any((g) => g.uri == saved)) return;
+      if (!mounted) return;
+      setState(() {
+        _rootUri = saved;
+        _currentUri = saved;
+        _needsFolder = false;
+        _history.clear();
+      });
+      await _load();
+    } catch (_) {
+      // Fall through to the manual pick screen.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -256,7 +287,8 @@ class _LocalAudioBrowserSheetState
         _error = null;
       });
 
-      final dir = await _saf.pickDirectory();
+      final lastSaved = Hive.box('settingsBox').get(_lastDirKey) as String?;
+      final dir = await _saf.pickDirectory(initialUri: lastSaved);
       if (dir == null) {
         // User cancelled
         if (_rootUri == null) {
@@ -273,6 +305,7 @@ class _LocalAudioBrowserSheetState
       _rootUri = dir.uri;
       _currentUri = dir.uri;
       _history.clear();
+      Hive.box('settingsBox').put(_lastDirKey, dir.uri);
       await _load();
     } catch (e) {
       setState(() {

@@ -2,11 +2,17 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Extracts amplitude peaks from an audio file for timeline waveform display.
-/// Uses raw byte sampling (no native decoder dependency) — visually
-/// representative for MP3/WAV/AAC/OGG even though it's not true PCM decode.
+///
+/// Decodes to 16-bit mono PCM via FFmpeg and takes max-abs peaks — the
+/// waveform then matches the actual audio. The legacy raw-byte sampler is
+/// kept only as a fallback; it treated compressed MP3/AAC frame bytes as
+/// PCM, which rendered as noise.
 class WaveformService {
   static final WaveformService _instance = WaveformService._();
   factory WaveformService() => _instance;
@@ -17,6 +23,64 @@ class WaveformService {
     String path, {
     int numPeaks = 200,
   }) async {
+    try {
+      final pcm = await _decodeToPcm16(path);
+      if (pcm != null && pcm.isNotEmpty) {
+        return _peaksFromPcm16(pcm, numPeaks);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Waveform PCM decode failed, falling back: $e');
+    }
+    return _peaksFromRawBytes(path, numPeaks);
+  }
+
+  /// Decodes [path] to little-endian s16le mono @8kHz via FFmpeg.
+  Future<Uint8List?> _decodeToPcm16(String path) async {
+    final dir = await getTemporaryDirectory();
+    final out =
+        '${dir.path}/waveform_${DateTime.now().millisecondsSinceEpoch}.pcm';
+    final session = await FFmpegKit.execute(
+      '-y -i "$path" -vn -ac 1 -ar 8000 -f s16le "$out"',
+    );
+    if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+      return null;
+    }
+    final f = File(out);
+    if (!await f.exists()) return null;
+    final bytes = await f.readAsBytes();
+    try {
+      await f.delete();
+    } catch (_) {}
+    return bytes;
+  }
+
+  /// Max-abs peaks over little-endian signed 16-bit samples.
+  List<double> _peaksFromPcm16(Uint8List bytes, int numPeaks) {
+    final sampleCount = bytes.length ~/ 2;
+    if (sampleCount == 0) return List.filled(numPeaks, 0.0);
+
+    final step = math.max(1, sampleCount ~/ numPeaks);
+    final peaks = List<double>.filled(numPeaks, 0.0);
+
+    for (var i = 0; i < numPeaks; i++) {
+      final start = i * step;
+      if (start >= sampleCount) break;
+      var maxAbs = 0;
+      final end = math.min(start + step, sampleCount);
+      for (var s = start; s < end; s++) {
+        final o = s * 2;
+        var v = bytes[o] | (bytes[o + 1] << 8);
+        if (v >= 32768) v -= 65536;
+        final a = v < 0 ? -v : v;
+        if (a > maxAbs) maxAbs = a;
+      }
+      peaks[i] = (maxAbs / 32768.0).clamp(0.0, 1.0);
+    }
+    return peaks;
+  }
+
+  /// Legacy fallback: raw byte sampling (visually approximate only).
+  Future<List<double>> _peaksFromRawBytes(String path, int numPeaks) async {
     try {
       final file = File(path);
       if (!await file.exists()) return List.filled(numPeaks, 0.0);

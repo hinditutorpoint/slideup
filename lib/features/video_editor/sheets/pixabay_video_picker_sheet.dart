@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models/video_edit_settings.dart';
 import '../providers/timeline_provider.dart';
@@ -40,6 +42,7 @@ class _PixabayVideoPickerSheetState
 
   List<StockVideo> _videos = [];
   bool _isLoading = false;
+  bool _usedFallback = false;
   String _query = '';
   int _page = 1;
 
@@ -73,6 +76,7 @@ class _PixabayVideoPickerSheetState
       if (mounted) {
         setState(() {
           _videos = results;
+          _usedFallback = _apiService.lastVideoFetchUsedFallback;
           _isLoading = false;
         });
       }
@@ -81,6 +85,27 @@ class _PixabayVideoPickerSheetState
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  /// Streams the stock video in an inline player — no download required.
+  void _quickPreview(StockVideo video) {
+    final url = (video.localPath?.isNotEmpty ?? false)
+        ? video.localPath!
+        : video.videoUrl;
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No preview available for this video'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => _StockVideoPreviewDialog(video: video),
+    );
   }
 
   void _onSearchChanged(String value) {
@@ -479,6 +504,32 @@ class _PixabayVideoPickerSheetState
             ),
           ),
 
+          // Fallback notice — real Pixabay results vs offline samples
+          if (_usedFallback)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      size: 14, color: Colors.orange),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Pixabay API unavailable — showing sample videos. Check connection / API key.',
+                      style: TextStyle(color: Colors.grey[300], fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Browse device storage button
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -570,18 +621,22 @@ class _PixabayVideoPickerSheetState
                                     ),
                                   ),
 
-                                  // Play Overlay Badge
+                                  // Play Overlay Badge (tap = instant preview)
                                   Center(
-                                    child: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(alpha: 0.5),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(
-                                        Icons.play_arrow_rounded,
-                                        color: Colors.white,
-                                        size: 24,
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () => _quickPreview(video),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(alpha: 0.5),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.play_arrow_rounded,
+                                          color: Colors.white,
+                                          size: 24,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -664,6 +719,100 @@ class _PixabayVideoPickerSheetState
                           );
                         },
                       ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Inline streaming preview � plays the stock video without downloading.
+class _StockVideoPreviewDialog extends StatefulWidget {
+  final StockVideo video;
+  const _StockVideoPreviewDialog({required this.video});
+
+  @override
+  State<_StockVideoPreviewDialog> createState() =>
+      _StockVideoPreviewDialogState();
+}
+
+class _StockVideoPreviewDialogState extends State<_StockVideoPreviewDialog> {
+  late final Player _player;
+  late final VideoController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    MediaKit.ensureInitialized();
+    _player = Player();
+    _controller = VideoController(_player);
+    final v = widget.video;
+    _player.open(
+      Media((v.localPath?.isNotEmpty ?? false) ? v.localPath! : v.videoUrl),
+    );
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF161622),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 4, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.video.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          AspectRatio(
+            aspectRatio: widget.video.width > 0 && widget.video.height > 0
+                ? widget.video.width / widget.video.height
+                : 16 / 9,
+            child: Video(controller: _controller),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: Row(
+              children: [
+                const Icon(Icons.videocam_outlined,
+                    size: 13, color: Colors.grey),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    'Preview  |  ${widget.video.author}  |  ${widget.video.width}x${widget.video.height}',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

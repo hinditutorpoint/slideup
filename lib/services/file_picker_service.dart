@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class FilePickerService {
@@ -13,6 +14,8 @@ class FilePickerService {
     bool withData = false,
   }) async {
     final lastDir = await _storage.read(key: _lastDirKey);
+    debugPrint('[FilePicker] pickFiles start: type=$type '
+        'ext=$allowedExtensions multi=$allowMultiple initialDir=$lastDir');
 
     final result = await FilePicker.platform.pickFiles(
       type: type,
@@ -21,6 +24,19 @@ class FilePickerService {
       withData: withData,
       initialDirectory: lastDir,
     );
+
+    if (result == null) {
+      debugPrint('[FilePicker] result is NULL (user cancelled or plugin error)');
+    } else {
+      for (final f in result.files) {
+        debugPrint('[FilePicker] picked: name=${f.name} size=${f.size} '
+            'path=${f.path} identifier=${f.identifier}');
+        if (f.path == null || f.path!.isEmpty) {
+          debugPrint('[FilePicker] WARNING: picked file has NULL/empty path '
+              '(SAF document without cached copy?)');
+        }
+      }
+    }
 
     if (result != null && result.files.isNotEmpty) {
       final path = result.files.first.path;
