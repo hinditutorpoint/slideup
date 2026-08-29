@@ -9,8 +9,36 @@ class PreviewAudioMixer {
   final Map<String, AudioPlayer> _players = {};
   final Map<String, String> _playerPaths = {};
   final Set<String> _playing = {};
+  bool _syncing = false;
 
+  /// Re-entrancy guard: [sync] runs every 50 ms from the position timer while
+  /// previous invocations may still be awaiting player creation/loading.
+  /// Overlapping runs would create duplicate untracked players per source
+  /// (echo / silent tracks), so late ticks are simply skipped — the next
+  /// timer fire applies their state.
   Future<void> sync({
+    required List<PreviewMixSource> sources,
+    required Duration playhead,
+    required bool isPlaying,
+    required double masterVolume,
+    required bool muted,
+  }) async {
+    if (_syncing) return;
+    _syncing = true;
+    try {
+      await _syncInternal(
+        sources: sources,
+        playhead: playhead,
+        isPlaying: isPlaying,
+        masterVolume: masterVolume,
+        muted: muted,
+      );
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  Future<void> _syncInternal({
     required List<PreviewMixSource> sources,
     required Duration playhead,
     required bool isPlaying,
@@ -84,18 +112,26 @@ class PreviewAudioMixer {
       }
     }
     if (p == null) {
+      final created = AudioPlayer();
+      // Register before awaiting so a concurrent sync can never create a
+      // duplicate untracked player for the same source id.
+      _players[id] = created;
       try {
-        p = AudioPlayer();
-        await p.setAudioSource(AudioSource.file(path));
+        await created.setAudioSource(AudioSource.file(path));
         _playerPaths[id] = path;
-        _players[id] = p;
       } catch (e) {
         debugPrint('⚠️ AudioTrack init skipped/failed for $path ($e)');
+        if (identical(_players[id], created)) {
+          _players.remove(id);
+          _playerPaths.remove(id);
+          _playing.remove(id);
+        }
         try {
-          await p?.dispose();
+          await created.dispose();
         } catch (_) {}
         return null;
       }
+      p = created;
     }
     return p;
   }

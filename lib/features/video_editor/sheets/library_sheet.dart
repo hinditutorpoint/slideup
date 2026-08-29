@@ -238,6 +238,7 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
 
   Future<void> _pickFiles(MediaType type) async {
     try {
+      debugPrint('[LibrarySheet] _pickFiles entry: type=$type');
       FileType fileType;
       List<String>? allowedExtensions;
 
@@ -279,12 +280,19 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
       );
 
       if (result != null && result.files.isNotEmpty) {
+        debugPrint('[LibrarySheet] picked ${result.files.length} file(s)');
         final newItems = <LocalMediaItem>[];
 
         for (final file in result.files) {
-          if (file.path == null) continue;
+          debugPrint('[LibrarySheet] processing: name=${file.name} '
+              'size=${file.size} path=${file.path}');
+          if (file.path == null) {
+            debugPrint('[LibrarySheet] SKIP: null path for ${file.name}');
+            continue;
+          }
 
           final mediaType = _getMediaType(file.path!);
+          debugPrint('[LibrarySheet] resolved mediaType=$mediaType');
           final item = LocalMediaItem(
             id: DateTime.now().millisecondsSinceEpoch.toString() + file.name,
             name: file.name,
@@ -296,7 +304,10 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
 
           // Generate thumbnail for videos
           if (mediaType == MediaType.video) {
+            debugPrint('[LibrarySheet] generating thumbnail...');
             item.thumbnail = await _generateVideoThumbnail(file.path!);
+            debugPrint('[LibrarySheet] thumbnail done '
+                '(bytes=${item.thumbnail?.length ?? 0})');
           }
 
           newItems.add(item);
@@ -327,8 +338,9 @@ class _LibrarySheetState extends ConsumerState<LibrarySheet>
 
         HapticFeedback.mediumImpact();
       }
-    } catch (e) {
-      debugPrint('Failed to pick files: $e');
+    } catch (e, st) {
+      debugPrint('[LibrarySheet] FAILED to pick/add files: $e');
+      debugPrint('[LibrarySheet] stackTrace: $st');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

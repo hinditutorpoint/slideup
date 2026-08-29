@@ -732,6 +732,48 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     }
   }
 
+  /// Trims a primary clip's in/out points. Magnetic layout shifts subsequent
+  /// clips automatically since start times derive from effectiveDuration.
+  /// Both edges are clamped to [0, sourceDuration] with a minimum window of
+  /// 100ms; the edge being dragged always wins the clamp.
+  void trimPrimaryClip(
+    String clipId, {
+    required Duration trimStart,
+    required Duration trimEnd,
+  }) {
+    try {
+      final clips = state.primaryVideoClips;
+      final idx = clips.indexWhere((c) => c.id == clipId);
+      if (idx < 0) return;
+
+      final src = clips[idx].sourceDuration;
+      const minDur = Duration(milliseconds: 100);
+      final maxStart = src - minDur < Duration.zero
+          ? Duration.zero
+          : src - minDur;
+
+      var ts = trimStart < Duration.zero
+          ? Duration.zero
+          : (trimStart > maxStart ? maxStart : trimStart);
+      var te = trimEnd > src ? src : trimEnd;
+      if (te - ts < minDur) {
+        // Collapsed window: keep at least minDur anchored at trimStart.
+        // (ts <= maxStart guarantees this fits within source.)
+        te = ts + minDur > src ? src : ts + minDur;
+      }
+
+      final updated = clips[idx].copyWith(trimStart: ts, trimEnd: te);
+      final newClips = clips.map((c) => c.id == clipId ? updated : c).toList();
+      state = state.copyWith(
+        primaryVideoClips: newClips,
+        totalDuration: _calcMagneticDuration(newClips),
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ trimPrimaryClip error: $e');
+    }
+  }
+
   /// Selects a primary video clip (deselecting any overlay item).
   void selectPrimaryClip(String clipId) {
     state = state.copyWith(
@@ -956,17 +998,17 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     double x = 0.5,
     double y = 0.8,
   }) {
+    final textStart = startTime ?? state.currentPosition;
     final item = TextTimelineItem.create(
       id: _uuid.v4(),
       text: text,
-      startTime: startTime ?? state.currentPosition,
-      endTime:
-          (startTime ?? state.currentPosition) +
-          (duration ?? const Duration(seconds: 3)),
+      startTime: textStart,
+      endTime: textStart + (duration ?? const Duration(seconds: 3)),
       style: style ?? const TextOverlayStyle(),
       x: x,
       y: y,
-      layer: _getNextLayer(TimelineItemType.text),
+      layer: _getNextLayer(TimelineItemType.text, textStart,
+          textStart + (duration ?? const Duration(seconds: 3))),
     );
 
     state = state.copyWith(
@@ -1015,19 +1057,19 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     int? width,
     int? height,
   }) {
+    final imgStart = startTime ?? state.currentPosition;
     final item = ImageTimelineItem.create(
       id: _uuid.v4(),
       imagePath: imagePath,
-      startTime: startTime ?? state.currentPosition,
-      endTime:
-          (startTime ?? state.currentPosition) +
-          (duration ?? const Duration(seconds: 3)),
+      startTime: imgStart,
+      endTime: imgStart + (duration ?? const Duration(seconds: 3)),
       x: x,
       y: y,
       scale: scale,
       width: width ?? 1920,
       height: height ?? 1080,
-      layer: _getNextLayer(TimelineItemType.image),
+      layer: _getNextLayer(TimelineItemType.image, imgStart,
+          imgStart + (duration ?? const Duration(seconds: 3))),
     );
 
     state = state.copyWith(
@@ -1042,7 +1084,8 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   void addGeneratedImage(ImageTimelineItem item) {
     final withLayer = item.copyWith(
-      layer: _getNextLayer(TimelineItemType.image),
+      layer: _getNextLayer(TimelineItemType.image, item.startTime,
+          item.endTime),
     );
 
     state = state.copyWith(
@@ -1089,16 +1132,18 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     String artist = '',
     double volume = 1.0,
   }) {
+    final audioStart = startTime ?? state.currentPosition;
     final item = AudioTimelineItem.create(
       id: _uuid.v4(),
       audioPath: audioPath,
       audioDuration: audioDuration,
-      startTime: startTime ?? state.currentPosition,
-      endTime: (startTime ?? state.currentPosition) + audioDuration,
+      startTime: audioStart,
+      endTime: audioStart + audioDuration,
       title: title,
       artist: artist,
       volume: volume,
-      layer: _getNextLayer(TimelineItemType.audio),
+      layer: _getNextLayer(
+          TimelineItemType.audio, audioStart, audioStart + audioDuration),
     );
 
     state = state.copyWith(
@@ -1172,7 +1217,7 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       videoPath: videoPath,
       startTime: start,
       endTime: start + len,
-      layer: _getNextLayer(TimelineItemType.video),
+      layer: _getNextLayer(TimelineItemType.video, start, start + len),
       x: x,
       y: y,
       scale: scale,
@@ -1235,7 +1280,8 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       id: _uuid.v4(),
       startTime: start,
       endTime: start + len,
-      layer: _getNextLayer(TimelineItemType.solidColor),
+      layer: _getNextLayer(
+          TimelineItemType.solidColor, start, start + len),
       colorValue: colorValue,
       opacity: opacity,
       width: width,
@@ -1442,6 +1488,55 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       solidColorItems: solidColorItems,
     );
     syncToProject();
+  }
+
+  /// Premiere-style group lane move: shifts every selected item vertically by
+  /// [rowDelta] rows within its own type's lane stack, preserving relative
+  /// offsets between items. Clamped to existing lanes; never creates lanes.
+  void moveSelectedItemsByRows(int rowDelta) {
+    final ids = state.selectedItemIds;
+    if (rowDelta == 0 || ids.isEmpty) return;
+
+    try {
+      List<T> shift<T extends TimelineItem>(
+        List<T> items,
+        T Function(T item, int layer) withLayer,
+      ) {
+        final lanes = items.map((e) => e.layer).toSet().toList()..sort();
+        var changed = false;
+        final out = items.map((e) {
+          if (!ids.contains(e.id)) return e;
+          final idx = lanes.indexOf(e.layer);
+          if (idx < 0) return e;
+          final ni = (idx + rowDelta).clamp(0, lanes.length - 1);
+          if (ni == idx) return e;
+          changed = true;
+          return withLayer(e, lanes[ni]);
+        }).toList();
+        return changed ? out : items;
+      }
+
+      final textItems = shift(state.textItems, (e, l) => e.copyWith(layer: l));
+      final imageItems =
+          shift(state.imageItems, (e, l) => e.copyWith(layer: l));
+      final audioItems =
+          shift(state.audioItems, (e, l) => e.copyWith(layer: l));
+      final videoOverlayItems =
+          shift(state.videoOverlayItems, (e, l) => e.copyWith(layer: l));
+      final solidColorItems =
+          shift(state.solidColorItems, (e, l) => e.copyWith(layer: l));
+
+      state = state.copyWith(
+        textItems: textItems,
+        imageItems: imageItems,
+        audioItems: audioItems,
+        videoOverlayItems: videoOverlayItems,
+        solidColorItems: solidColorItems,
+      );
+      syncToProject();
+    } catch (e) {
+      debugPrint('❌ moveSelectedItemsByRows error: $e');
+    }
   }
 
   void deleteSelectedItems() {
@@ -1759,30 +1854,83 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
   // ✅ LAYER MANAGEMENT
   // ═══════════════════════════════════════════════════════
 
-  int _getNextLayer(TimelineItemType type) {
-    int maxLayer = 0;
-
+  /// Premiere-style auto placement: returns the lowest layer whose lane is
+  /// free during [start]..[end] for [type]. A brand-new layer is only
+  /// allocated when every existing lane overlaps the requested range.
+  int _getNextLayer(TimelineItemType type, Duration start, Duration end) {
+    List<TimelineItem> items;
     switch (type) {
       case TimelineItemType.text:
-        for (final item in state.textItems) {
-          if (item.layer > maxLayer) maxLayer = item.layer;
+        items = state.textItems;
+        break;
+      case TimelineItemType.image:
+        items = state.imageItems;
+        break;
+      case TimelineItemType.audio:
+        items = state.audioItems;
+        break;
+      case TimelineItemType.video:
+        items = state.videoOverlayItems;
+        break;
+      case TimelineItemType.solidColor:
+        items = state.solidColorItems;
+        break;
+      default:
+        return 0;
+    }
+
+    final layers = items.map((e) => e.layer).toSet().toList()..sort();
+    for (final l in layers) {
+      final overlaps = items.any(
+        (e) => e.layer == l && start < e.endTime && e.startTime < end,
+      );
+      if (!overlaps) return l;
+    }
+    return layers.isEmpty ? 0 : layers.last + 1;
+  }
+
+  /// Premiere-style vertical track assignment: places [itemId] on the lane
+  /// row identified by [newLayer] within its own type track. Higher layers
+  /// render on top (canvas z-order follows sorted layers).
+  void setItemLayer(String itemId, TimelineItemType type, int newLayer) {
+    switch (type) {
+      case TimelineItemType.text:
+        final i = state.textItems.indexWhere((e) => e.id == itemId);
+        if (i >= 0) {
+          updateTextItem(itemId, state.textItems[i].copyWith(layer: newLayer));
         }
         break;
       case TimelineItemType.image:
-        for (final item in state.imageItems) {
-          if (item.layer > maxLayer) maxLayer = item.layer;
+        final i = state.imageItems.indexWhere((e) => e.id == itemId);
+        if (i >= 0) {
+          updateImageItem(
+              itemId, state.imageItems[i].copyWith(layer: newLayer));
         }
         break;
       case TimelineItemType.audio:
-        for (final item in state.audioItems) {
-          if (item.layer > maxLayer) maxLayer = item.layer;
+        final i = state.audioItems.indexWhere((e) => e.id == itemId);
+        if (i >= 0) {
+          updateAudioItem(
+              itemId, state.audioItems[i].copyWith(layer: newLayer));
+        }
+        break;
+      case TimelineItemType.video:
+        final i = state.videoOverlayItems.indexWhere((e) => e.id == itemId);
+        if (i >= 0) {
+          updateVideoOverlayItem(
+              itemId, state.videoOverlayItems[i].copyWith(layer: newLayer));
+        }
+        break;
+      case TimelineItemType.solidColor:
+        final i = state.solidColorItems.indexWhere((e) => e.id == itemId);
+        if (i >= 0) {
+          updateSolidColorItem(
+              itemId, state.solidColorItems[i].copyWith(layer: newLayer));
         }
         break;
       default:
         break;
     }
-
-    return maxLayer + 1;
   }
 
   void bringToFront(String itemId) {

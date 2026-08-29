@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:saf/saf.dart';
@@ -48,6 +49,10 @@ class _LocalVideoBrowserSheetState
     'flv',
   ];
 
+  /// Last SAF folder the user granted, persisted in the settings box so the
+  /// picker is skipped on later sessions (grant itself survives restarts).
+  static const String _lastDirKey = 'saf_last_dir_video';
+
   String? _rootUri;
   String? _currentUri;
   final List<String> _history = [];
@@ -56,6 +61,32 @@ class _LocalVideoBrowserSheetState
   bool _isLoading = false;
   bool _needsFolder = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreLastFolder();
+  }
+
+  Future<void> _restoreLastFolder() async {
+    try {
+      final saved = Hive.box('settingsBox').get(_lastDirKey) as String?;
+      if (saved == null || saved.isEmpty) return;
+      // Reuse only while the OS still holds the persisted grant.
+      final grants = await _saf.persistedPermissions();
+      if (!grants.any((g) => g.uri == saved)) return;
+      if (!mounted) return;
+      setState(() {
+        _rootUri = saved;
+        _currentUri = saved;
+        _needsFolder = false;
+        _history.clear();
+      });
+      await _load();
+    } catch (_) {
+      // Fall through to the manual pick screen.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -258,7 +289,8 @@ class _LocalVideoBrowserSheetState
         _error = null;
       });
 
-      final dir = await _saf.pickDirectory();
+      final lastSaved = Hive.box('settingsBox').get(_lastDirKey) as String?;
+      final dir = await _saf.pickDirectory(initialUri: lastSaved);
       if (dir == null) {
         if (_rootUri == null) {
           setState(() {
@@ -274,6 +306,7 @@ class _LocalVideoBrowserSheetState
       _rootUri = dir.uri;
       _currentUri = dir.uri;
       _history.clear();
+      Hive.box('settingsBox').put(_lastDirKey, dir.uri);
       await _load();
     } catch (e) {
       setState(() {
@@ -349,7 +382,7 @@ class _LocalVideoBrowserSheetState
       // Gather metadata
       final info = await _thumbService.getVideoInfo(destPath);
       final duration =
-          (info?['duration'] as Duration?) ?? Duration.zero;
+          _parseDuration(info?['duration']) ?? Duration.zero;
       Uint8List? thumb;
       try {
         thumb = await _thumbService.generateVideoThumbnailBytes(
@@ -409,6 +442,37 @@ class _LocalVideoBrowserSheetState
         ),
       );
     }
+  }
+
+  /// Tolerant duration reader: the app-level ThumbnailService returns an
+  /// FFmpeg-log string ("HH:mm:ss.ff"), other probes return Duration or
+  /// seconds. A hard cast here crashed every SAF video add with
+  /// "type 'String' is not a subtype of type 'Duration?'".
+  Duration? _parseDuration(dynamic raw) {
+    if (raw is Duration) return raw;
+    if (raw is num) {
+      return Duration(milliseconds: (raw * 1000).round());
+    }
+    if (raw is String) {
+      final parts = raw.split(':');
+      try {
+        if (parts.length == 3) {
+          final h = int.parse(parts[0]);
+          final m = int.parse(parts[1]);
+          final s = double.parse(parts[2]);
+          return Duration(
+            hours: h,
+            minutes: m,
+            milliseconds: (s * 1000).round(),
+          );
+        }
+        final secs = double.tryParse(raw);
+        if (secs != null) {
+          return Duration(milliseconds: (secs * 1000).round());
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   Future<bool?> _askInsertMode() {
